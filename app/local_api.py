@@ -1,0 +1,225 @@
+"""Local HTTP API — exposed via HA ingress for the integration to talk to."""
+
+import logging
+from aiohttp import web
+
+from call_manager import CallManager, CallState
+from config import Config
+from protocol import make_call_request, make_call_accept, make_call_reject, make_call_end
+
+logger = logging.getLogger("simson.api")
+
+
+class LocalAPI:
+    """HTTP API running inside the addon for HA integration communication."""
+
+    def __init__(self, cfg: Config, call_mgr: CallManager,
+                 send_fn, asterisk=None, wss_client=None):
+        """
+        Args:
+            cfg: Addon config.
+            call_mgr: Call state manager.
+            send_fn: Async callable to send protocol messages to VPS.
+            asterisk: Optional AsteriskAMI instance.
+            wss_client: Optional WSSClient for connection status.
+        """
+        self.cfg = cfg
+        self.call_mgr = call_mgr
+        self.send_fn = send_fn
+        self.asterisk = asterisk
+        self.wss_client = wss_client
+        self.app = web.Application()
+        self._runner = None
+        self._setup_routes()
+
+    def _setup_routes(self):
+        self.app.router.add_get("/api/status", self.handle_status)
+        self.app.router.add_get("/api/calls", self.handle_list_calls)
+        self.app.router.add_post("/api/call", self.handle_make_call)
+        self.app.router.add_post("/api/answer", self.handle_answer)
+        self.app.router.add_post("/api/reject", self.handle_reject)
+        self.app.router.add_post("/api/hangup", self.handle_hangup)
+        self.app.router.add_get("/api/health", self.handle_health)
+
+    async def start(self):
+        """Start the local API server."""
+        self._runner = web.AppRunner(self.app)
+        await self._runner.setup()
+        try:
+            site = web.TCPSite(self._runner, "0.0.0.0", self.cfg.local_api_port)
+            await site.start()
+        except OSError as e:
+            logger.error("Failed to bind API on port %d: %s", self.cfg.local_api_port, e)
+            raise
+        logger.info("Local API listening on port %d", self.cfg.local_api_port)
+
+    async def stop(self):
+        """Stop the local API server."""
+        if self._runner:
+            await self._runner.cleanup()
+
+    # --- Handlers ---
+
+    async def handle_health(self, request: web.Request) -> web.Response:
+        return web.json_response({
+            "status": "ok",
+            "addon_version": "1.0.0",
+            "node_id": self.cfg.node_id,
+        })
+
+    async def handle_status(self, request: web.Request) -> web.Response:
+        active = self.call_mgr.active_call
+        vps_connected = self.wss_client.connected if self.wss_client else False
+        return web.json_response({
+            "node_id": self.cfg.node_id,
+            "account_id": self.cfg.account_id,
+            "vps_connected": vps_connected,
+            "active_call": _call_to_dict(active) if active else None,
+            "asterisk_connected": self.asterisk.connected if self.asterisk else False,
+        })
+
+    async def handle_list_calls(self, request: web.Request) -> web.Response:
+        calls = self.call_mgr.all_calls
+        active = self.call_mgr.active_call
+        return web.json_response({
+            "active_call": _call_to_dict(active) if active else None,
+            "calls": [_call_to_dict(c) for c in calls],
+            "total": len(calls),
+        })
+
+    async def handle_make_call(self, request: web.Request) -> web.Response:
+        """Initiate a call to another node."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+
+        to_node = body.get("target_node_id", "") or body.get("to_node_id", "")
+        call_type = body.get("call_type", "voice")
+
+        if not to_node:
+            return web.json_response({"error": "target_node_id required"}, status=400)
+
+        # Check no active call.
+        if self.call_mgr.active_call:
+            return web.json_response({"error": "already in a call"}, status=409)
+
+        # Build and send call.request.
+        msg = make_call_request(self.cfg.node_id, to_node, call_type)
+        call_id = msg["payload"]["call_id"]
+
+        try:
+            await self.send_fn(msg)
+        except Exception as e:
+            return web.json_response({"error": f"send failed: {e}"}, status=502)
+
+        # Register locally.
+        call = await self.call_mgr.outgoing_request(call_id, to_node, call_type)
+
+        return web.json_response({
+            "call_id": call_id,
+            "status": "requesting",
+        }, status=201)
+
+    async def handle_answer(self, request: web.Request) -> web.Response:
+        """Answer an incoming call."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+
+        call_id = body.get("call_id", "")
+        if not call_id:
+            # Auto-find incoming call.
+            active = self.call_mgr.active_call
+            if active and active.state == CallState.INCOMING:
+                call_id = active.call_id
+            else:
+                return web.json_response({"error": "no incoming call"}, status=404)
+
+        call = self.call_mgr.get(call_id)
+        if not call or call.state != CallState.INCOMING:
+            return web.json_response({"error": "call not found or not incoming"}, status=404)
+
+        msg = make_call_accept(call_id, self.cfg.node_id)
+        try:
+            await self.send_fn(msg)
+        except Exception as e:
+            return web.json_response({"error": f"send failed: {e}"}, status=502)
+
+        return web.json_response({"call_id": call_id, "status": "accepted"})
+
+    async def handle_reject(self, request: web.Request) -> web.Response:
+        """Reject an incoming call."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+
+        call_id = body.get("call_id", "")
+        reason = body.get("reason", "declined")
+
+        if not call_id:
+            active = self.call_mgr.active_call
+            if active and active.state == CallState.INCOMING:
+                call_id = active.call_id
+            else:
+                return web.json_response({"error": "no incoming call"}, status=404)
+
+        call = self.call_mgr.get(call_id)
+        if not call or call.state != CallState.INCOMING:
+            return web.json_response({"error": "call not found or not incoming"}, status=404)
+
+        msg = make_call_reject(call_id, self.cfg.node_id, reason)
+        try:
+            await self.send_fn(msg)
+        except Exception as e:
+            return web.json_response({"error": f"send failed: {e}"}, status=502)
+
+        await self.call_mgr.end_call(call_id, reason)
+        return web.json_response({"call_id": call_id, "status": "rejected"})
+
+    async def handle_hangup(self, request: web.Request) -> web.Response:
+        """Hang up the current call."""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+
+        call_id = body.get("call_id", "")
+
+        if not call_id:
+            active = self.call_mgr.active_call
+            if active:
+                call_id = active.call_id
+            else:
+                return web.json_response({"error": "no active call"}, status=404)
+
+        call = self.call_mgr.get(call_id)
+        if not call:
+            return web.json_response({"error": "call not found"}, status=404)
+
+        msg = make_call_end(call_id, self.cfg.node_id, "hangup")
+        try:
+            await self.send_fn(msg)
+        except Exception as e:
+            return web.json_response({"error": f"send failed: {e}"}, status=502)
+
+        await self.call_mgr.end_call(call_id, "hangup")
+        return web.json_response({"call_id": call_id, "status": "ended"})
+
+
+def _call_to_dict(call) -> dict:
+    """Serialise a CallInfo to a JSON-safe dict."""
+    return {
+        "call_id": call.call_id,
+        "remote_node_id": call.remote_node_id,
+        "remote_label": call.remote_label,
+        "call_type": call.call_type,
+        "direction": call.direction,
+        "state": call.state.value,
+        "started_at": call.started_at,
+        "answered_at": call.answered_at,
+        "ended_at": call.ended_at,
+        "end_reason": call.end_reason,
+    }

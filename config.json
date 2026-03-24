@@ -1,0 +1,56 @@
+{
+  "name": "Simson Call Relay",
+  "version": "1.0.0",
+  "slug": "simson",
+  "description": "Call relay addon — connects your Home Assistant to the Simson control plane for voice/intercom calls between HA instances and Asterisk endpoints.",
+  "url": "https://github.com/wirsy/simson",
+  "image": "ghcr.io/wirsy/simson-addon-{arch}",
+  "arch": ["amd64", "aarch64", "armv7", "armhf", "i386"],
+  "startup": "application",
+  "boot": "auto",
+  "ingress": true,
+  "ingress_port": 8099,
+  "panel_icon": "mdi:phone-voip",
+  "panel_title": "Simson",
+  "homeassistant_api": true,
+  "options": {
+    "server_url": "wss://simson-vps.niti.life/ws",
+    "account_id": "",
+    "node_id": "",
+    "install_token": "",
+    "capabilities": ["haos", "voice"],
+    "asterisk": {
+      "enabled": false,
+      "host": "127.0.0.1",
+      "ami_port": 5038,
+      "ami_user": "simson",
+      "ami_secret": "",
+      "context": "from-simson",
+      "extension_prefix": "9"
+    },
+    "log_level": "info"
+  },
+  "schema": {
+    "server_url": "url",
+    "account_id": "str",
+    "node_id": "str",
+    "install_token": "password",
+    "capabilities": ["str"],
+    "asterisk": {
+      "enabled": "bool",
+      "host": "str",
+      "ami_port": "port",
+      "ami_user": "str",
+      "ami_secret": "password",
+      "context": "str",
+      "extension_prefix": "str"
+    },
+    "log_level": "list(debug|info|warning|error)"
+  },
+  "map": ["share:rw"],
+  "host_network": false,
+  "docker_api": false,
+  "full_access": false,
+  "hassio_api": true,
+  "auth_api": true
+}
