@@ -1,10 +1,8 @@
 #!/usr/bin/with-contenv bashio
-# Simson Addon — Entry point
+# Simson Addon — Entry point (called by s6-overlay)
 set -e
 
-CONFIG_PATH=/data/options.json
-
-bashio::log.info "Starting Simson Call Relay addon v1.0.0"
+bashio::log.info "Starting Simson Call Relay addon v1.0.1"
 
 # Export config as environment variables for the Python process
 export SIMSON_SERVER_URL=$(bashio::config 'server_url')
@@ -13,9 +11,35 @@ export SIMSON_NODE_ID=$(bashio::config 'node_id')
 export SIMSON_INSTALL_TOKEN=$(bashio::config 'install_token')
 export SIMSON_LOG_LEVEL=$(bashio::config 'log_level')
 
-# Validate required config
-if [ -z "$SIMSON_SERVER_URL" ] || [ -z "$SIMSON_ACCOUNT_ID" ] || [ -z "$SIMSON_NODE_ID" ] || [ -z "$SIMSON_INSTALL_TOKEN" ]; then
-    bashio::log.error "Missing required configuration. Please set server_url, account_id, node_id, and install_token."
+# Validate required config — give clear instructions if missing
+if [ -z "$SIMSON_ACCOUNT_ID" ] || [ -z "$SIMSON_NODE_ID" ] || [ -z "$SIMSON_INSTALL_TOKEN" ]; then
+    bashio::log.error "---------------------------------------------"
+    bashio::log.error "CONFIGURATION REQUIRED"
+    bashio::log.error ""
+    bashio::log.error "Go to the addon Configuration tab and fill in:"
+    bashio::log.error "  - account_id"
+    bashio::log.error "  - node_id"
+    bashio::log.error "  - install_token"
+    bashio::log.error ""
+    bashio::log.error "Get these from your VPS admin API:"
+    bashio::log.error ""
+    bashio::log.error "  1. Create an account:"
+    bashio::log.error "     curl -X POST https://simson-vps.niti.life/admin/accounts \\"
+    bashio::log.error "       -H 'Authorization: Bearer YOUR_ADMIN_TOKEN' \\"
+    bashio::log.error "       -H 'Content-Type: application/json' \\"
+    bashio::log.error "       -d '{\"id\":\"home\",\"name\":\"My Home\"}'"
+    bashio::log.error ""
+    bashio::log.error "  2. Create a node:"
+    bashio::log.error "     curl -X POST https://simson-vps.niti.life/admin/accounts/home/nodes \\"
+    bashio::log.error "       -H 'Authorization: Bearer YOUR_ADMIN_TOKEN' \\"
+    bashio::log.error "       -H 'Content-Type: application/json' \\"
+    bashio::log.error "       -d '{\"id\":\"living_room\",\"label\":\"Living Room\"}'"
+    bashio::log.error ""
+    bashio::log.error "  The response will contain the install_token."
+    bashio::log.error "  Use the account id as account_id, node id as node_id."
+    bashio::log.error "---------------------------------------------"
+    # Sleep briefly so the log is visible, then exit
+    sleep 5
     exit 1
 fi
 

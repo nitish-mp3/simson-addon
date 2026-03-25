@@ -11,13 +11,12 @@ RUN apk add --no-cache \
        websockets==13.1 \
        aiohttp==3.10.11
 
-# Copy addon files
+# Copy s6-overlay run script (HA base image calls /run.sh via s6)
 COPY rootfs /
 
-# Ensure run script is executable
-RUN chmod a+x /run.sh
-
+# Copy application code
 WORKDIR /app
 COPY app/ /app/
 
-CMD ["/run.sh"]
+# Ensure run script is executable
+RUN chmod a+x /run.sh

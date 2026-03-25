@@ -4,10 +4,50 @@ Connects your Home Assistant instance to the Simson VPS control plane for voice/
 
 ## Installation
 
-1. Add this repository to Home Assistant as a local addon.
-2. Install the **Simson Call Relay** addon.
-3. Configure the addon with your VPS server URL, account ID, node ID, and install token.
-4. Start the addon.
+1. Add this repository to Home Assistant: **Settings → Add-ons → Add-on Store → ⋮ → Repositories → Paste URL**.
+2. Install **Simson Call Relay**.
+3. **Before starting the addon**, you need credentials from your VPS — see below.
+
+## Getting Your Credentials
+
+The `account_id`, `node_id`, and `install_token` come from the Simson VPS admin API. You need the admin token that was shown when you first deployed the VPS.
+
+### Step 1: Create an account
+
+```bash
+curl -X POST https://YOUR-DOMAIN/admin/accounts \
+  -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"id":"home","name":"My Home"}'
+```
+
+### Step 2: Create a node for this HA instance
+
+```bash
+curl -X POST https://YOUR-DOMAIN/admin/accounts/home/nodes \
+  -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"id":"living_room","label":"Living Room","capabilities":["haos","voice"]}'
+```
+
+The response will include:
+```json
+{
+  "id": "living_room",
+  "account_id": "home",
+  "install_token": "abc123...",
+  "status": "created"
+}
+```
+
+### Step 3: Configure the addon
+
+In the addon **Configuration** tab, fill in:
+- **account_id**: `home` (the account ID you created)
+- **node_id**: `living_room` (the node ID you created)
+- **install_token**: `abc123...` (from the create node response)
+
+Then **start the addon**.
 
 ## Configuration
 
