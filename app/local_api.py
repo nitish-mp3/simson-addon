@@ -33,6 +33,7 @@ class LocalAPI:
         self._setup_routes()
 
     def _setup_routes(self):
+        self.app.router.add_get("/", self.handle_ingress)
         self.app.router.add_get("/api/status", self.handle_status)
         self.app.router.add_get("/api/calls", self.handle_list_calls)
         self.app.router.add_post("/api/call", self.handle_make_call)
@@ -59,6 +60,60 @@ class LocalAPI:
             await self._runner.cleanup()
 
     # --- Handlers ---
+
+    async def handle_ingress(self, request: web.Request) -> web.Response:
+        """Serve the ingress web panel."""
+        vps_connected = self.wss_client.connected if self.wss_client else False
+        active = self.call_mgr.active_call
+        status_class = "ok" if vps_connected else "err"
+        status_text = "Connected" if vps_connected else "Disconnected"
+        call_html = ""
+        if active:
+            call_html = (
+                f'<div class="card">'
+                f'<h2>Active Call</h2>'
+                f'<p><b>Call ID:</b> {active.call_id[:8]}...</p>'
+                f'<p><b>With:</b> {active.remote_label or active.remote_node_id}</p>'
+                f'<p><b>Direction:</b> {active.direction}</p>'
+                f'<p><b>State:</b> {active.state.value}</p>'
+                f'</div>'
+            )
+        else:
+            call_html = '<div class="card"><h2>Calls</h2><p>No active call</p></div>'
+
+        html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Simson Call Relay</title>
+<style>
+  body{{font-family:system-ui,-apple-system,sans-serif;margin:0;padding:20px;background:#1c1c1c;color:#e1e1e1}}
+  h1{{color:#03a9f4;margin-bottom:4px}} .sub{{color:#888;font-size:14px;margin-bottom:24px}}
+  .card{{background:#2a2a2a;border-radius:12px;padding:16px 20px;margin-bottom:16px}}
+  .card h2{{margin:0 0 8px;font-size:16px;color:#aaa}}
+  .card p{{margin:4px 0;font-size:14px}}
+  .badge{{display:inline-block;padding:2px 10px;border-radius:10px;font-size:13px;font-weight:600}}
+  .ok{{background:#1b5e20;color:#a5d6a7}} .err{{background:#b71c1c;color:#ef9a9a}}
+  .row{{display:flex;gap:12px;flex-wrap:wrap}}
+  .row .card{{flex:1;min-width:200px}}
+</style></head><body>
+<h1>Simson Call Relay</h1>
+<p class="sub">Node: <b>{self.cfg.node_id}</b> &middot; Account: <b>{self.cfg.account_id}</b></p>
+<div class="row">
+  <div class="card"><h2>VPS Connection</h2><p><span class="badge {status_class}">{status_text}</span></p>
+    <p>Server: {self.cfg.server_url}</p></div>
+  {call_html}
+</div>
+<div class="card"><h2>API Endpoints</h2>
+  <p>GET <code>/api/health</code> — health check</p>
+  <p>GET <code>/api/status</code> — connection &amp; call status</p>
+  <p>GET <code>/api/calls</code> — call history</p>
+  <p>POST <code>/api/call</code> — initiate call</p>
+  <p>POST <code>/api/answer</code> — answer incoming</p>
+  <p>POST <code>/api/reject</code> — reject incoming</p>
+  <p>POST <code>/api/hangup</code> — end call</p>
+</div>
+<script>setTimeout(()=>location.reload(),10000)</script>
+</body></html>"""
+        return web.Response(text=html, content_type="text/html")
 
     async def handle_health(self, request: web.Request) -> web.Response:
         return web.json_response({
