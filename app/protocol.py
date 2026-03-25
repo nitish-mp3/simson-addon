@@ -34,11 +34,16 @@ ERR_INTERNAL = 5000
 
 
 def make_envelope(msg_type: str, payload: dict) -> dict:
-    """Create a protocol envelope."""
+    """Create a protocol envelope.
+
+    Timestamp must use Z suffix (not +00:00) to match Go's time.RFC3339Nano
+    which always uses Z for UTC offsets when re-computing the HMAC.
+    """
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
     return {
         "type": msg_type,
         "id": str(uuid.uuid4()),
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": ts,
         "payload": payload,
     }
 
