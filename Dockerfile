@@ -11,12 +11,12 @@ RUN apk add --no-cache \
        websockets==13.1 \
        aiohttp==3.10.11
 
-# Copy s6-overlay run script (HA base image calls /run.sh via s6)
+# Copy s6-overlay service directory and rootfs files
 COPY rootfs /
+
+# Make s6 service script executable
+RUN chmod a+x /etc/services.d/simson/run
 
 # Copy application code
 WORKDIR /app
 COPY app/ /app/
-
-# Ensure run script is executable
-RUN chmod a+x /run.sh

@@ -1,0 +1,52 @@
+#!/usr/bin/with-contenv bashio
+# Simson Addon — s6 service entry point
+set -e
+
+bashio::log.info "Starting Simson Call Relay addon v1.1.0"
+
+# Export config as environment variables for the Python process
+export SIMSON_SERVER_URL=$(bashio::config 'server_url')
+export SIMSON_ADMIN_TOKEN=$(bashio::config 'admin_token')
+export SIMSON_NODE_LABEL=$(bashio::config 'node_label')
+export SIMSON_ACCOUNT_ID=$(bashio::config 'account_id')
+export SIMSON_NODE_ID=$(bashio::config 'node_id')
+export SIMSON_INSTALL_TOKEN=$(bashio::config 'install_token')
+export SIMSON_LOG_LEVEL=$(bashio::config 'log_level')
+
+# If no credentials AND no admin_token, show instructions
+if [ -z "$SIMSON_INSTALL_TOKEN" ] && [ -z "$SIMSON_ADMIN_TOKEN" ] && [ ! -f "/data/credentials.json" ]; then
+    bashio::log.error "---------------------------------------------"
+    bashio::log.error "CONFIGURATION REQUIRED"
+    bashio::log.error ""
+    bashio::log.error "EASY SETUP (recommended):"
+    bashio::log.error "  1. Enter your Admin Token in the addon config"
+    bashio::log.error "  2. Optionally set a Node Label (e.g. 'Living Room')"
+    bashio::log.error "  3. Click Save and restart the addon"
+    bashio::log.error "  -> The addon will auto-create your account and node"
+    bashio::log.error ""
+    bashio::log.error "MANUAL SETUP (advanced):"
+    bashio::log.error "  Fill in account_id, node_id, and install_token"
+    bashio::log.error "  from the admin API (see README for curl commands)"
+    bashio::log.error "---------------------------------------------"
+    sleep 5
+    exit 1
+fi
+
+# Capabilities (comma-separated)
+export SIMSON_CAPABILITIES=$(bashio::config 'capabilities' | tr -d '[]"' | tr ',' ',')
+
+# Asterisk config
+export SIMSON_ASTERISK_ENABLED=$(bashio::config 'asterisk.enabled')
+export SIMSON_ASTERISK_HOST=$(bashio::config 'asterisk.host')
+export SIMSON_ASTERISK_AMI_PORT=$(bashio::config 'asterisk.ami_port')
+export SIMSON_ASTERISK_AMI_USER=$(bashio::config 'asterisk.ami_user')
+export SIMSON_ASTERISK_AMI_SECRET=$(bashio::config 'asterisk.ami_secret')
+export SIMSON_ASTERISK_CONTEXT=$(bashio::config 'asterisk.context')
+export SIMSON_ASTERISK_EXT_PREFIX=$(bashio::config 'asterisk.extension_prefix')
+
+# HA Supervisor token for API access
+export SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN}"
+
+bashio::log.info "Connecting to ${SIMSON_SERVER_URL} as node ${SIMSON_NODE_ID:-<auto>}"
+
+exec python3 /app/main.py
