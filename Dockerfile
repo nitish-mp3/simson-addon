@@ -7,10 +7,10 @@ RUN apk add --no-cache python3 py3-pip py3-aiohttp
 # Install websockets (not in Alpine repos at the required version)
 RUN pip3 install --no-cache-dir --break-system-packages websockets==13.1
 
-# Copy rootfs (run.sh goes to /run.sh — addon-base calls it automatically via s6)
-COPY rootfs /
+# Copy entrypoint and app
+COPY rootfs/run.sh /run.sh
 RUN chmod a+x /run.sh
-
-# Copy application code
-WORKDIR /app
 COPY app/ /app/
+
+# Bypass s6-overlay: run our script directly as PID 1
+ENTRYPOINT ["/run.sh"]
