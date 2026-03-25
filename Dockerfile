@@ -1,21 +1,13 @@
 ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
-# Install Python and dependencies
-RUN apk add --no-cache \
-    python3 \
-    py3-pip \
-    py3-aiohttp \
-    py3-yaml \
-    && pip3 install --no-cache-dir --break-system-packages \
-       websockets==13.1 \
-       aiohttp==3.10.11
+# Install extra Python dependencies not in the addon-base image
+RUN pip3 install --no-cache-dir --break-system-packages \
+       websockets==13.1
 
-# Copy s6-overlay service directory and rootfs files
+# Copy rootfs (run.sh goes to /run.sh — addon-base calls it automatically via s6)
 COPY rootfs /
-
-# Make s6 service script executable
-RUN chmod a+x /etc/services.d/simson/run
+RUN chmod a+x /run.sh
 
 # Copy application code
 WORKDIR /app
