@@ -1,5 +1,5 @@
-#!/usr/bin/with-contenv bashio
-# Simson Addon — Entry point (called by s6-overlay)
+#!/usr/bin/bashio
+# Simson Addon — Entry point (called by HA Supervisor via s6-overlay)
 set -e
 
 bashio::log.info "Starting Simson Call Relay addon v1.1.0"
