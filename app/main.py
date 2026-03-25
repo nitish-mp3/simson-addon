@@ -9,6 +9,7 @@ import signal
 import sys
 
 from config import Config
+from provisioner import auto_provision
 from protocol import (
     TYPE_CALL_INVITE, TYPE_CALL_STATUS, TYPE_ERROR,
 )
@@ -58,6 +59,24 @@ class SimsonAddon:
     async def run(self):
         """Start all components and run forever."""
         logger = logging.getLogger("simson.main")
+
+        # Auto-provision if admin_token is set but credentials are missing.
+        if self.cfg.needs_provisioning():
+            logger.info("No credentials found — auto-provisioning via admin API...")
+            try:
+                creds = await auto_provision(
+                    self.cfg.server_url,
+                    self.cfg.admin_token,
+                    self.cfg.node_label,
+                )
+                self.cfg.account_id = creds["account_id"]
+                self.cfg.node_id = creds["node_id"]
+                self.cfg.install_token = creds["install_token"]
+                logger.info("Auto-provisioned: account=%s node=%s",
+                            self.cfg.account_id, self.cfg.node_id)
+            except Exception as e:
+                logger.error("Auto-provisioning failed: %s", e)
+                sys.exit(1)
 
         # Validate config.
         errors = self.cfg.validate()

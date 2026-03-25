@@ -2,43 +2,32 @@
 # Simson Addon — Entry point (called by s6-overlay)
 set -e
 
-bashio::log.info "Starting Simson Call Relay addon v1.0.1"
+bashio::log.info "Starting Simson Call Relay addon v1.1.0"
 
 # Export config as environment variables for the Python process
 export SIMSON_SERVER_URL=$(bashio::config 'server_url')
+export SIMSON_ADMIN_TOKEN=$(bashio::config 'admin_token')
+export SIMSON_NODE_LABEL=$(bashio::config 'node_label')
 export SIMSON_ACCOUNT_ID=$(bashio::config 'account_id')
 export SIMSON_NODE_ID=$(bashio::config 'node_id')
 export SIMSON_INSTALL_TOKEN=$(bashio::config 'install_token')
 export SIMSON_LOG_LEVEL=$(bashio::config 'log_level')
 
-# Validate required config — give clear instructions if missing
-if [ -z "$SIMSON_ACCOUNT_ID" ] || [ -z "$SIMSON_NODE_ID" ] || [ -z "$SIMSON_INSTALL_TOKEN" ]; then
+# If no credentials AND no admin_token, show instructions
+if [ -z "$SIMSON_INSTALL_TOKEN" ] && [ -z "$SIMSON_ADMIN_TOKEN" ] && [ ! -f "/data/credentials.json" ]; then
     bashio::log.error "---------------------------------------------"
     bashio::log.error "CONFIGURATION REQUIRED"
     bashio::log.error ""
-    bashio::log.error "Go to the addon Configuration tab and fill in:"
-    bashio::log.error "  - account_id"
-    bashio::log.error "  - node_id"
-    bashio::log.error "  - install_token"
+    bashio::log.error "EASY SETUP (recommended):"
+    bashio::log.error "  1. Enter your Admin Token in the addon config"
+    bashio::log.error "  2. Optionally set a Node Label (e.g. 'Living Room')"
+    bashio::log.error "  3. Click Save and restart the addon"
+    bashio::log.error "  -> The addon will auto-create your account and node"
     bashio::log.error ""
-    bashio::log.error "Get these from your VPS admin API:"
-    bashio::log.error ""
-    bashio::log.error "  1. Create an account:"
-    bashio::log.error "     curl -X POST https://simson-vps.niti.life/admin/accounts \\"
-    bashio::log.error "       -H 'Authorization: Bearer YOUR_ADMIN_TOKEN' \\"
-    bashio::log.error "       -H 'Content-Type: application/json' \\"
-    bashio::log.error "       -d '{\"id\":\"home\",\"name\":\"My Home\"}'"
-    bashio::log.error ""
-    bashio::log.error "  2. Create a node:"
-    bashio::log.error "     curl -X POST https://simson-vps.niti.life/admin/accounts/home/nodes \\"
-    bashio::log.error "       -H 'Authorization: Bearer YOUR_ADMIN_TOKEN' \\"
-    bashio::log.error "       -H 'Content-Type: application/json' \\"
-    bashio::log.error "       -d '{\"id\":\"living_room\",\"label\":\"Living Room\"}'"
-    bashio::log.error ""
-    bashio::log.error "  The response will contain the install_token."
-    bashio::log.error "  Use the account id as account_id, node id as node_id."
+    bashio::log.error "MANUAL SETUP (advanced):"
+    bashio::log.error "  Fill in account_id, node_id, and install_token"
+    bashio::log.error "  from the admin API (see README for curl commands)"
     bashio::log.error "---------------------------------------------"
-    # Sleep briefly so the log is visible, then exit
     sleep 5
     exit 1
 fi
