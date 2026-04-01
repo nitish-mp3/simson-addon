@@ -35,6 +35,16 @@ def load_saved_credentials() -> dict | None:
     return None
 
 
+def clear_saved_credentials() -> None:
+    """Delete persisted credentials so the setup wizard runs again."""
+    try:
+        if os.path.isfile(CREDENTIALS_FILE):
+            os.remove(CREDENTIALS_FILE)
+            logger.info("Cleared saved credentials from %s", CREDENTIALS_FILE)
+    except OSError as e:
+        logger.warning("Could not clear credentials file: %s", e)
+
+
 def _save_credentials(account_id: str, node_id: str, install_token: str) -> None:
     """Persist credentials so they survive addon restarts."""
     os.makedirs(os.path.dirname(CREDENTIALS_FILE), exist_ok=True)

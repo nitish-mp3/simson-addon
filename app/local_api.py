@@ -6,7 +6,7 @@ from aiohttp import web
 from call_manager import CallManager, CallState
 from config import Config
 from protocol import make_call_request, make_call_accept, make_call_reject, make_call_end
-from provisioner import auto_provision
+from provisioner import auto_provision, clear_saved_credentials
 
 logger = logging.getLogger("simson.api")
 
@@ -43,6 +43,7 @@ class LocalAPI:
         self.app.router.add_post("/api/hangup", self.handle_hangup)
         self.app.router.add_get("/api/health", self.handle_health)
         self.app.router.add_post("/api/provision", self.handle_provision)
+        self.app.router.add_post("/api/reset", self.handle_reset)
 
     async def start(self):
         """Start the local API server, falling back to alternate ports if needed."""
@@ -247,10 +248,36 @@ details summary:hover{{text-decoration:underline}}
       <span class="info-value" style="color:#888">e.g. Office, Kitchen, Bedroom…</span>
     </div>
   </div>
+
+  <div class="card" style="border-color:#b71c1c44">
+    <div class="card-title" style="color:#ef9a9a">Danger Zone</div>
+    <p style="color:#888;font-size:13px;margin-bottom:14px">
+      Reset credentials to re-run the setup wizard. Use this if this node is on the wrong account.
+    </p>
+    <button class="btn-primary" style="background:#b71c1c;font-size:13px;padding:9px 20px" onclick="doReset()">Reset Setup</button>
+    <div id="reset-result"></div>
+  </div>
   '''}
 </div>
 
 <script>
+async function doReset() {{
+  if (!confirm('This will clear saved credentials and show the setup wizard. Continue?')) return;
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = 'Resetting…';
+  try {{
+    await fetch('api/reset', {{ method: 'POST' }});
+    document.getElementById('reset-result').innerHTML =
+      '<div class="alert alert-success">Reset complete. Reloading…</div>';
+    setTimeout(() => location.reload(), 1500);
+  }} catch(e) {{
+    document.getElementById('reset-result').innerHTML =
+      '<div class="alert alert-error">Reset failed: ' + e.message + '</div>';
+    btn.disabled = false;
+    btn.textContent = 'Reset Setup';
+  }}
+}}
 async function doSetup() {{
   const btn = document.getElementById('btn-setup');
   const result = document.getElementById('setup-result');
@@ -301,7 +328,7 @@ async function doSetup() {{
     async def handle_health(self, request: web.Request) -> web.Response:
         return web.json_response({
             "status": "ok",
-            "addon_version": "1.2.9",
+            "addon_version": "1.3.0",
             "node_id": self.cfg.node_id,
             "provisioned": bool(self.cfg.install_token),
         })
@@ -355,6 +382,15 @@ async function doSetup() {{
         logger.info("Provisioned via web UI: account=%s node=%s",
                      creds["account_id"], creds["node_id"])
         return web.json_response(creds, status=201)
+
+    async def handle_reset(self, request: web.Request) -> web.Response:
+        """Clear saved credentials so the setup wizard shows again."""
+        clear_saved_credentials()
+        self.cfg.account_id = ""
+        self.cfg.node_id = ""
+        self.cfg.install_token = ""
+        logger.warning("Credentials reset via web UI — setup wizard will show on next load")
+        return web.json_response({"reset": True})
 
     async def handle_list_calls(self, request: web.Request) -> web.Response:
         calls = self.call_mgr.all_calls

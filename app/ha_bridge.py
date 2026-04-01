@@ -1,12 +1,21 @@
 """Home Assistant event bridge — fires events to HA via the Supervisor API."""
 
 import logging
+import os
 import aiohttp
 from config import Config
 
 logger = logging.getLogger("simson.ha_bridge")
 
-HA_API_BASE = "http://supervisor/core/api"
+# With host_network:true the Docker internal "supervisor" hostname may not
+# resolve. HA Supervisor always sets SUPERVISOR_URL; fall back to the known
+# internal supervisor IP used by HA OS.
+_supervisor_host = (
+    os.environ.get("SUPERVISOR_URL", "").rstrip("/")
+    or os.environ.get("HASSIO_TOKEN", "") and "http://supervisor"  # token present → DNS works
+    or "http://172.30.32.2"
+)
+HA_API_BASE = f"{_supervisor_host}/core/api"
 
 
 class HABridge:
