@@ -43,16 +43,33 @@ class LocalAPI:
         self.app.router.add_get("/api/health", self.handle_health)
 
     async def start(self):
-        """Start the local API server."""
+        """Start the local API server, falling back to alternate ports if needed."""
         self._runner = web.AppRunner(self.app)
         await self._runner.setup()
-        try:
-            site = web.TCPSite(self._runner, "0.0.0.0", self.cfg.local_api_port)
-            await site.start()
-        except OSError as e:
-            logger.error("Failed to bind API on port %d: %s", self.cfg.local_api_port, e)
-            raise
-        logger.info("Local API listening on port %d", self.cfg.local_api_port)
+
+        preferred = self.cfg.local_api_port
+        candidates = [preferred] + [preferred + i for i in range(1, 4)]
+
+        for port in candidates:
+            try:
+                site = web.TCPSite(self._runner, "0.0.0.0", port)
+                await site.start()
+                self.cfg.local_api_port = port  # update so callers see the real port
+                if port != preferred:
+                    logger.warning(
+                        "Port %d in use — local API bound to fallback port %d. "
+                        "Update the addon 'local_api_port' option to %d to avoid this.",
+                        preferred, port, port,
+                    )
+                logger.info("Local API listening on port %d", port)
+                return
+            except OSError as e:
+                logger.warning("Cannot bind port %d: %s", port, e)
+
+        raise OSError(
+            f"Could not bind local API on any of ports {candidates}. "
+            "Set 'local_api_port' in addon options to a free port."
+        )
 
     async def stop(self):
         """Stop the local API server."""
