@@ -287,7 +287,7 @@ async function doSetup() {{
     async def handle_health(self, request: web.Request) -> web.Response:
         return web.json_response({
             "status": "ok",
-            "addon_version": "1.2.7",
+            "addon_version": "1.2.8",
             "node_id": self.cfg.node_id,
             "provisioned": bool(self.cfg.install_token),
         })
