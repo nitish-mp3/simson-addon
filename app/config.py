@@ -61,7 +61,7 @@ class Config:
         )
 
         # Ingress / local API
-        self.local_api_port: int = int(opts.get("local_api_port", os.environ.get("SIMSON_LOCAL_API_PORT", 8099)))
+        self.local_api_port: int = int(opts.get("local_api_port", os.environ.get("SIMSON_LOCAL_API_PORT", 8799)))
 
         # HA Supervisor token (always from env — not in options.json)
         self.supervisor_token: str = os.environ.get("SUPERVISOR_TOKEN", "")

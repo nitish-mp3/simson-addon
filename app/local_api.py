@@ -199,7 +199,7 @@ details summary:hover{{text-decoration:underline}}
     </div>
     <div class="step">
       <div class="step-num">3</div>
-      <div class="step-text">Click <b>Set Up</b>. The addon creates your account and node automatically.</div>
+      <div class="step-text"><b>Calling between two HA instances?</b> Both must share the same Account ID. Copy the Account ID shown on your first instance's Simson panel and paste it in the Account ID field below. Leave it empty for a brand-new standalone setup.</div>
     </div>
     <div class="divider"></div>
     <div class="field">
@@ -207,9 +207,12 @@ details summary:hover{{text-decoration:underline}}
       <input type="password" id="f-token" placeholder="Paste your admin token" autocomplete="off" />
     </div>
     <div class="field">
-      <label>Account ID <span style="color:#555;font-weight:400">(optional)</span></label>
-      <input type="text" id="f-account" placeholder="Auto-generated if empty" />
-      <div class="hint">Leave empty for first setup. To add another node to an <b>existing</b> account (so they can call each other), enter that account ID here.</div>
+      <label>Account ID <span style="color:#03a9f4;font-weight:500;font-size:12px">— required for calling between instances</span></label>
+      <input type="text" id="f-account" placeholder="e.g. haos203 — leave empty for first setup" />
+      <div class="hint" style="color:#e6a817;background:#2a1e00;border:1px solid #e6a81733;border-radius:6px;padding:8px 10px;margin-top:6px">
+        ⚠ To call between two HA instances, both <b>must use the same Account ID</b>.<br>
+        On your first instance's Simson panel, copy the Account ID from the Node Info card and paste it here.
+      </div>
     </div>
     <div class="field">
       <label>Node Label</label>
@@ -224,15 +227,26 @@ details summary:hover{{text-decoration:underline}}
   {node_html}
   {call_html}
 
-  {"" if not provisioned else '''
-  <details>
-    <summary>Add another node to this account</summary>
-    <p style="color:#888;font-size:13px;margin:12px 0">
-      On your <b>other</b> HA instance, install the Simson addon, open this panel, and enter
-      the <b>same Account ID</b> shown above with a different Node Label. Both nodes will
-      share the same account and can call each other.
+  {"" if not provisioned else f'''
+  <div class="card">
+    <div class="card-title">Add Another HA Instance</div>
+    <p style="color:#bbb;font-size:13px;margin-bottom:14px;line-height:1.6">
+      To call between this node and another HA instance, install the Simson addon on the second HA,
+      open its Simson panel, and use the values below during setup.
     </p>
-  </details>
+    <div class="info-row">
+      <span class="info-label">Use this Account ID</span>
+      <span class="info-value" style="display:flex;align-items:center;gap:8px">
+        <code style="background:#222;padding:2px 8px;border-radius:5px;font-size:13px">{self.cfg.account_id}</code>
+        <button onclick="navigator.clipboard.writeText('{self.cfg.account_id}');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',2000)"
+          style="background:#03a9f422;color:#03a9f4;border:1px solid #03a9f433;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:12px;font-weight:600">Copy</button>
+      </span>
+    </div>
+    <div class="info-row" style="border-bottom:none">
+      <span class="info-label">Use a different Node Label</span>
+      <span class="info-value" style="color:#888">e.g. Office, Kitchen, Bedroom…</span>
+    </div>
+  </div>
   '''}
 </div>
 
@@ -287,7 +301,7 @@ async function doSetup() {{
     async def handle_health(self, request: web.Request) -> web.Response:
         return web.json_response({
             "status": "ok",
-            "addon_version": "1.2.8",
+            "addon_version": "1.2.9",
             "node_id": self.cfg.node_id,
             "provisioned": bool(self.cfg.install_token),
         })
