@@ -22,6 +22,7 @@ TYPE_CALL_ACCEPT = "call.accept"
 TYPE_CALL_REJECT = "call.reject"
 TYPE_CALL_END = "call.end"
 TYPE_CALL_STATUS = "call.status"
+TYPE_WEBRTC_SIGNAL = "webrtc.signal"
 TYPE_ERROR = "error"
 
 # Error codes
@@ -118,4 +119,16 @@ def make_call_end(call_id: str, node_id: str,
         "call_id": call_id,
         "node_id": node_id,
         "reason": reason,
+    })
+
+
+def make_webrtc_signal(call_id: str, from_node: str, to_node: str,
+                       signal_type: str, data: dict) -> dict:
+    """Create a WebRTC signaling message (SDP offer/answer or ICE candidate)."""
+    return make_envelope(TYPE_WEBRTC_SIGNAL, {
+        "call_id": call_id,
+        "from_node_id": from_node,
+        "to_node_id": to_node,
+        "signal_type": signal_type,
+        "data": data,
     })

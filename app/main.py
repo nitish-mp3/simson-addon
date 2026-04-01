@@ -11,7 +11,7 @@ import sys
 from config import Config
 from provisioner import auto_provision, load_saved_credentials
 from protocol import (
-    TYPE_CALL_INVITE, TYPE_CALL_STATUS, TYPE_ERROR,
+    TYPE_CALL_INVITE, TYPE_CALL_STATUS, TYPE_ERROR, TYPE_WEBRTC_SIGNAL,
 )
 from wss_client import WSSClient
 from call_manager import CallManager, CallInfo, CallState
@@ -192,6 +192,16 @@ class SimsonAddon:
                 "ref": payload.get("ref", ""),
             })
 
+        elif msg_type == TYPE_WEBRTC_SIGNAL:
+            # Forward WebRTC signals to connected SSE clients (Lovelace card).
+            self.api.push_sse_event({
+                "type": "webrtc_signal",
+                "call_id": payload.get("call_id", ""),
+                "from_node_id": payload.get("from_node_id", ""),
+                "signal_type": payload.get("signal_type", ""),
+                "data": payload.get("data"),
+            })
+
         else:
             logger.debug("Unhandled message type: %s", msg_type)
 
@@ -223,6 +233,15 @@ class SimsonAddon:
             "call_type": call_type,
         })
 
+        # Push to SSE so the Lovelace card shows incoming call immediately.
+        self.api.push_sse_event({
+            "type": "incoming_call",
+            "call_id": call_id,
+            "from_node_id": from_node,
+            "from_label": from_label,
+            "call_type": call_type,
+        })
+
         # If Asterisk is enabled and call type is voice/sip, trigger it.
         if self.asterisk and self.asterisk.connected and call_type in ("voice", "sip"):
             ext = metadata.get("extension", "s")
@@ -244,6 +263,16 @@ class SimsonAddon:
 
         # Fire HA event.
         await self.ha.fire_event("simson_call_status", {
+            "call_id": call_id,
+            "status": status,
+            "reason": reason,
+            "direction": call.direction,
+            "remote_node_id": call.remote_node_id,
+        })
+
+        # Push to SSE so the Lovelace card reacts immediately.
+        self.api.push_sse_event({
+            "type": "call_status",
             "call_id": call_id,
             "status": status,
             "reason": reason,

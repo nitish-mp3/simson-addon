@@ -1,11 +1,13 @@
 """Local HTTP API — exposed via HA ingress for the integration to talk to."""
 
+import asyncio
+import json
 import logging
 from aiohttp import web
 
 from call_manager import CallManager, CallState
 from config import Config
-from protocol import make_call_request, make_call_accept, make_call_reject, make_call_end
+from protocol import make_call_request, make_call_accept, make_call_reject, make_call_end, make_webrtc_signal
 from provisioner import auto_provision, clear_saved_credentials
 
 logger = logging.getLogger("simson.api")
@@ -31,6 +33,7 @@ class LocalAPI:
         self.wss_client = wss_client
         self.app = web.Application()
         self._runner = None
+        self._sse_subscribers: list[asyncio.Queue] = []
         self._setup_routes()
 
     def _setup_routes(self):
@@ -44,6 +47,8 @@ class LocalAPI:
         self.app.router.add_get("/api/health", self.handle_health)
         self.app.router.add_post("/api/provision", self.handle_provision)
         self.app.router.add_post("/api/reset", self.handle_reset)
+        self.app.router.add_get("/api/events", self.handle_sse)
+        self.app.router.add_post("/api/webrtc/signal", self.handle_webrtc_signal)
 
     async def start(self):
         """Start the local API server, falling back to alternate ports if needed."""
@@ -328,7 +333,7 @@ async function doSetup() {{
     async def handle_health(self, request: web.Request) -> web.Response:
         return web.json_response({
             "status": "ok",
-            "addon_version": "1.3.0",
+            "addon_version": "2.0.0",
             "node_id": self.cfg.node_id,
             "provisioned": bool(self.cfg.install_token),
         })
@@ -391,6 +396,79 @@ async function doSetup() {{
         self.cfg.install_token = ""
         logger.warning("Credentials reset via web UI — setup wizard will show on next load")
         return web.json_response({"reset": True})
+
+    # --- SSE (Server-Sent Events) for real-time push to Lovelace card ---
+
+    async def handle_sse(self, request: web.Request) -> web.StreamResponse:
+        """Stream real-time events (WebRTC signals, call state) to the card."""
+        resp = web.StreamResponse(
+            status=200,
+            reason="OK",
+            headers={
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
+        await resp.prepare(request)
+
+        queue: asyncio.Queue = asyncio.Queue(maxsize=64)
+        self._sse_subscribers.append(queue)
+        logger.debug("SSE client connected (total: %d)", len(self._sse_subscribers))
+
+        try:
+            # Send initial state so card syncs immediately.
+            init_event = {
+                "type": "init",
+                "node_id": self.cfg.node_id,
+                "provisioned": bool(self.cfg.install_token),
+                "vps_connected": self.wss_client.connected if self.wss_client else False,
+            }
+            await resp.write(f"data: {json.dumps(init_event)}\n\n".encode())
+
+            while True:
+                event = await queue.get()
+                await resp.write(f"data: {json.dumps(event)}\n\n".encode())
+        except (asyncio.CancelledError, ConnectionResetError, ConnectionError):
+            pass
+        finally:
+            self._sse_subscribers.remove(queue)
+            logger.debug("SSE client disconnected (remaining: %d)", len(self._sse_subscribers))
+        return resp
+
+    def push_sse_event(self, event: dict):
+        """Push an event to all connected SSE subscribers (non-blocking)."""
+        for q in self._sse_subscribers:
+            try:
+                q.put_nowait(event)
+            except asyncio.QueueFull:
+                pass  # Drop if subscriber is too slow.
+
+    # --- WebRTC signal relay ---
+
+    async def handle_webrtc_signal(self, request: web.Request) -> web.Response:
+        """Relay a WebRTC signal (SDP/ICE) from the card through VPS to the remote node."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+
+        call_id = body.get("call_id", "")
+        to_node = body.get("to_node_id", "")
+        signal_type = body.get("signal_type", "")  # offer, answer, ice-candidate
+        data = body.get("data")
+
+        if not call_id or not to_node or not signal_type or data is None:
+            return web.json_response({"error": "call_id, to_node_id, signal_type, data required"}, status=400)
+
+        msg = make_webrtc_signal(call_id, self.cfg.node_id, to_node, signal_type, data)
+        try:
+            await self.send_fn(msg)
+        except Exception as e:
+            return web.json_response({"error": f"send failed: {e}"}, status=502)
+
+        return web.json_response({"relayed": True})
 
     async def handle_list_calls(self, request: web.Request) -> web.Response:
         calls = self.call_mgr.all_calls
