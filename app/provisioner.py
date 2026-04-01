@@ -58,9 +58,13 @@ def _admin_url(server_url: str) -> str:
 
 
 async def auto_provision(server_url: str, admin_token: str,
-                         node_label: str = "") -> dict:
+                         node_label: str = "", account_id: str = "",
+                         capabilities: list[str] | None = None) -> dict:
     """Create account + node on VPS, return {account_id, node_id, install_token}.
 
+    Args:
+        account_id: If provided, reuse this account (lets multiple nodes share one account).
+                    If empty, auto-generates from hostname.
     Raises on failure.
     """
     base = _admin_url(server_url)
@@ -69,10 +73,11 @@ async def auto_provision(server_url: str, admin_token: str,
         "Content-Type": "application/json",
     }
 
-    # Generate deterministic IDs from hostname.
     hostname = socket.gethostname() or "ha"
-    account_id = _sanitize_id(f"ha_{hostname}")
+    if not account_id:
+        account_id = _sanitize_id(f"ha_{hostname}")
     node_id = _sanitize_id(node_label or hostname)
+    caps = capabilities or ["haos", "voice"]
 
     logger.info("Auto-provisioning: account=%s  node=%s  vps=%s", account_id, node_id, base)
 
@@ -99,7 +104,7 @@ async def auto_provision(server_url: str, admin_token: str,
                 "id": node_id,
                 "label": node_label or node_id,
                 "node_type": "haos",
-                "capabilities": ["haos", "voice"],
+                "capabilities": caps,
             },
         ) as resp:
             if resp.status == 201:

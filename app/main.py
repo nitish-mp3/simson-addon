@@ -9,7 +9,7 @@ import signal
 import sys
 
 from config import Config
-from provisioner import auto_provision
+from provisioner import auto_provision, load_saved_credentials
 from protocol import (
     TYPE_CALL_INVITE, TYPE_CALL_STATUS, TYPE_ERROR,
 )
@@ -60,7 +60,11 @@ class SimsonAddon:
         """Start all components and run forever."""
         logger = logging.getLogger("simson.main")
 
-        # Auto-provision if admin_token is set but credentials are missing.
+        # ── 1. Start local API first so the ingress panel is always reachable ──
+        await self.api.start()
+        logger.info("Local API listening on port %d", self.cfg.local_api_port)
+
+        # ── 2. Auto-provision if admin_token is set but credentials are missing ──
         if self.cfg.needs_provisioning():
             logger.info("No credentials found — auto-provisioning via admin API...")
             try:
@@ -68,17 +72,31 @@ class SimsonAddon:
                     self.cfg.server_url,
                     self.cfg.admin_token,
                     self.cfg.node_label,
+                    self.cfg.account_id,
+                    self.cfg.capabilities,
                 )
                 self.cfg.account_id = creds["account_id"]
                 self.cfg.node_id = creds["node_id"]
                 self.cfg.install_token = creds["install_token"]
+                self.call_mgr.node_id = self.cfg.node_id
                 logger.info("Auto-provisioned: account=%s node=%s",
                             self.cfg.account_id, self.cfg.node_id)
             except Exception as e:
                 logger.error("Auto-provisioning failed: %s", e)
-                sys.exit(1)
 
-        # Validate config.
+        # ── 3. If still no credentials, wait for setup via ingress panel ──
+        if not self.cfg.install_token:
+            logger.warning(
+                "No credentials configured. Open the Simson panel in "
+                "Home Assistant to set up, or add account_id / node_id / "
+                "install_token in the addon configuration."
+            )
+            await self._wait_for_credentials()
+            self.call_mgr.node_id = self.cfg.node_id
+            logger.info("Credentials loaded: account=%s node=%s",
+                        self.cfg.account_id, self.cfg.node_id)
+
+        # ── 4. Validate config ──
         errors = self.cfg.validate()
         if errors:
             for e in errors:
@@ -87,9 +105,6 @@ class SimsonAddon:
 
         logger.info("Simson addon starting")
         logger.info("Node: %s, Account: %s", self.cfg.node_id, self.cfg.account_id)
-
-        # Start local API.
-        await self.api.start()
 
         # Connect to Asterisk if enabled.
         if self.asterisk:
@@ -119,6 +134,17 @@ class SimsonAddon:
             await self.wss.start()
         finally:
             await self.shutdown()
+
+    async def _wait_for_credentials(self):
+        """Block until credentials appear (provisioned via ingress panel)."""
+        logger = logging.getLogger("simson.main")
+        while not self.cfg.install_token:
+            await asyncio.sleep(2)
+            saved = load_saved_credentials()
+            if saved:
+                self.cfg.account_id = saved["account_id"]
+                self.cfg.node_id = saved["node_id"]
+                self.cfg.install_token = saved["install_token"]
 
     async def shutdown(self):
         """Gracefully stop all components."""

@@ -6,6 +6,7 @@ from aiohttp import web
 from call_manager import CallManager, CallState
 from config import Config
 from protocol import make_call_request, make_call_accept, make_call_reject, make_call_end
+from provisioner import auto_provision
 
 logger = logging.getLogger("simson.api")
 
@@ -41,6 +42,7 @@ class LocalAPI:
         self.app.router.add_post("/api/reject", self.handle_reject)
         self.app.router.add_post("/api/hangup", self.handle_hangup)
         self.app.router.add_get("/api/health", self.handle_health)
+        self.app.router.add_post("/api/provision", self.handle_provision)
 
     async def start(self):
         """Start the local API server, falling back to alternate ports if needed."""
@@ -79,64 +81,215 @@ class LocalAPI:
     # --- Handlers ---
 
     async def handle_ingress(self, request: web.Request) -> web.Response:
-        """Serve the ingress web panel."""
+        """Serve the ingress web panel — setup wizard or dashboard."""
+        provisioned = bool(self.cfg.install_token)
         vps_connected = self.wss_client.connected if self.wss_client else False
         active = self.call_mgr.active_call
-        status_class = "ok" if vps_connected else "err"
-        status_text = "Connected" if vps_connected else "Disconnected"
+
+        # Determine status badge.
+        if not provisioned:
+            badge_cls, badge_txt = "badge-setup", "Setup Required"
+        elif vps_connected:
+            badge_cls, badge_txt = "badge-ok", "Connected"
+        else:
+            badge_cls, badge_txt = "badge-err", "Disconnected"
+
+        # Active call section (dashboard only).
         call_html = ""
-        if active:
+        if provisioned and active:
             call_html = (
                 f'<div class="card">'
-                f'<h2>Active Call</h2>'
-                f'<p><b>Call ID:</b> {active.call_id[:8]}...</p>'
-                f'<p><b>With:</b> {active.remote_label or active.remote_node_id}</p>'
-                f'<p><b>Direction:</b> {active.direction}</p>'
-                f'<p><b>State:</b> {active.state.value}</p>'
+                f'<div class="card-title">Active Call</div>'
+                f'<div class="info-row"><span class="info-label">Call ID</span>'
+                f'<span class="info-value">{active.call_id[:12]}…</span></div>'
+                f'<div class="info-row"><span class="info-label">With</span>'
+                f'<span class="info-value">{active.remote_label or active.remote_node_id}</span></div>'
+                f'<div class="info-row"><span class="info-label">Direction</span>'
+                f'<span class="info-value">{active.direction}</span></div>'
+                f'<div class="info-row"><span class="info-label">State</span>'
+                f'<span class="info-value">{active.state.value}</span></div>'
                 f'</div>'
             )
-        else:
-            call_html = '<div class="card"><h2>Calls</h2><p>No active call</p></div>'
+        elif provisioned:
+            call_html = '<div class="card"><div class="card-title">Calls</div><p class="muted">No active call</p></div>'
 
+        # Node info section (dashboard only).
+        node_html = ""
+        if provisioned:
+            vps_dot = "dot-ok" if vps_connected else "dot-err"
+            vps_label = "Connected" if vps_connected else "Disconnected"
+            node_html = (
+                f'<div class="card">'
+                f'<div class="card-title">Node Info</div>'
+                f'<div class="info-row"><span class="info-label">Node ID</span>'
+                f'<span class="info-value">{self.cfg.node_id}</span></div>'
+                f'<div class="info-row"><span class="info-label">Account</span>'
+                f'<span class="info-value">{self.cfg.account_id}</span></div>'
+                f'<div class="info-row"><span class="info-label">Server</span>'
+                f'<span class="info-value">{self.cfg.server_url}</span></div>'
+                f'<div class="info-row"><span class="info-label">VPS</span>'
+                f'<span class="info-value"><span class="dot {vps_dot}"></span>{vps_label}</span></div>'
+                f'</div>'
+            )
+
+        # Escape braces for f-string safety in CSS/JS — use doubled braces.
         html = f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Simson Call Relay</title>
 <style>
-  body{{font-family:system-ui,-apple-system,sans-serif;margin:0;padding:20px;background:#1c1c1c;color:#e1e1e1}}
-  h1{{color:#03a9f4;margin-bottom:4px}} .sub{{color:#888;font-size:14px;margin-bottom:24px}}
-  .card{{background:#2a2a2a;border-radius:12px;padding:16px 20px;margin-bottom:16px}}
-  .card h2{{margin:0 0 8px;font-size:16px;color:#aaa}}
-  .card p{{margin:4px 0;font-size:14px}}
-  .badge{{display:inline-block;padding:2px 10px;border-radius:10px;font-size:13px;font-weight:600}}
-  .ok{{background:#1b5e20;color:#a5d6a7}} .err{{background:#b71c1c;color:#ef9a9a}}
-  .row{{display:flex;gap:12px;flex-wrap:wrap}}
-  .row .card{{flex:1;min-width:200px}}
-</style></head><body>
-<h1>Simson Call Relay</h1>
-<p class="sub">Node: <b>{self.cfg.node_id}</b> &middot; Account: <b>{self.cfg.account_id}</b></p>
-<div class="row">
-  <div class="card"><h2>VPS Connection</h2><p><span class="badge {status_class}">{status_text}</span></p>
-    <p>Server: {self.cfg.server_url}</p></div>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:system-ui,-apple-system,sans-serif;background:#111;color:#e1e1e1;min-height:100vh}}
+.container{{max-width:600px;margin:0 auto;padding:24px 16px}}
+.header{{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px}}
+.header h1{{font-size:20px;display:flex;align-items:center;gap:10px}}
+.header h1 span{{color:#03a9f4}}
+.badge{{font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;text-transform:uppercase;letter-spacing:.5px}}
+.badge-ok{{background:#1b5e2088;color:#a5d6a7;border:1px solid #a5d6a740}}
+.badge-err{{background:#b71c1c88;color:#ef9a9a;border:1px solid #ef9a9a40}}
+.badge-setup{{background:#e6510088;color:#ffcc80;border:1px solid #ffcc8040}}
+.card{{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:20px;margin-bottom:16px}}
+.card-title{{font-size:13px;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:14px;font-weight:600}}
+.info-row{{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #222}}
+.info-row:last-child{{border-bottom:none}}
+.info-label{{color:#888;font-size:13px}}
+.info-value{{font-size:13px;font-weight:500;display:flex;align-items:center;gap:6px}}
+.dot{{width:8px;height:8px;border-radius:50%;display:inline-block}}
+.dot-ok{{background:#4caf50}} .dot-err{{background:#f44336}}
+p.muted{{color:#666;font-size:14px}}
+.field{{margin-bottom:16px}}
+.field label{{display:block;font-size:13px;color:#aaa;margin-bottom:6px;font-weight:500}}
+.field input{{width:100%;background:#222;border:1px solid #333;border-radius:8px;padding:10px 14px;color:#e1e1e1;font-size:14px;outline:none;transition:border-color .2s}}
+.field input:focus{{border-color:#03a9f4}}
+.field .hint{{font-size:12px;color:#555;margin-top:5px;line-height:1.4}}
+.btn-primary{{display:inline-flex;align-items:center;gap:8px;background:#03a9f4;color:#fff;border:none;border-radius:8px;padding:12px 28px;font-size:14px;font-weight:600;cursor:pointer;transition:background .2s,transform .1s;margin-top:4px}}
+.btn-primary:hover{{background:#0288d1}}
+.btn-primary:active{{transform:scale(.97)}}
+.btn-primary:disabled{{opacity:.5;cursor:not-allowed;transform:none}}
+.alert{{padding:12px 16px;border-radius:8px;font-size:13px;margin-top:16px;line-height:1.5}}
+.alert-success{{background:#1b5e2044;border:1px solid #4caf5033;color:#a5d6a7}}
+.alert-error{{background:#b71c1c33;border:1px solid #f4433633;color:#ef9a9a}}
+.alert-info{{background:#0d47a133;border:1px solid #2196f333;color:#90caf9}}
+.step{{display:flex;gap:12px;align-items:flex-start;margin-bottom:20px}}
+.step-num{{width:28px;height:28px;background:#03a9f422;color:#03a9f4;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0;margin-top:2px}}
+.step-text{{font-size:14px;color:#bbb;line-height:1.5}}
+.step-text b{{color:#e1e1e1}}
+.divider{{height:1px;background:#222;margin:20px 0}}
+details{{margin-top:16px}} details summary{{cursor:pointer;color:#03a9f4;font-size:13px;font-weight:500}}
+details summary:hover{{text-decoration:underline}}
+</style>
+</head><body>
+<div class="container">
+  <div class="header">
+    <h1>📞 <span>Simson Call Relay</span></h1>
+    <span class="badge {badge_cls}">{badge_txt}</span>
+  </div>
+
+  {"" if provisioned else '''
+  <div class="card" id="setup-card">
+    <div class="card-title">Quick Setup</div>
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-text">Enter your <b>VPS admin token</b> — the one from deployment.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-text">Choose a <b>node label</b> (e.g. "Living Room"). This identifies this HA instance.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-text">Click <b>Set Up</b>. The addon creates your account and node automatically.</div>
+    </div>
+    <div class="divider"></div>
+    <div class="field">
+      <label>Admin Token</label>
+      <input type="password" id="f-token" placeholder="Paste your admin token" autocomplete="off" />
+    </div>
+    <div class="field">
+      <label>Account ID <span style="color:#555;font-weight:400">(optional)</span></label>
+      <input type="text" id="f-account" placeholder="Auto-generated if empty" />
+      <div class="hint">Leave empty for first setup. To add another node to an <b>existing</b> account (so they can call each other), enter that account ID here.</div>
+    </div>
+    <div class="field">
+      <label>Node Label</label>
+      <input type="text" id="f-label" placeholder="e.g. Living Room, Office, Kitchen" />
+      <div class="hint">A friendly name for this HA instance. Used to generate the node ID.</div>
+    </div>
+    <button class="btn-primary" id="btn-setup" onclick="doSetup()">Set Up Node</button>
+    <div id="setup-result"></div>
+  </div>
+  '''}
+
+  {node_html}
   {call_html}
+
+  {"" if not provisioned else '''
+  <details>
+    <summary>Add another node to this account</summary>
+    <p style="color:#888;font-size:13px;margin:12px 0">
+      On your <b>other</b> HA instance, install the Simson addon, open this panel, and enter
+      the <b>same Account ID</b> shown above with a different Node Label. Both nodes will
+      share the same account and can call each other.
+    </p>
+  </details>
+  '''}
 </div>
-<div class="card"><h2>API Endpoints</h2>
-  <p>GET <code>/api/health</code> — health check</p>
-  <p>GET <code>/api/status</code> — connection &amp; call status</p>
-  <p>GET <code>/api/calls</code> — call history</p>
-  <p>POST <code>/api/call</code> — initiate call</p>
-  <p>POST <code>/api/answer</code> — answer incoming</p>
-  <p>POST <code>/api/reject</code> — reject incoming</p>
-  <p>POST <code>/api/hangup</code> — end call</p>
-</div>
-<script>setTimeout(()=>location.reload(),10000)</script>
+
+<script>
+async function doSetup() {{
+  const btn = document.getElementById('btn-setup');
+  const result = document.getElementById('setup-result');
+  const token = document.getElementById('f-token').value.trim();
+  const label = document.getElementById('f-label').value.trim();
+  const account = document.getElementById('f-account').value.trim();
+
+  if (!token) {{ result.innerHTML = '<div class="alert alert-error">Admin token is required.</div>'; return; }}
+  if (!label) {{ result.innerHTML = '<div class="alert alert-error">Node label is required.</div>'; return; }}
+
+  btn.disabled = true;
+  btn.textContent = 'Setting up…';
+  result.innerHTML = '<div class="alert alert-info">Creating account and node on VPS…</div>';
+
+  try {{
+    const resp = await fetch('api/provision', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ admin_token: token, node_label: label, account_id: account }}),
+    }});
+    const data = await resp.json();
+    if (resp.ok) {{
+      result.innerHTML =
+        '<div class="alert alert-success">' +
+        '✓ Setup complete!<br>' +
+        '<b>Account:</b> ' + data.account_id + '<br>' +
+        '<b>Node:</b> ' + data.node_id + '<br>' +
+        '<small>Credentials saved. Reloading in 3 seconds…</small>' +
+        '</div>';
+      setTimeout(() => location.reload(), 3000);
+    }} else {{
+      result.innerHTML = '<div class="alert alert-error">✗ ' + (data.error || 'Setup failed') + '</div>';
+      btn.disabled = false;
+      btn.textContent = 'Set Up Node';
+    }}
+  }} catch (e) {{
+    result.innerHTML = '<div class="alert alert-error">✗ Network error: ' + e.message + '</div>';
+    btn.disabled = false;
+    btn.textContent = 'Set Up Node';
+  }}
+}}
+{"" if provisioned else ""}
+</script>
+{"<script>setTimeout(()=>location.reload(),10000)</script>" if provisioned else ""}
 </body></html>"""
         return web.Response(text=html, content_type="text/html")
 
     async def handle_health(self, request: web.Request) -> web.Response:
         return web.json_response({
             "status": "ok",
-            "addon_version": "1.0.0",
+            "addon_version": "1.2.7",
             "node_id": self.cfg.node_id,
+            "provisioned": bool(self.cfg.install_token),
         })
 
     async def handle_status(self, request: web.Request) -> web.Response:
@@ -145,10 +298,49 @@ class LocalAPI:
         return web.json_response({
             "node_id": self.cfg.node_id,
             "account_id": self.cfg.account_id,
+            "server_url": self.cfg.server_url,
             "vps_connected": vps_connected,
+            "provisioned": bool(self.cfg.install_token),
             "active_call": _call_to_dict(active) if active else None,
             "asterisk_connected": self.asterisk.connected if self.asterisk else False,
         })
+
+    async def handle_provision(self, request: web.Request) -> web.Response:
+        """Provision account + node on VPS from the ingress panel."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+
+        admin_token = body.get("admin_token", "").strip()
+        node_label = body.get("node_label", "").strip()
+        account_id = body.get("account_id", "").strip()
+
+        if not admin_token:
+            return web.json_response({"error": "admin_token is required"}, status=400)
+        if not node_label:
+            return web.json_response({"error": "node_label is required"}, status=400)
+
+        try:
+            creds = await auto_provision(
+                server_url=self.cfg.server_url,
+                admin_token=admin_token,
+                node_label=node_label,
+                account_id=account_id,
+                capabilities=self.cfg.capabilities,
+            )
+        except Exception as e:
+            logger.error("Provision via web UI failed: %s", e)
+            return web.json_response({"error": str(e)}, status=502)
+
+        # Update in-memory config so the main loop can pick up the credentials.
+        self.cfg.account_id = creds["account_id"]
+        self.cfg.node_id = creds["node_id"]
+        self.cfg.install_token = creds["install_token"]
+
+        logger.info("Provisioned via web UI: account=%s node=%s",
+                     creds["account_id"], creds["node_id"])
+        return web.json_response(creds, status=201)
 
     async def handle_list_calls(self, request: web.Request) -> web.Response:
         calls = self.call_mgr.all_calls
