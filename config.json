@@ -8,7 +8,7 @@
   "startup": "application",
   "boot": "auto",
   "ingress": true,
-  "ingress_port": 8099,
+  "ingress_port": 8599,
   "panel_icon": "mdi:phone-voip",
   "panel_title": "Simson",
   "homeassistant_api": true,
