@@ -193,14 +193,17 @@ class SimsonAddon:
             })
 
         elif msg_type == TYPE_WEBRTC_SIGNAL:
-            # Forward WebRTC signals to connected SSE clients (Lovelace card).
-            self.api.push_sse_event({
-                "type": "webrtc_signal",
+            sig_payload = {
                 "call_id": payload.get("call_id", ""),
                 "from_node_id": payload.get("from_node_id", ""),
                 "signal_type": payload.get("signal_type", ""),
                 "data": payload.get("data"),
-            })
+            }
+            # Fire as HA event — card subscribes via hass.connection.subscribeEvents
+            # (works through HTTPS WebSocket, no mixed-content issues).
+            await self.ha.fire_event("simson_webrtc_signal", sig_payload)
+            # Also push to SSE as fallback for plain-HTTP setups.
+            self.api.push_sse_event({"type": "webrtc_signal", **sig_payload})
 
         else:
             logger.debug("Unhandled message type: %s", msg_type)
