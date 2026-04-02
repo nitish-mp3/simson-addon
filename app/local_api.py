@@ -91,6 +91,7 @@ class LocalAPI:
         provisioned = bool(self.cfg.install_token)
         vps_connected = self.wss_client.connected if self.wss_client else False
         active = self.call_mgr.active_call
+        has_admin_token = bool(self.cfg.admin_token)
 
         # Determine status badge.
         if not provisioned:
@@ -137,6 +138,70 @@ class LocalAPI:
                 f'<span class="info-value"><span class="dot {vps_dot}"></span>{vps_label}</span></div>'
                 f'</div>'
             )
+
+        # Build setup card HTML (shown only when not yet provisioned).
+        # If admin_token is already in the addon config, we hide the token field
+        # and use the configured token automatically — nothing for the user to copy-paste.
+        if not provisioned:
+            if has_admin_token:
+                token_section = (
+                    '<div class="alert alert-success" style="margin-bottom:16px">'
+                    '✓ Admin token found in addon configuration — no need to enter it here.'
+                    '</div>'
+                )
+                token_js_check = "  // admin_token comes from addon config — no field to validate"
+                token_js_payload = ""  # send empty string; server uses cfg.admin_token
+            else:
+                token_section = f"""    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-text">Set your <b>VPS admin token</b> in the addon's <b>Configuration</b> tab, then come back here.<br>
+        <small style="color:#555">Or paste it below as a one-time entry.</small>
+      </div>
+    </div>
+    <div class="field">
+      <label>Admin Token <span style="color:#ef9a9a;font-size:12px">— paste here if not set in addon config</span></label>
+      <input type="password" id="f-token" placeholder="Paste your VPS admin token" autocomplete="off" />
+    </div>"""
+                token_js_check = (
+                    "  const token = (document.getElementById('f-token') || {{}}).value?.trim() || '';\n"
+                    "  if (!token) {{ result.innerHTML = '<div class=\"alert alert-error\">Admin token is required. "
+                    "Either set it in the addon Configuration tab or paste it above.</div>'; return; }}"
+                )
+                token_js_payload = 'admin_token: token, '
+
+            setup_card_html = f"""
+  <div class="card" id="setup-card">
+    <div class="card-title">Quick Setup</div>
+    {token_section}
+    <div class="step">
+      <div class="step-num">{"2" if not has_admin_token else "1"}</div>
+      <div class="step-text">Choose a <b>node label</b> (e.g. "Living Room"). This will be this node's display name.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">{"3" if not has_admin_token else "2"}</div>
+      <div class="step-text"><b>Adding a second HA instance?</b> Paste the <b>Account ID</b> from your first node's panel so both share the same account. Leave empty for a brand-new setup.</div>
+    </div>
+    <div class="divider"></div>
+    <div class="field">
+      <label>Node Label</label>
+      <input type="text" id="f-label" placeholder="e.g. Living Room, Office, Kitchen" autofocus />
+      <div class="hint">A friendly name for this HA instance. Used to generate the node ID.</div>
+    </div>
+    <div class="field">
+      <label>Account ID <span style="color:#03a9f4;font-weight:500;font-size:12px">— for calling between instances</span></label>
+      <input type="text" id="f-account" placeholder="Leave empty for first setup" />
+      <div class="hint" style="color:#e6a817;background:#2a1e00;border:1px solid #e6a81733;border-radius:6px;padding:8px 10px;margin-top:6px">
+        ⚠ To call between two HA instances both nodes <b>must share the same Account ID</b>.
+        Copy it from the first node's panel.
+      </div>
+    </div>
+    <button class="btn-primary" id="btn-setup" onclick="doSetup()">Set Up Node</button>
+    <div id="setup-result"></div>
+  </div>"""
+        else:
+            setup_card_html = ""
+            token_js_check = ""
+            token_js_payload = ""
 
         # Escape braces for f-string safety in CSS/JS — use doubled braces.
         html = f"""<!DOCTYPE html>
@@ -192,43 +257,7 @@ details summary:hover{{text-decoration:underline}}
     <span class="badge {badge_cls}">{badge_txt}</span>
   </div>
 
-  {"" if provisioned else '''
-  <div class="card" id="setup-card">
-    <div class="card-title">Quick Setup</div>
-    <div class="step">
-      <div class="step-num">1</div>
-      <div class="step-text">Enter your <b>VPS admin token</b> — the one from deployment.</div>
-    </div>
-    <div class="step">
-      <div class="step-num">2</div>
-      <div class="step-text">Choose a <b>node label</b> (e.g. "Living Room"). This identifies this HA instance.</div>
-    </div>
-    <div class="step">
-      <div class="step-num">3</div>
-      <div class="step-text"><b>Calling between two HA instances?</b> Both must share the same Account ID. Copy the Account ID shown on your first instance's Simson panel and paste it in the Account ID field below. Leave it empty for a brand-new standalone setup.</div>
-    </div>
-    <div class="divider"></div>
-    <div class="field">
-      <label>Admin Token</label>
-      <input type="password" id="f-token" placeholder="Paste your admin token" autocomplete="off" />
-    </div>
-    <div class="field">
-      <label>Account ID <span style="color:#03a9f4;font-weight:500;font-size:12px">— required for calling between instances</span></label>
-      <input type="text" id="f-account" placeholder="e.g. haos203 — leave empty for first setup" />
-      <div class="hint" style="color:#e6a817;background:#2a1e00;border:1px solid #e6a81733;border-radius:6px;padding:8px 10px;margin-top:6px">
-        ⚠ To call between two HA instances, both <b>must use the same Account ID</b>.<br>
-        On your first instance's Simson panel, copy the Account ID from the Node Info card and paste it here.
-      </div>
-    </div>
-    <div class="field">
-      <label>Node Label</label>
-      <input type="text" id="f-label" placeholder="e.g. Living Room, Office, Kitchen" />
-      <div class="hint">A friendly name for this HA instance. Used to generate the node ID.</div>
-    </div>
-    <button class="btn-primary" id="btn-setup" onclick="doSetup()">Set Up Node</button>
-    <div id="setup-result"></div>
-  </div>
-  '''}
+  {setup_card_html}
 
   {node_html}
   {call_html}
@@ -286,11 +315,10 @@ async function doReset() {{
 async function doSetup() {{
   const btn = document.getElementById('btn-setup');
   const result = document.getElementById('setup-result');
-  const token = document.getElementById('f-token').value.trim();
+{token_js_check}
   const label = document.getElementById('f-label').value.trim();
   const account = document.getElementById('f-account').value.trim();
 
-  if (!token) {{ result.innerHTML = '<div class="alert alert-error">Admin token is required.</div>'; return; }}
   if (!label) {{ result.innerHTML = '<div class="alert alert-error">Node label is required.</div>'; return; }}
 
   btn.disabled = true;
@@ -301,7 +329,7 @@ async function doSetup() {{
     const resp = await fetch('api/provision', {{
       method: 'POST',
       headers: {{ 'Content-Type': 'application/json' }},
-      body: JSON.stringify({{ admin_token: token, node_label: label, account_id: account }}),
+      body: JSON.stringify({{ {token_js_payload}node_label: label, account_id: account }}),
     }});
     const data = await resp.json();
     if (resp.ok) {{
@@ -333,7 +361,7 @@ async function doSetup() {{
     async def handle_health(self, request: web.Request) -> web.Response:
         return web.json_response({
             "status": "ok",
-            "addon_version": "2.1.0",
+            "addon_version": "2.2.0",
             "node_id": self.cfg.node_id,
             "provisioned": bool(self.cfg.install_token),
         })
@@ -358,12 +386,15 @@ async function doSetup() {{
         except Exception:
             return web.json_response({"error": "invalid json"}, status=400)
 
-        admin_token = body.get("admin_token", "").strip()
+        admin_token = body.get("admin_token", "").strip() or self.cfg.admin_token
         node_label = body.get("node_label", "").strip()
         account_id = body.get("account_id", "").strip()
 
         if not admin_token:
-            return web.json_response({"error": "admin_token is required"}, status=400)
+            return web.json_response(
+                {"error": "admin_token is required — set it in the addon Configuration tab or paste it in the setup form"},
+                status=400,
+            )
         if not node_label:
             return web.json_response({"error": "node_label is required"}, status=400)
 

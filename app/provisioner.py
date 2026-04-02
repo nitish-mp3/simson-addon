@@ -45,7 +45,8 @@ def clear_saved_credentials() -> None:
         logger.warning("Could not clear credentials file: %s", e)
 
 
-def _save_credentials(account_id: str, node_id: str, install_token: str) -> None:
+def _save_credentials(account_id: str, node_id: str, install_token: str,
+                      node_label: str = "", capabilities: list | None = None) -> None:
     """Persist credentials so they survive addon restarts."""
     os.makedirs(os.path.dirname(CREDENTIALS_FILE), exist_ok=True)
     with open(CREDENTIALS_FILE, "w") as f:
@@ -53,6 +54,8 @@ def _save_credentials(account_id: str, node_id: str, install_token: str) -> None
             "account_id": account_id,
             "node_id": node_id,
             "install_token": install_token,
+            "node_label": node_label,
+            "capabilities": capabilities or ["haos", "voice"],
         }, f, indent=2)
     os.chmod(CREDENTIALS_FILE, 0o600)
     logger.info("Saved credentials to %s", CREDENTIALS_FILE)
@@ -133,5 +136,5 @@ async def auto_provision(server_url: str, admin_token: str,
                 body = await resp.text()
                 raise RuntimeError(f"Failed to create node: HTTP {resp.status} — {body}")
 
-    _save_credentials(account_id, node_id, install_token)
+    _save_credentials(account_id, node_id, install_token, node_label, caps)
     return {"account_id": account_id, "node_id": node_id, "install_token": install_token}
