@@ -494,6 +494,10 @@ async function doSetup() {{
             return web.json_response({"error": "call_id, to_node_id, signal_type, data required"}, status=400)
 
         msg = make_webrtc_signal(call_id, self.cfg.node_id, to_node, signal_type, data)
+        logger.info(
+            "WebRTC signal OUT: %s to %s (call %s)",
+            signal_type, to_node, call_id,
+        )
         try:
             await self.send_fn(msg)
         except Exception as e:

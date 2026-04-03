@@ -199,6 +199,12 @@ class SimsonAddon:
                 "signal_type": payload.get("signal_type", ""),
                 "data": payload.get("data"),
             }
+            logger.info(
+                "WebRTC signal IN: %s from %s (call %s)",
+                sig_payload["signal_type"],
+                sig_payload["from_node_id"],
+                sig_payload["call_id"],
+            )
             # Fire as HA event — card subscribes via hass.connection.subscribeEvents
             # (works through HTTPS WebSocket, no mixed-content issues).
             await self.ha.fire_event("simson_webrtc_signal", sig_payload)
