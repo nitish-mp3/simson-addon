@@ -17,6 +17,23 @@ class CallState(str, Enum):
     ACTIVE = "active"
     ENDED = "ended"
     FAILED = "failed"
+    MISSED = "missed"
+    DECLINED = "declined"
+    TIMEOUT = "timeout"
+
+
+@dataclass
+class RoutingIntent:
+    """Describes where a call should be routed."""
+    target_type: str = "node"       # node | device | asterisk | queue
+    target_id: str = ""             # node_id, device extension, or queue id
+    target_label: str = ""          # human-readable name
+    extension: str = ""             # Asterisk extension (asterisk/queue types)
+    context: str = ""               # Asterisk dial context
+    trunk: str = ""                 # SIP trunk for external calls
+    caller_id: str = ""             # outbound caller ID
+    timeout: int = 30               # ring timeout in seconds
+    fallback_targets: list = field(default_factory=list)  # list of target_id strings
 
 
 @dataclass
@@ -32,6 +49,8 @@ class CallInfo:
     ended_at: float = 0.0
     end_reason: str = ""
     metadata: dict = field(default_factory=dict)
+    routing: RoutingIntent | None = None
+    fallback_attempt: int = 0       # which fallback target we're on (0 = primary)
 
 
 # Type for state-change callback
@@ -63,7 +82,8 @@ class CallManager:
         return self._calls.get(call_id)
 
     async def outgoing_request(self, call_id: str, to_node_id: str,
-                               call_type: str = "voice") -> CallInfo:
+                               call_type: str = "voice",
+                               routing: RoutingIntent | None = None) -> CallInfo:
         """Register an outgoing call request we just sent."""
         call = CallInfo(
             call_id=call_id,
@@ -72,6 +92,7 @@ class CallManager:
             direction="outgoing",
             state=CallState.REQUESTING,
             started_at=time.time(),
+            routing=routing,
         )
         self._calls[call_id] = call
         await self._notify(call)
@@ -116,6 +137,18 @@ class CallManager:
             call.state = CallState.FAILED
             call.ended_at = time.time()
             call.end_reason = reason
+        elif status == "missed":
+            call.state = CallState.MISSED
+            call.ended_at = time.time()
+            call.end_reason = reason or "missed"
+        elif status == "declined":
+            call.state = CallState.DECLINED
+            call.ended_at = time.time()
+            call.end_reason = reason or "declined"
+        elif status == "timeout":
+            call.state = CallState.TIMEOUT
+            call.ended_at = time.time()
+            call.end_reason = reason or "timeout"
 
         if call.state != prev:
             logger.info("Call %s: %s -> %s", call_id, prev.value, call.state.value)
@@ -137,9 +170,13 @@ class CallManager:
     def cleanup(self, max_age: float = 300):
         """Remove ended calls older than max_age seconds."""
         now = time.time()
+        terminal_states = (
+            CallState.ENDED, CallState.FAILED,
+            CallState.MISSED, CallState.DECLINED, CallState.TIMEOUT,
+        )
         to_remove = [
             cid for cid, c in self._calls.items()
-            if c.state in (CallState.ENDED, CallState.FAILED)
+            if c.state in terminal_states
             and c.ended_at > 0  and (now - c.ended_at) > max_age
         ]
         for cid in to_remove:

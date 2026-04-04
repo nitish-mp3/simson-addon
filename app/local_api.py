@@ -9,6 +9,7 @@ from call_manager import CallManager, CallState
 from config import Config
 from protocol import make_call_request, make_call_accept, make_call_reject, make_call_end, make_webrtc_signal
 from provisioner import auto_provision, clear_saved_credentials
+from target_directory import TargetDirectory
 
 logger = logging.getLogger("simson.api")
 
@@ -17,7 +18,8 @@ class LocalAPI:
     """HTTP API running inside the addon for HA integration communication."""
 
     def __init__(self, cfg: Config, call_mgr: CallManager,
-                 send_fn, asterisk=None, wss_client=None):
+                 send_fn, asterisk=None, wss_client=None,
+                 target_dir: TargetDirectory | None = None):
         """
         Args:
             cfg: Addon config.
@@ -25,12 +27,14 @@ class LocalAPI:
             send_fn: Async callable to send protocol messages to VPS.
             asterisk: Optional AsteriskAMI instance.
             wss_client: Optional WSSClient for connection status.
+            target_dir: Optional TargetDirectory for call targets.
         """
         self.cfg = cfg
         self.call_mgr = call_mgr
         self.send_fn = send_fn
         self.asterisk = asterisk
         self.wss_client = wss_client
+        self.target_dir = target_dir
         self.app = web.Application()
         self._runner = None
         self._sse_subscribers: list[asyncio.Queue] = []
@@ -45,6 +49,7 @@ class LocalAPI:
         self.app.router.add_post("/api/reject", self.handle_reject)
         self.app.router.add_post("/api/hangup", self.handle_hangup)
         self.app.router.add_get("/api/health", self.handle_health)
+        self.app.router.add_get("/api/targets", self.handle_targets)
         self.app.router.add_post("/api/provision", self.handle_provision)
         self.app.router.add_post("/api/reset", self.handle_reset)
         self.app.router.add_get("/api/events", self.handle_sse)
@@ -515,24 +520,48 @@ async function doSetup() {{
         })
 
     async def handle_make_call(self, request: web.Request) -> web.Response:
-        """Initiate a call to another node."""
+        """Initiate a call to another node or configured target."""
         try:
             body = await request.json()
         except Exception:
             return web.json_response({"error": "invalid json"}, status=400)
 
+        target_id = body.get("target_id", "")
         to_node = body.get("target_node_id", "") or body.get("to_node_id", "")
         call_type = body.get("call_type", "voice")
 
-        if not to_node:
-            return web.json_response({"error": "target_node_id required"}, status=400)
+        routing = None
+
+        # If target_id is given, resolve from directory.
+        if target_id and self.target_dir:
+            routing = self.target_dir.resolve_routing(target_id)
+            if not routing:
+                return web.json_response({"error": f"unknown target: {target_id}"}, status=404)
+            to_node = self.target_dir.resolve_node_id(target_id)
+            if routing.target_type == "asterisk":
+                call_type = "sip"
+        elif not to_node:
+            return web.json_response({"error": "target_node_id or target_id required"}, status=400)
 
         # Check no active call.
         if self.call_mgr.active_call:
             return web.json_response({"error": "already in a call"}, status=409)
 
+        # Build metadata with routing info if available.
+        metadata = {}
+        if routing:
+            metadata["routing"] = {
+                "target_type": routing.target_type,
+                "target_id": routing.target_id,
+                "extension": routing.extension,
+                "context": routing.context,
+                "trunk": routing.trunk,
+                "caller_id": routing.caller_id,
+                "timeout": routing.timeout,
+            }
+
         # Build and send call.request.
-        msg = make_call_request(self.cfg.node_id, to_node, call_type)
+        msg = make_call_request(self.cfg.node_id, to_node, call_type, metadata=metadata or None)
         call_id = msg["payload"]["call_id"]
 
         try:
@@ -541,11 +570,12 @@ async function doSetup() {{
             return web.json_response({"error": f"send failed: {e}"}, status=502)
 
         # Register locally.
-        call = await self.call_mgr.outgoing_request(call_id, to_node, call_type)
+        call = await self.call_mgr.outgoing_request(call_id, to_node, call_type, routing=routing)
 
         return web.json_response({
             "call_id": call_id,
             "status": "requesting",
+            "target_id": target_id or to_node,
         }, status=201)
 
     async def handle_answer(self, request: web.Request) -> web.Response:
@@ -635,10 +665,17 @@ async function doSetup() {{
         await self.call_mgr.end_call(call_id, "hangup")
         return web.json_response({"call_id": call_id, "status": "ended"})
 
+    async def handle_targets(self, request: web.Request) -> web.Response:
+        """Return available call targets from the target directory."""
+        if not self.target_dir:
+            return web.json_response({"targets": [], "total": 0})
+        targets = self.target_dir.all_targets()
+        return web.json_response({"targets": targets, "total": len(targets)})
+
 
 def _call_to_dict(call) -> dict:
     """Serialise a CallInfo to a JSON-safe dict."""
-    return {
+    d = {
         "call_id": call.call_id,
         "remote_node_id": call.remote_node_id,
         "remote_label": call.remote_label,
@@ -649,4 +686,14 @@ def _call_to_dict(call) -> dict:
         "answered_at": call.answered_at,
         "ended_at": call.ended_at,
         "end_reason": call.end_reason,
+        "fallback_attempt": call.fallback_attempt,
     }
+    if call.routing:
+        d["routing"] = {
+            "target_type": call.routing.target_type,
+            "target_id": call.routing.target_id,
+            "target_label": call.routing.target_label,
+            "timeout": call.routing.timeout,
+            "fallback_targets": call.routing.fallback_targets,
+        }
+    return d

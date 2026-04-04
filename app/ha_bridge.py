@@ -97,3 +97,21 @@ class HABridge:
                     )
         except Exception as e:
             logger.warning("HA service call error: %s", e)
+
+    async def create_notification(self, notification_id: str, title: str, message: str):
+        """Create a persistent notification in HA."""
+        await self.call_service(
+            "persistent_notification", "create",
+            {
+                "notification_id": notification_id,
+                "title": title,
+                "message": message,
+            },
+        )
+
+    async def dismiss_notification(self, notification_id: str):
+        """Dismiss a persistent notification in HA."""
+        await self.call_service(
+            "persistent_notification", "dismiss",
+            {"notification_id": notification_id},
+        )

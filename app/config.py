@@ -78,6 +78,26 @@ class Config:
         # Ingress / local API
         self.local_api_port: int = int(opts.get("local_api_port", os.environ.get("SIMSON_LOCAL_API_PORT", 8799)))
 
+        # ── Call targets (from addon config UI) ────────────────────────────
+        # Each target defines a callable endpoint: another HA node, an
+        # Asterisk extension, or a queue with fallback rules.
+        raw_targets = opts.get("call_targets", [])
+        self.call_targets: list[dict] = []
+        for t in raw_targets:
+            self.call_targets.append({
+                "type": t.get("type", "node"),          # node | device | asterisk | queue
+                "id": t.get("id", ""),                   # unique target identifier
+                "label": t.get("label", t.get("id", "")),
+                "node_id": t.get("node_id", ""),         # for type=node / device
+                "extension": t.get("extension", ""),      # Asterisk extension
+                "context": t.get("context", self.asterisk_context),
+                "trunk": t.get("trunk", ""),              # SIP trunk
+                "caller_id": t.get("caller_id", ""),      # outbound caller ID
+                "timeout": int(t.get("timeout", 30)),     # ring timeout seconds
+                "fallback_targets": t.get("fallback_targets", []),  # list of target ids
+                "icon": t.get("icon", ""),                # optional icon for UI
+            })
+
         # HA Supervisor token (always from env — not in options.json)
         self.supervisor_token: str = os.environ.get("SUPERVISOR_TOKEN", "")
 

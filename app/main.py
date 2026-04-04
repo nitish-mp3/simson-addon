@@ -12,12 +12,14 @@ from config import Config
 from provisioner import auto_provision, load_saved_credentials
 from protocol import (
     TYPE_CALL_INVITE, TYPE_CALL_STATUS, TYPE_ERROR, TYPE_WEBRTC_SIGNAL,
+    make_call_request, make_call_end,
 )
 from wss_client import WSSClient
 from call_manager import CallManager, CallInfo, CallState
 from asterisk_ami import AsteriskAMI
 from local_api import LocalAPI
 from ha_bridge import HABridge
+from target_directory import TargetDirectory
 
 # --- Logging setup ---
 
@@ -47,14 +49,17 @@ class SimsonAddon:
         )
         self.wss = WSSClient(self.cfg, on_message=self._on_vps_message)
         self.asterisk = AsteriskAMI(self.cfg) if self.cfg.asterisk_enabled else None
+        self.target_dir = TargetDirectory(self.cfg)
         self.api = LocalAPI(
             cfg=self.cfg,
             call_mgr=self.call_mgr,
             send_fn=self.wss.send,
             asterisk=self.asterisk,
             wss_client=self.wss,
+            target_dir=self.target_dir,
         )
         self._background_tasks: list[asyncio.Task] = []
+        self._ring_timers: dict[str, asyncio.Task] = {}  # call_id -> timeout task
 
     async def run(self):
         """Start all components and run forever."""
@@ -242,6 +247,14 @@ class SimsonAddon:
             "call_type": call_type,
         })
 
+        # Create a persistent notification so the user sees the call even
+        # when the Lovelace card is not visible.
+        await self.ha.create_notification(
+            notification_id=f"simson_call_{call_id[:12]}",
+            title="Incoming Call",
+            message=f"📞 {from_label or from_node} is calling ({call_type})",
+        )
+
         # Push to SSE so the Lovelace card shows incoming call immediately.
         self.api.push_sse_event({
             "type": "incoming_call",
@@ -270,6 +283,10 @@ class SimsonAddon:
         if not call:
             return
 
+        # Cancel ring timer if call is no longer ringing.
+        if status not in ("ringing", "requesting"):
+            self._cancel_ring_timer(call_id)
+
         # Fire HA event.
         await self.ha.fire_event("simson_call_status", {
             "call_id": call_id,
@@ -288,6 +305,15 @@ class SimsonAddon:
             "direction": call.direction,
             "remote_node_id": call.remote_node_id,
         })
+
+        # Start ring timer when outgoing call starts ringing.
+        if status == "ringing" and call.direction == "outgoing" and call.routing:
+            self._start_ring_timer(call)
+
+        # Attempt fallback on declined/failed for outgoing calls with routing.
+        if status in ("ended", "failed") and call.direction == "outgoing":
+            if reason in ("declined", "rejected", "timeout", "busy", "no_answer"):
+                await self._attempt_fallback(call, reason)
 
     async def _on_call_state_change(self, call: CallInfo):
         """Update HA entity state when call state changes."""
@@ -311,6 +337,8 @@ class SimsonAddon:
             sensor_state = "in_call"
         else:
             sensor_state = "idle"
+            # Dismiss persistent notification when call ends.
+            await self.ha.dismiss_notification(f"simson_call_{call.call_id[:12]}")
 
         await self.ha.set_state(
             f"sensor.simson_{self.cfg.node_id}_status",
@@ -340,6 +368,151 @@ class SimsonAddon:
                         },
                     )
                 was_connected = is_connected
+
+    # ── Ring timeout & fallback routing ─────────────────────────────────
+
+    def _start_ring_timer(self, call: CallInfo):
+        """Start a timer that fires if the remote doesn't answer in time."""
+        timeout = 30
+        if call.routing:
+            timeout = call.routing.timeout
+        self._cancel_ring_timer(call.call_id)
+        self._ring_timers[call.call_id] = asyncio.create_task(
+            self._ring_timeout_task(call.call_id, timeout)
+        )
+
+    def _cancel_ring_timer(self, call_id: str):
+        """Cancel an active ring timer."""
+        task = self._ring_timers.pop(call_id, None)
+        if task and not task.done():
+            task.cancel()
+
+    async def _ring_timeout_task(self, call_id: str, timeout: int):
+        """Wait for timeout, then end the call and attempt fallback."""
+        logger = logging.getLogger("simson.timeout")
+        try:
+            await asyncio.sleep(timeout)
+        except asyncio.CancelledError:
+            return
+
+        call = self.call_mgr.get(call_id)
+        if not call or call.state not in (CallState.RINGING, CallState.REQUESTING):
+            return
+
+        logger.info("Call %s timed out after %ds", call_id, timeout)
+
+        # Send call.end to VPS.
+        msg = make_call_end(call_id, self.cfg.node_id, "timeout")
+        try:
+            await self.wss.send(msg)
+        except Exception as e:
+            logger.warning("Failed to send timeout end: %s", e)
+
+        await self.call_mgr.update_status(call_id, "timeout", "timeout")
+
+        # Fire HA events.
+        await self.ha.fire_event("simson_call_status", {
+            "call_id": call_id,
+            "status": "timeout",
+            "reason": "timeout",
+            "direction": call.direction,
+            "remote_node_id": call.remote_node_id,
+        })
+        self.api.push_sse_event({
+            "type": "call_status",
+            "call_id": call_id,
+            "status": "timeout",
+            "reason": "timeout",
+            "direction": call.direction,
+            "remote_node_id": call.remote_node_id,
+        })
+
+        await self._attempt_fallback(call, "timeout")
+
+    async def _attempt_fallback(self, call: CallInfo, reason: str):
+        """Try the next fallback target if available."""
+        logger = logging.getLogger("simson.fallback")
+        if not call.routing or not call.routing.fallback_targets:
+            return
+
+        next_idx = call.fallback_attempt + 1
+        if next_idx > len(call.routing.fallback_targets):
+            logger.info("No more fallback targets for call %s", call.call_id)
+            await self.ha.fire_event("simson_call_status", {
+                "call_id": call.call_id,
+                "status": "failed",
+                "reason": f"all_fallbacks_exhausted ({reason})",
+                "direction": call.direction,
+                "remote_node_id": call.remote_node_id,
+            })
+            return
+
+        fallback_id = call.routing.fallback_targets[next_idx - 1]
+        logger.info(
+            "Call %s fallback attempt %d → target %s (reason: %s)",
+            call.call_id, next_idx, fallback_id, reason,
+        )
+
+        # Resolve the fallback target.
+        fallback_routing = self.target_dir.resolve_routing(fallback_id)
+        fallback_node = self.target_dir.resolve_node_id(fallback_id)
+
+        if not fallback_node:
+            logger.warning("Fallback target %s could not be resolved", fallback_id)
+            return
+
+        # Build metadata.
+        metadata = {}
+        if fallback_routing:
+            metadata["routing"] = {
+                "target_type": fallback_routing.target_type,
+                "target_id": fallback_routing.target_id,
+                "extension": fallback_routing.extension,
+                "context": fallback_routing.context,
+                "trunk": fallback_routing.trunk,
+                "caller_id": fallback_routing.caller_id,
+                "timeout": fallback_routing.timeout,
+            }
+            metadata["fallback_from"] = call.call_id
+
+        call_type = "sip" if fallback_routing and fallback_routing.target_type == "asterisk" else "voice"
+        msg = make_call_request(self.cfg.node_id, fallback_node, call_type, metadata=metadata or None)
+        new_call_id = msg["payload"]["call_id"]
+
+        try:
+            await self.wss.send(msg)
+        except Exception as e:
+            logger.error("Fallback call send failed: %s", e)
+            return
+
+        # Register the new call with updated fallback state.
+        new_routing = call.routing
+        new_call = await self.call_mgr.outgoing_request(
+            new_call_id, fallback_node, call_type, routing=new_routing
+        )
+        new_call.fallback_attempt = next_idx
+
+        # Fire fallback-redirected event.
+        await self.ha.fire_event("simson_call_status", {
+            "call_id": new_call_id,
+            "status": "fallback-redirected",
+            "reason": reason,
+            "direction": "outgoing",
+            "remote_node_id": fallback_node,
+            "fallback_from": call.call_id,
+            "fallback_target": fallback_id,
+            "fallback_attempt": next_idx,
+        })
+        self.api.push_sse_event({
+            "type": "call_status",
+            "call_id": new_call_id,
+            "status": "fallback-redirected",
+            "reason": reason,
+            "direction": "outgoing",
+            "remote_node_id": fallback_node,
+            "fallback_from": call.call_id,
+            "fallback_target": fallback_id,
+        })
 
     async def _periodic_cleanup(self):
         """Clean up ended calls periodically."""
