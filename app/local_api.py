@@ -19,7 +19,8 @@ class LocalAPI:
 
     def __init__(self, cfg: Config, call_mgr: CallManager,
                  send_fn, asterisk=None, wss_client=None,
-                 target_dir: TargetDirectory | None = None):
+                 target_dir: TargetDirectory | None = None,
+                 addon=None):
         """
         Args:
             cfg: Addon config.
@@ -28,6 +29,7 @@ class LocalAPI:
             asterisk: Optional AsteriskAMI instance.
             wss_client: Optional WSSClient for connection status.
             target_dir: Optional TargetDirectory for call targets.
+            addon: Optional SimsonAddon ref for user presence operations.
         """
         self.cfg = cfg
         self.call_mgr = call_mgr
@@ -35,6 +37,7 @@ class LocalAPI:
         self.asterisk = asterisk
         self.wss_client = wss_client
         self.target_dir = target_dir
+        self.addon = addon
         self.app = web.Application()
         self._runner = None
         self._sse_subscribers: list[asyncio.Queue] = []
@@ -54,6 +57,10 @@ class LocalAPI:
         self.app.router.add_post("/api/reset", self.handle_reset)
         self.app.router.add_get("/api/events", self.handle_sse)
         self.app.router.add_post("/api/webrtc/signal", self.handle_webrtc_signal)
+        self.app.router.add_post("/api/user/heartbeat", self.handle_user_heartbeat)
+        self.app.router.add_post("/api/user/unregister", self.handle_user_unregister)
+        self.app.router.add_get("/api/users", self.handle_get_users)
+        self.app.router.add_post("/api/remote-users", self.handle_remote_users)
 
     async def start(self):
         """Start the local API server, falling back to alternate ports if needed."""
@@ -529,6 +536,8 @@ async function doSetup() {{
         target_id = body.get("target_id", "")
         to_node = body.get("target_node_id", "") or body.get("to_node_id", "")
         call_type = body.get("call_type", "voice")
+        target_user_id = body.get("target_user_id", "")
+        target_user_name = body.get("target_user_name", "")
 
         routing = None
 
@@ -559,6 +568,11 @@ async function doSetup() {{
                 "caller_id": routing.caller_id,
                 "timeout": routing.timeout,
             }
+
+        # Per-user targeting: include target_user_id so only that user's card rings.
+        if target_user_id:
+            metadata["target_user_id"] = target_user_id
+            metadata["target_user_name"] = target_user_name
 
         # Build and send call.request.
         msg = make_call_request(self.cfg.node_id, to_node, call_type, metadata=metadata or None)
@@ -671,6 +685,63 @@ async function doSetup() {{
             return web.json_response({"targets": [], "total": 0})
         targets = self.target_dir.all_targets()
         return web.json_response({"targets": targets, "total": len(targets)})
+
+    # --- User presence endpoints ---
+
+    async def handle_user_heartbeat(self, request: web.Request) -> web.Response:
+        """Register or refresh a user's presence on this node."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+
+        user_id = body.get("user_id", "")
+        user_name = body.get("user_name", "")
+
+        if not user_id:
+            return web.json_response({"error": "user_id required"}, status=400)
+
+        if self.addon:
+            self.addon.register_user(user_id, user_name)
+
+        return web.json_response({"registered": True})
+
+    async def handle_user_unregister(self, request: web.Request) -> web.Response:
+        """Remove a user's presence from this node."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+
+        user_id = body.get("user_id", "")
+        if user_id and self.addon:
+            self.addon.unregister_user(user_id)
+
+        return web.json_response({"unregistered": True})
+
+    async def handle_get_users(self, request: web.Request) -> web.Response:
+        """Return currently online users on this node."""
+        if not self.addon:
+            return web.json_response({"users": [], "total": 0})
+        users = self.addon.get_online_users()
+        return web.json_response({"users": users, "total": len(users)})
+
+    async def handle_remote_users(self, request: web.Request) -> web.Response:
+        """Query VPS for users on a remote node."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+
+        node_id = body.get("node_id", "")
+        if not node_id:
+            return web.json_response({"error": "node_id required"}, status=400)
+
+        if not self.addon:
+            return web.json_response({"users": [], "total": 0})
+
+        users = await self.addon.query_remote_users(node_id)
+        return web.json_response({"node_id": node_id, "users": users, "total": len(users)})
 
 
 def _call_to_dict(call) -> dict:

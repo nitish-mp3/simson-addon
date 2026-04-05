@@ -23,6 +23,9 @@ TYPE_CALL_REJECT = "call.reject"
 TYPE_CALL_END = "call.end"
 TYPE_CALL_STATUS = "call.status"
 TYPE_WEBRTC_SIGNAL = "webrtc.signal"
+TYPE_USERS_UPDATE = "users.update"
+TYPE_USERS_QUERY = "users.query"
+TYPE_USERS_LIST = "users.list"
 TYPE_ERROR = "error"
 
 # Error codes
@@ -131,4 +134,19 @@ def make_webrtc_signal(call_id: str, from_node: str, to_node: str,
         "to_node_id": to_node,
         "signal_type": signal_type,
         "data": data,
+    })
+
+
+def make_users_update(node_id: str, users: list[dict]) -> dict:
+    """Create a users.update message to report online HA users to VPS."""
+    return make_envelope(TYPE_USERS_UPDATE, {
+        "node_id": node_id,
+        "users": users,  # [{user_id, user_name}, ...]
+    })
+
+
+def make_users_query(target_node_id: str) -> dict:
+    """Create a users.query message to ask VPS for users on a remote node."""
+    return make_envelope(TYPE_USERS_QUERY, {
+        "target_node_id": target_node_id,
     })

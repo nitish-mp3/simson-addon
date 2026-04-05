@@ -12,7 +12,8 @@ from config import Config
 from provisioner import auto_provision, load_saved_credentials
 from protocol import (
     TYPE_CALL_INVITE, TYPE_CALL_STATUS, TYPE_ERROR, TYPE_WEBRTC_SIGNAL,
-    make_call_request, make_call_end,
+    TYPE_USERS_LIST,
+    make_call_request, make_call_end, make_users_update,
 )
 from wss_client import WSSClient
 from call_manager import CallManager, CallInfo, CallState
@@ -57,9 +58,13 @@ class SimsonAddon:
             asterisk=self.asterisk,
             wss_client=self.wss,
             target_dir=self.target_dir,
+            addon=self,
         )
         self._background_tasks: list[asyncio.Task] = []
         self._ring_timers: dict[str, asyncio.Task] = {}  # call_id -> timeout task
+        # Per-user presence tracking (v3.1.0)
+        self._online_users: dict[str, dict] = {}  # user_id -> {user_name, last_seen}
+        self._users_query_futures: dict[str, asyncio.Future] = {}  # msg_id -> Future
 
     async def run(self):
         """Start all components and run forever."""
@@ -133,6 +138,7 @@ class SimsonAddon:
         # Periodic tasks.
         self._background_tasks.append(asyncio.create_task(self._periodic_cleanup()))
         self._background_tasks.append(asyncio.create_task(self._connection_state_updater()))
+        self._background_tasks.append(asyncio.create_task(self._user_presence_updater()))
 
         # Start WSS (blocks with reconnect loop).
         try:
@@ -216,6 +222,16 @@ class SimsonAddon:
             # Also push to SSE as fallback for plain-HTTP setups.
             self.api.push_sse_event({"type": "webrtc_signal", **sig_payload})
 
+        elif msg_type == TYPE_USERS_LIST:
+            # Response to a users.query — resolve the pending future.
+            ref = payload.get("ref", "")
+            if ref and ref in self._users_query_futures:
+                fut = self._users_query_futures.pop(ref)
+                if not fut.done():
+                    fut.set_result(payload)
+            else:
+                logger.debug("Received users.list without pending query (ref=%s)", ref)
+
         else:
             logger.debug("Unhandled message type: %s", msg_type)
 
@@ -228,10 +244,12 @@ class SimsonAddon:
         from_label = payload.get("from_label", "")
         call_type = payload.get("call_type", "voice")
         metadata = payload.get("metadata", {})
+        target_user_id = metadata.get("target_user_id", "")
+        target_user_name = metadata.get("target_user_name", "")
 
         logger.info(
-            "Incoming call %s from %s (%s), type=%s",
-            call_id, from_node, from_label, call_type,
+            "Incoming call %s from %s (%s), type=%s, target_user=%s",
+            call_id, from_node, from_label, call_type, target_user_id or "all",
         )
 
         # Register the incoming call.
@@ -245,6 +263,8 @@ class SimsonAddon:
             "from_node_id": from_node,
             "from_label": from_label,
             "call_type": call_type,
+            "target_user_id": target_user_id,
+            "target_user_name": target_user_name,
         })
 
         # Create a persistent notification so the user sees the call even
@@ -513,6 +533,83 @@ class SimsonAddon:
             "fallback_from": call.call_id,
             "fallback_target": fallback_id,
         })
+
+    # ── Per-user presence tracking ──────────────────────────────────────
+
+    def register_user(self, user_id: str, user_name: str):
+        """Register or refresh a user's presence (called from LocalAPI)."""
+        import time as _time
+        self._online_users[user_id] = {
+            "user_name": user_name,
+            "last_seen": _time.time(),
+        }
+
+    def unregister_user(self, user_id: str):
+        """Remove a user's presence."""
+        self._online_users.pop(user_id, None)
+
+    def get_online_users(self) -> list[dict]:
+        """Return list of currently online users."""
+        return [
+            {"user_id": uid, "user_name": info["user_name"]}
+            for uid, info in self._online_users.items()
+        ]
+
+    async def _user_presence_updater(self):
+        """Periodically clean stale users and send presence to VPS."""
+        import time as _time
+        logger = logging.getLogger("simson.users")
+        prev_user_ids: set[str] = set()
+        while True:
+            await asyncio.sleep(15)
+            # Remove stale users (no heartbeat for 35s).
+            now = _time.time()
+            stale = [uid for uid, info in self._online_users.items()
+                     if now - info["last_seen"] > 35]
+            for uid in stale:
+                logger.debug("Stale user removed: %s", uid)
+                del self._online_users[uid]
+
+            # Send update to VPS if user list changed or periodically.
+            current_ids = set(self._online_users.keys())
+            if current_ids != prev_user_ids or stale:
+                prev_user_ids = current_ids
+                if self.wss.connected:
+                    users = self.get_online_users()
+                    msg = make_users_update(self.cfg.node_id, users)
+                    try:
+                        await self.wss.send(msg)
+                        logger.debug("Sent users.update (%d users)", len(users))
+                    except Exception as e:
+                        logger.warning("Failed to send users.update: %s", e)
+
+    async def query_remote_users(self, target_node_id: str) -> list[dict]:
+        """Query VPS for users on a remote node. Returns list of {user_id, user_name}."""
+        from protocol import make_users_query
+        logger = logging.getLogger("simson.users")
+
+        if not self.wss.connected:
+            return []
+
+        msg = make_users_query(target_node_id)
+        msg_id = msg["id"]
+
+        # Create a future that will be resolved when users.list arrives.
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        self._users_query_futures[msg_id] = fut
+
+        try:
+            await self.wss.send(msg)
+            result = await asyncio.wait_for(fut, timeout=5.0)
+            return result.get("users", [])
+        except asyncio.TimeoutError:
+            logger.warning("users.query timed out for node %s", target_node_id)
+            return []
+        except Exception as e:
+            logger.warning("users.query failed for node %s: %s", target_node_id, e)
+            return []
+        finally:
+            self._users_query_futures.pop(msg_id, None)
 
     async def _periodic_cleanup(self):
         """Clean up ended calls periodically."""
