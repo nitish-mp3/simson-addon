@@ -139,6 +139,8 @@ class SimsonAddon:
         self._background_tasks.append(asyncio.create_task(self._periodic_cleanup()))
         self._background_tasks.append(asyncio.create_task(self._connection_state_updater()))
         self._background_tasks.append(asyncio.create_task(self._user_presence_updater()))
+        if self.asterisk:
+            self._background_tasks.append(asyncio.create_task(self._asterisk_reconnect_loop()))
 
         # Start WSS (blocks with reconnect loop).
         try:
@@ -610,6 +612,22 @@ class SimsonAddon:
             return []
         finally:
             self._users_query_futures.pop(msg_id, None)
+
+    async def _asterisk_reconnect_loop(self):
+        """Keep Asterisk AMI connected — reconnect automatically if it drops."""
+        logger = logging.getLogger("simson.asterisk")
+        while True:
+            await asyncio.sleep(30)
+            if self.asterisk and not self.asterisk.connected:
+                logger.info("Asterisk AMI disconnected — attempting reconnect...")
+                try:
+                    await self.asterisk.connect()
+                    if self.asterisk.connected:
+                        logger.info("Asterisk AMI reconnected successfully")
+                        # Invalidate device cache so next targets fetch is fresh.
+                        self.asterisk._device_cache = []
+                except Exception as e:
+                    logger.warning("Asterisk AMI reconnect failed: %s", e)
 
     async def _periodic_cleanup(self):
         """Clean up ended calls periodically."""

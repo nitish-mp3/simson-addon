@@ -3,9 +3,10 @@
 import asyncio
 import json
 import logging
+import uuid
 from aiohttp import web
 
-from call_manager import CallManager, CallState
+from call_manager import CallManager, CallState, RoutingIntent
 from config import Config
 from protocol import make_call_request, make_call_accept, make_call_reject, make_call_end, make_webrtc_signal
 from provisioner import auto_provision, clear_saved_credentials
@@ -61,6 +62,7 @@ class LocalAPI:
         self.app.router.add_post("/api/user/unregister", self.handle_user_unregister)
         self.app.router.add_get("/api/users", self.handle_get_users)
         self.app.router.add_post("/api/remote-users", self.handle_remote_users)
+        self.app.router.add_get("/api/history", self.handle_history)
 
     async def start(self):
         """Start the local API server, falling back to alternate ports if needed."""
@@ -545,8 +547,21 @@ async function doSetup() {{
         if target_id and self.target_dir:
             routing = self.target_dir.resolve_routing(target_id)
             if not routing:
-                return web.json_response({"error": f"unknown target: {target_id}"}, status=404)
-            to_node = self.target_dir.resolve_node_id(target_id)
+                # Auto-discovered Asterisk targets have id format "asterisk_{ext}"
+                # but aren't stored in the directory.  Build a synthetic routing.
+                if target_id.startswith("asterisk_"):
+                    ext = target_id[len("asterisk_"):]
+                    routing = RoutingIntent(
+                        target_type="asterisk",
+                        target_id=target_id,
+                        target_label=ext,
+                        extension=ext,
+                        context=self.cfg.asterisk_context,
+                        timeout=60,
+                    )
+                else:
+                    return web.json_response({"error": f"unknown target: {target_id}"}, status=404)
+            to_node = self.target_dir.resolve_node_id(target_id) if routing.target_type != "asterisk" else self.cfg.node_id
             if routing.target_type == "asterisk":
                 call_type = "sip"
         elif not to_node:
@@ -556,6 +571,34 @@ async function doSetup() {{
         if self.call_mgr.active_call:
             return web.json_response({"error": "already in a call"}, status=409)
 
+        # ── Direct Asterisk origination (no VPS hop) ──────────────────────────
+        # When the target is an Asterisk device and we have a live AMI connection,
+        # originate the call directly rather than routing through the VPS.
+        if routing and routing.target_type == "asterisk" and self.asterisk and self.asterisk.connected:
+            call_id = str(uuid.uuid4())
+            ext = routing.extension or routing.target_id
+            remote_label = routing.target_label or ext
+            success = await self.asterisk.originate_call(
+                extension=ext,
+                caller_id=self.cfg.node_label or self.cfg.node_id,
+                variables={"SIMSON_CALL_ID": call_id},
+            )
+            if not success:
+                return web.json_response({"error": "Asterisk AMI origination failed"}, status=502)
+
+            await self.call_mgr.outgoing_request(
+                call_id,
+                f"asterisk:{ext}",  # synthetic remote node id for local AMI calls
+                "sip",
+                routing=routing,
+            )
+            logger.info("Direct AMI call originated: ext=%s call_id=%s", ext, call_id)
+            return web.json_response(
+                {"call_id": call_id, "status": "requesting", "target_id": target_id or ext},
+                status=201,
+            )
+
+        # ── Normal VPS-routed call ────────────────────────────────────────────
         # Build metadata with routing info if available.
         metadata = {}
         if routing:
@@ -584,7 +627,7 @@ async function doSetup() {{
             return web.json_response({"error": f"send failed: {e}"}, status=502)
 
         # Register locally.
-        call = await self.call_mgr.outgoing_request(call_id, to_node, call_type, routing=routing)
+        await self.call_mgr.outgoing_request(call_id, to_node, call_type, routing=routing)
 
         return web.json_response({
             "call_id": call_id,
@@ -670,6 +713,12 @@ async function doSetup() {{
         if not call:
             return web.json_response({"error": "call not found"}, status=404)
 
+        # Direct Asterisk calls don't go through VPS — hang up via AMI instead.
+        if call.remote_node_id.startswith("asterisk:") and self.asterisk and self.asterisk.connected:
+            await self.asterisk.hangup_by_call_id(call_id)
+            await self.call_mgr.end_call(call_id, "hangup")
+            return web.json_response({"call_id": call_id, "status": "ended"})
+
         msg = make_call_end(call_id, self.cfg.node_id, "hangup")
         try:
             await self.send_fn(msg)
@@ -680,10 +729,28 @@ async function doSetup() {{
         return web.json_response({"call_id": call_id, "status": "ended"})
 
     async def handle_targets(self, request: web.Request) -> web.Response:
-        """Return available call targets from the target directory."""
-        if not self.target_dir:
-            return web.json_response({"targets": [], "total": 0})
-        targets = self.target_dir.all_targets()
+        """Return available call targets from the target directory.
+
+        When Asterisk AMI is connected, registered PJSIP/SIP devices are
+        automatically appended so the card shows them without any YAML config.
+        """
+        targets = list(self.target_dir.all_targets()) if self.target_dir else []
+
+        if self.asterisk and self.asterisk.connected:
+            try:
+                discovered = await asyncio.wait_for(
+                    self.asterisk.get_registered_devices(), timeout=5.0
+                )
+                configured_ids = {t["id"] for t in targets}
+                for dev in discovered:
+                    if dev["id"] not in configured_ids:
+                        targets.append(dev)
+                logger.debug("Merged %d auto-discovered Asterisk devices", len(discovered))
+            except asyncio.TimeoutError:
+                logger.warning("Asterisk device discovery timed out — skipping")
+            except Exception as e:
+                logger.warning("Asterisk device discovery error: %s", e)
+
         return web.json_response({"targets": targets, "total": len(targets)})
 
     # --- User presence endpoints ---
@@ -742,6 +809,12 @@ async function doSetup() {{
 
         users = await self.addon.query_remote_users(node_id)
         return web.json_response({"node_id": node_id, "users": users, "total": len(users)})
+
+    async def handle_history(self, request: web.Request) -> web.Response:
+        """Return call history."""
+        limit = int(request.query.get("limit", "50"))
+        history = self.call_mgr.get_history(limit)
+        return web.json_response({"history": history, "total": len(history)})
 
 
 def _call_to_dict(call) -> dict:

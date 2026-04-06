@@ -1,12 +1,17 @@
 """Call state machine — tracks active calls on the addon side."""
 
+import json
 import logging
+import os
 import time
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import Callable, Awaitable
 
 logger = logging.getLogger("simson.calls")
+
+HISTORY_FILE = "/data/call_history.json"
+MAX_HISTORY = 200
 
 
 class CallState(str, Enum):
@@ -64,6 +69,8 @@ class CallManager:
         self.node_id = node_id
         self._calls: dict[str, CallInfo] = {}
         self._on_state_change = on_state_change
+        self._history: list[dict] = []
+        self._load_history()
 
     @property
     def active_call(self) -> CallInfo | None:
@@ -180,7 +187,56 @@ class CallManager:
             and c.ended_at > 0  and (now - c.ended_at) > max_age
         ]
         for cid in to_remove:
+            # Archive to history before removing.
+            call = self._calls[cid]
+            self._archive_call(call)
             del self._calls[cid]
+
+    def _archive_call(self, call: CallInfo):
+        """Add a completed call to persistent history."""
+        entry = {
+            "call_id": call.call_id,
+            "remote_node_id": call.remote_node_id,
+            "remote_label": call.remote_label,
+            "call_type": call.call_type,
+            "direction": call.direction,
+            "state": call.state.value,
+            "started_at": call.started_at,
+            "answered_at": call.answered_at,
+            "ended_at": call.ended_at,
+            "end_reason": call.end_reason,
+            "duration": (call.ended_at - call.answered_at) if call.answered_at and call.ended_at else 0,
+        }
+        # Avoid duplicates.
+        if any(h["call_id"] == call.call_id for h in self._history):
+            return
+        self._history.insert(0, entry)
+        self._history = self._history[:MAX_HISTORY]
+        self._save_history()
+
+    def get_history(self, limit: int = 50) -> list[dict]:
+        """Return call history, most recent first."""
+        return self._history[:limit]
+
+    def _load_history(self):
+        """Load call history from disk."""
+        try:
+            if os.path.exists(HISTORY_FILE):
+                with open(HISTORY_FILE, "r") as f:
+                    self._history = json.load(f)
+                logger.info("Loaded %d history entries", len(self._history))
+        except Exception as e:
+            logger.warning("Failed to load call history: %s", e)
+            self._history = []
+
+    def _save_history(self):
+        """Save call history to disk."""
+        try:
+            os.makedirs(os.path.dirname(HISTORY_FILE), exist_ok=True)
+            with open(HISTORY_FILE, "w") as f:
+                json.dump(self._history, f)
+        except Exception as e:
+            logger.warning("Failed to save call history: %s", e)
 
     async def _notify(self, call: CallInfo):
         if self._on_state_change:
