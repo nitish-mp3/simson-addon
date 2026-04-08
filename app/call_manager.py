@@ -56,6 +56,7 @@ class CallInfo:
     metadata: dict = field(default_factory=dict)
     routing: RoutingIntent | None = None
     fallback_attempt: int = 0       # which fallback target we're on (0 = primary)
+    caller_user_id: str = ""        # hass user.id of whoever placed the outgoing call
 
 
 # Type for state-change callback
@@ -81,6 +82,17 @@ class CallManager:
                 return c
         return None
 
+    def active_call_for_user(self, user_id: str) -> "CallInfo | None":
+        """Return active call owned by user_id. Falls back to any active call if user_id blank."""
+        if not user_id:
+            return self.active_call
+        for c in self._calls.values():
+            if c.state in (CallState.REQUESTING, CallState.RINGING,
+                           CallState.INCOMING, CallState.ACTIVE):
+                if not c.caller_user_id or c.caller_user_id == user_id:
+                    return c
+        return None
+
     @property
     def all_calls(self) -> list[CallInfo]:
         return list(self._calls.values())
@@ -90,7 +102,8 @@ class CallManager:
 
     async def outgoing_request(self, call_id: str, to_node_id: str,
                                call_type: str = "voice",
-                               routing: RoutingIntent | None = None) -> CallInfo:
+                               routing: RoutingIntent | None = None,
+                               caller_user_id: str = "") -> CallInfo:
         """Register an outgoing call request we just sent."""
         call = CallInfo(
             call_id=call_id,
@@ -100,6 +113,7 @@ class CallManager:
             state=CallState.REQUESTING,
             started_at=time.time(),
             routing=routing,
+            caller_user_id=caller_user_id,
         )
         self._calls[call_id] = call
         await self._notify(call)

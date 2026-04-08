@@ -540,6 +540,7 @@ async function doSetup() {{
         call_type = body.get("call_type", "voice")
         target_user_id = body.get("target_user_id", "")
         target_user_name = body.get("target_user_name", "")
+        caller_user_id = body.get("caller_user_id", "")
 
         routing = None
 
@@ -567,8 +568,8 @@ async function doSetup() {{
         elif not to_node:
             return web.json_response({"error": "target_node_id or target_id required"}, status=400)
 
-        # Check no active call.
-        if self.call_mgr.active_call:
+        # Check no active call for this user (allows multiple users on same node to call concurrently).
+        if self.call_mgr.active_call_for_user(caller_user_id):
             return web.json_response({"error": "already in a call"}, status=409)
 
         # ── Direct Asterisk origination (no VPS hop) ──────────────────────────
@@ -586,11 +587,18 @@ async function doSetup() {{
             if not success:
                 return web.json_response({"error": "Asterisk AMI origination failed"}, status=502)
 
-            await self.call_mgr.outgoing_request(
+            call = await self.call_mgr.outgoing_request(
                 call_id,
                 f"asterisk:{ext}",  # synthetic remote node id for local AMI calls
                 "sip",
                 routing=routing,
+                caller_user_id=caller_user_id,
+            )
+            if caller_user_id:
+                call.metadata["caller_user_id"] = caller_user_id
+            # Synthesise an immediate "ringing" so the ring timer starts.
+            asyncio.get_event_loop().create_task(
+                self.call_mgr.update_status(call_id, "ringing")
             )
             logger.info("Direct AMI call originated: ext=%s call_id=%s", ext, call_id)
             return web.json_response(
@@ -616,6 +624,8 @@ async function doSetup() {{
         if target_user_id:
             metadata["target_user_id"] = target_user_id
             metadata["target_user_name"] = target_user_name
+        if caller_user_id:
+            metadata["caller_user_id"] = caller_user_id
 
         # Build and send call.request.
         msg = make_call_request(self.cfg.node_id, to_node, call_type, metadata=metadata or None)
@@ -627,7 +637,8 @@ async function doSetup() {{
             return web.json_response({"error": f"send failed: {e}"}, status=502)
 
         # Register locally.
-        await self.call_mgr.outgoing_request(call_id, to_node, call_type, routing=routing)
+        await self.call_mgr.outgoing_request(call_id, to_node, call_type, routing=routing,
+                                             caller_user_id=caller_user_id)
 
         return web.json_response({
             "call_id": call_id,
@@ -831,6 +842,9 @@ def _call_to_dict(call) -> dict:
         "ended_at": call.ended_at,
         "end_reason": call.end_reason,
         "fallback_attempt": call.fallback_attempt,
+        "target_user_id": call.metadata.get("target_user_id", ""),
+        "target_user_name": call.metadata.get("target_user_name", ""),
+        "caller_user_id": call.caller_user_id,
     }
     if call.routing:
         d["routing"] = {

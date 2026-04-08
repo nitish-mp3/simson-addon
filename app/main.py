@@ -316,6 +316,8 @@ class SimsonAddon:
             "reason": reason,
             "direction": call.direction,
             "remote_node_id": call.remote_node_id,
+            "target_user_id": call.metadata.get("target_user_id", ""),
+            "caller_user_id": call.caller_user_id,
         })
 
         # Push to SSE so the Lovelace card reacts immediately.
@@ -326,6 +328,8 @@ class SimsonAddon:
             "reason": reason,
             "direction": call.direction,
             "remote_node_id": call.remote_node_id,
+            "target_user_id": call.metadata.get("target_user_id", ""),
+            "caller_user_id": call.caller_user_id,
         })
 
         # Start ring timer when outgoing call starts ringing.
@@ -350,6 +354,8 @@ class SimsonAddon:
             "remote_node_id": call.remote_node_id,
             "remote_label": call.remote_label,
             "call_type": call.call_type,
+            "target_user_id": call.metadata.get("target_user_id", ""),
+            "caller_user_id": call.caller_user_id,
         }
 
         # Map call state to sensor state.
@@ -367,6 +373,30 @@ class SimsonAddon:
             sensor_state,
             attrs,
         )
+
+        # For AMI/local calls (no VPS path), fire simson_call_status so the card
+        # gets real-time updates via the HA event bus.
+        is_ami_call = call.remote_node_id.startswith("asterisk:")
+        if is_ami_call:
+            await self.ha.fire_event("simson_call_status", {
+                "call_id": call.call_id,
+                "status": state,
+                "reason": call.end_reason,
+                "direction": call.direction,
+                "remote_node_id": call.remote_node_id,
+                "target_user_id": call.metadata.get("target_user_id", ""),
+                "caller_user_id": call.caller_user_id,
+            })
+            self.api.push_sse_event({
+                "type": "call_status",
+                "call_id": call.call_id,
+                "status": state,
+                "reason": call.end_reason,
+                "direction": call.direction,
+                "remote_node_id": call.remote_node_id,
+                "target_user_id": call.metadata.get("target_user_id", ""),
+                "caller_user_id": call.caller_user_id,
+            })
 
     async def _connection_state_updater(self):
         """Periodically update HA with connection state."""
