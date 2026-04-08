@@ -54,11 +54,11 @@ class AsteriskAMI:
                 logger.info("Connected to Asterisk AMI at %s:%d",
                             self.cfg.asterisk_host, self.cfg.asterisk_ami_port)
             else:
-                logger.error("AMI login failed: %s", resp)
+                logger.warning("AMI login failed: %s", resp)
                 await self.disconnect()
 
         except Exception as e:
-            logger.error("Failed to connect to Asterisk AMI: %s", e)
+            logger.warning("Failed to connect to Asterisk AMI: %s", e)
             self._connected = False
 
     async def disconnect(self):

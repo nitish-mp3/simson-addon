@@ -674,20 +674,40 @@ class SimsonAddon:
             self._users_query_futures.pop(msg_id, None)
 
     async def _asterisk_reconnect_loop(self):
-        """Keep Asterisk AMI connected — reconnect automatically if it drops."""
+        """Keep Asterisk AMI connected — reconnect with exponential backoff."""
         logger = logging.getLogger("simson.asterisk")
+        fail_count = 0
+        delay = 30  # seconds, doubles up to MAX_DELAY
+        MAX_DELAY = 300
         while True:
-            await asyncio.sleep(30)
+            await asyncio.sleep(delay)
             if self.asterisk and not self.asterisk.connected:
-                logger.info("Asterisk AMI disconnected — attempting reconnect...")
+                # Log the first failure and every 10th after that; rest are silent.
+                if fail_count == 0:
+                    logger.info("Asterisk AMI not connected — attempting reconnect...")
                 try:
                     await self.asterisk.connect()
                     if self.asterisk.connected:
                         logger.info("Asterisk AMI reconnected successfully")
                         # Invalidate device cache so next targets fetch is fresh.
                         self.asterisk._device_cache = []
+                        fail_count = 0
+                        delay = 30  # reset backoff on success
+                    else:
+                        fail_count += 1
+                        if fail_count % 10 == 0:
+                            logger.warning(
+                                "Asterisk AMI still unreachable after %d attempts (host: %s:%d)",
+                                fail_count, self.cfg.asterisk_host, self.cfg.asterisk_ami_port,
+                            )
+                        delay = min(delay * 2, MAX_DELAY)
                 except Exception as e:
-                    logger.warning("Asterisk AMI reconnect failed: %s", e)
+                    fail_count += 1
+                    if fail_count % 10 == 0:
+                        logger.warning(
+                            "Asterisk AMI reconnect failed (attempt %d): %s", fail_count, e
+                        )
+                    delay = min(delay * 2, MAX_DELAY)
 
     async def _periodic_cleanup(self):
         """Clean up ended calls periodically."""
