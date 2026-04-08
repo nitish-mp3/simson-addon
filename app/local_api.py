@@ -66,6 +66,7 @@ class LocalAPI:
         self.app.router.add_get("/api/users", self.handle_get_users)
         self.app.router.add_post("/api/remote-users", self.handle_remote_users)
         self.app.router.add_get("/api/history", self.handle_history)
+        self.app.router.add_get("/api/webrtc-config", self.handle_webrtc_config)
 
     async def start(self):
         """Start the local API server, falling back to alternate ports if needed."""
@@ -843,6 +844,39 @@ async function doSetup() {{
         limit = int(request.query.get("limit", "50"))
         history = self.call_mgr.get_history(limit)
         return web.json_response({"history": history, "total": len(history)})
+
+    async def handle_webrtc_config(self, request: web.Request) -> web.Response:
+        """Return WebRTC/ICE/TURN config and SIP-over-WS credentials for the browser card.
+
+        The card fetches this before starting RTCPeerConnection so it can use
+        the TURN relay even when only STUN fails (symmetric NAT, HTTPS context).
+        """
+        # ── ICE servers ──────────────────────────────────────────────────────
+        ice_servers: list[dict] = [
+            {"urls": "stun:stun.l.google.com:19302"},
+            {"urls": "stun:stun1.l.google.com:19302"},
+        ]
+        if self.cfg.turn_enabled and self.cfg.turn_url:
+            entry: dict = {"urls": self.cfg.turn_url}
+            if self.cfg.turn_username:
+                entry["username"] = self.cfg.turn_username
+            if self.cfg.turn_credential:
+                entry["credential"] = self.cfg.turn_credential
+            ice_servers.append(entry)
+
+        # ── SIP-over-WebSocket config (for Asterisk ConfBridge audio) ────────
+        sip_config: dict = {
+            "enabled": self.cfg.sip_enabled,
+            "ws_url": self.cfg.sip_ws_url,
+            "username": self.cfg.sip_username,
+            "password": self.cfg.sip_password,
+            "domain": self.cfg.sip_domain,
+        }
+
+        return web.json_response({
+            "ice_servers": ice_servers,
+            "sip": sip_config,
+        })
 
 
 def _call_to_dict(call) -> dict:

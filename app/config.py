@@ -81,6 +81,25 @@ class Config:
         # Ingress / local API
         self.local_api_port: int = int(opts.get("local_api_port", os.environ.get("SIMSON_LOCAL_API_PORT", 8799)))
 
+        # ── WebRTC / ICE / TURN / SIP ──────────────────────────────────────────
+        # These enable reliable audio even when callers are behind symmetric NAT.
+        # Set automatically by setup-asterisk.sh, or manually via addon config UI.
+        wrtc = opts.get("webrtc", {})
+        self.turn_enabled: bool = wrtc.get(
+            "turn_enabled", os.environ.get("SIMSON_TURN_ENABLED", "false").lower() in ("true", "1", "yes")
+        )
+        self.turn_url: str = wrtc.get("turn_url", os.environ.get("SIMSON_TURN_URL", ""))
+        self.turn_username: str = wrtc.get("turn_username", os.environ.get("SIMSON_TURN_USERNAME", "simson"))
+        self.turn_credential: str = wrtc.get("turn_credential", os.environ.get("SIMSON_TURN_CREDENTIAL", ""))
+        # SIP-over-WebSocket for browser ↔ Asterisk ConfBridge audio (SIP.js)
+        self.sip_enabled: bool = wrtc.get(
+            "sip_enabled", os.environ.get("SIMSON_SIP_ENABLED", "false").lower() in ("true", "1", "yes")
+        )
+        self.sip_ws_url: str = wrtc.get("sip_ws_url", os.environ.get("SIMSON_SIP_WS_URL", ""))
+        self.sip_username: str = wrtc.get("sip_username", os.environ.get("SIMSON_SIP_USERNAME", "webrtc-pool"))
+        self.sip_password: str = wrtc.get("sip_password", os.environ.get("SIMSON_SIP_PASSWORD", ""))
+        self.sip_domain: str = wrtc.get("sip_domain", os.environ.get("SIMSON_SIP_DOMAIN", ""))
+
         # ── Call targets (from addon config UI) ────────────────────────────
         # Each target defines a callable endpoint: another HA node, an
         # Asterisk extension, or a queue with fallback rules.

@@ -1,6 +1,6 @@
 {
   "name": "Simson Call Relay",
-  "version": "3.2.1",
+  "version": "3.3.0",
   "slug": "simson",
   "description": "Call relay addon — connects your Home Assistant to the Simson control plane for voice/intercom calls between HA instances and Asterisk endpoints.",
   "url": "https://github.com/nitish-mp3/simson-addon",
@@ -26,6 +26,17 @@
       "auto_configure": false
     },
     "call_targets": [],
+    "webrtc": {
+      "turn_enabled": false,
+      "turn_url": "",
+      "turn_username": "simson",
+      "turn_credential": "",
+      "sip_enabled": false,
+      "sip_ws_url": "",
+      "sip_username": "webrtc-pool",
+      "sip_password": "",
+      "sip_domain": ""
+    },
     "log_level": "info",
     "local_api_port": 8799
   },
@@ -57,6 +68,17 @@
         "icon": "str?"
       }
     ],
+    "webrtc": {
+      "turn_enabled": "bool?",
+      "turn_url": "str?",
+      "turn_username": "str?",
+      "turn_credential": "password?",
+      "sip_enabled": "bool?",
+      "sip_ws_url": "str?",
+      "sip_username": "str?",
+      "sip_password": "password?",
+      "sip_domain": "str?"
+    },
     "log_level": "list(debug|info|warning|error)",
     "local_api_port": "port?"
   },
