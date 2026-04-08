@@ -541,14 +541,32 @@ class SimsonAddon:
     def register_user(self, user_id: str, user_name: str):
         """Register or refresh a user's presence (called from LocalAPI)."""
         import time as _time
+        is_new = user_id not in self._online_users
+        name_changed = not is_new and self._online_users[user_id].get("user_name") != user_name
         self._online_users[user_id] = {
             "user_name": user_name,
             "last_seen": _time.time(),
         }
+        if (is_new or name_changed) and self.wss and self.wss.connected:
+            asyncio.get_event_loop().create_task(self._push_users_to_vps())
 
     def unregister_user(self, user_id: str):
         """Remove a user's presence."""
+        existed = user_id in self._online_users
         self._online_users.pop(user_id, None)
+        if existed and self.wss and self.wss.connected:
+            asyncio.get_event_loop().create_task(self._push_users_to_vps())
+
+    async def _push_users_to_vps(self):
+        """Immediately push current user list to VPS (called on join/leave)."""
+        logger = logging.getLogger("simson.users")
+        users = self.get_online_users()
+        msg = make_users_update(self.cfg.node_id, users)
+        try:
+            await self.wss.send(msg)
+            logger.debug("Immediate users.update sent (%d users)", len(users))
+        except Exception as e:
+            logger.warning("Failed to send immediate users.update: %s", e)
 
     def get_online_users(self) -> list[dict]:
         """Return list of currently online users."""
