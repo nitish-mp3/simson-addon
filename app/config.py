@@ -74,6 +74,9 @@ class Config:
         self.asterisk_ext_prefix: str = ast.get(
             "extension_prefix", os.environ.get("SIMSON_ASTERISK_EXT_PREFIX", "9")
         )
+        self.asterisk_auto_configure: bool = ast.get(
+            "auto_configure", os.environ.get("SIMSON_ASTERISK_AUTO_CONFIGURE", "false").lower() in ("true", "1", "yes")
+        )
 
         # Ingress / local API
         self.local_api_port: int = int(opts.get("local_api_port", os.environ.get("SIMSON_LOCAL_API_PORT", 8799)))

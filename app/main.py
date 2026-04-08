@@ -18,6 +18,7 @@ from protocol import (
 from wss_client import WSSClient
 from call_manager import CallManager, CallInfo, CallState
 from asterisk_ami import AsteriskAMI
+from asterisk_setup import setup_asterisk
 from local_api import LocalAPI
 from ha_bridge import HABridge
 from target_directory import TargetDirectory
@@ -118,6 +119,17 @@ class SimsonAddon:
 
         # Connect to Asterisk if enabled.
         if self.asterisk:
+            # Auto-configure Asterisk before connecting (writes conf files, reloads modules).
+            if self.cfg.asterisk_auto_configure:
+                try:
+                    await setup_asterisk(
+                        ami_user=self.cfg.asterisk_ami_user,
+                        ami_secret=self.cfg.asterisk_ami_secret,
+                        context=self.cfg.asterisk_context,
+                        ext_prefix=self.cfg.asterisk_ext_prefix,
+                    )
+                except Exception as e:
+                    logger.warning("Asterisk auto-configure failed (continuing): %s", e)
             try:
                 await self.asterisk.connect()
             except Exception as e:

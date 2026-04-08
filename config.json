@@ -22,7 +22,8 @@
       "ami_user": "simson",
       "ami_secret": "",
       "context": "from-simson",
-      "extension_prefix": "9"
+      "extension_prefix": "9",
+      "auto_configure": false
     },
     "call_targets": [],
     "log_level": "info",
@@ -38,7 +39,8 @@
       "ami_user": "str",
       "ami_secret": "password",
       "context": "str",
-      "extension_prefix": "str"
+      "extension_prefix": "str",
+      "auto_configure": "bool?"
     },
     "call_targets": [
       {

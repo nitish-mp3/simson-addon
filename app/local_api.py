@@ -21,7 +21,8 @@ class LocalAPI:
     def __init__(self, cfg: Config, call_mgr: CallManager,
                  send_fn, asterisk=None, wss_client=None,
                  target_dir: TargetDirectory | None = None,
-                 addon=None):
+                 addon=None,
+                 standalone_mode: bool = False):
         """
         Args:
             cfg: Addon config.
@@ -31,6 +32,7 @@ class LocalAPI:
             wss_client: Optional WSSClient for connection status.
             target_dir: Optional TargetDirectory for call targets.
             addon: Optional SimsonAddon ref for user presence operations.
+            standalone_mode: When True, serve interactive web UI at / for non-HAOS deployments.
         """
         self.cfg = cfg
         self.call_mgr = call_mgr
@@ -39,6 +41,7 @@ class LocalAPI:
         self.wss_client = wss_client
         self.target_dir = target_dir
         self.addon = addon
+        self.standalone_mode = standalone_mode
         self.app = web.Application()
         self._runner = None
         self._sse_subscribers: list[asyncio.Queue] = []
@@ -102,6 +105,9 @@ class LocalAPI:
 
     async def handle_ingress(self, request: web.Request) -> web.Response:
         """Serve the ingress web panel — setup wizard or dashboard."""
+        if self.standalone_mode:
+            return await self._handle_standalone_ui(request)
+
         provisioned = bool(self.cfg.install_token)
         vps_connected = self.wss_client.connected if self.wss_client else False
         active = self.call_mgr.active_call
@@ -370,6 +376,17 @@ async function doSetup() {{
 </script>
 {"<script>setTimeout(()=>location.reload(),10000)</script>" if provisioned else ""}
 </body></html>"""
+        return web.Response(text=html, content_type="text/html")
+
+    async def _handle_standalone_ui(self, request: web.Request) -> web.Response:
+        """Serve full interactive web UI for standalone (non-HAOS) deployments."""
+        from standalone_ui import STANDALONE_UI_HTML
+        node_id = self.cfg.node_id or "unknown"
+        node_label = getattr(self.cfg, "node_label", None) or node_id
+        vps = self.cfg.server_url or ""
+        html = STANDALONE_UI_HTML.replace("__NODE_ID__", node_id).replace(
+            "__NODE_LABEL__", node_label
+        ).replace("__VPS_URL__", vps)
         return web.Response(text=html, content_type="text/html")
 
     async def handle_health(self, request: web.Request) -> web.Response:
