@@ -97,12 +97,16 @@ def make_call_request(from_node: str, to_node: str,
     })
 
 
-def make_call_accept(call_id: str, node_id: str) -> dict:
+def make_call_accept(call_id: str, node_id: str,
+                     answered_by_user_id: str = "") -> dict:
     """Create a call accept message."""
-    return make_envelope(TYPE_CALL_ACCEPT, {
+    payload = {
         "call_id": call_id,
         "node_id": node_id,
-    })
+    }
+    if answered_by_user_id:
+        payload["answered_by_user_id"] = answered_by_user_id
+    return make_envelope(TYPE_CALL_ACCEPT, payload)
 
 
 def make_call_reject(call_id: str, node_id: str,

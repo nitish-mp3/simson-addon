@@ -312,6 +312,7 @@ class SimsonAddon:
         call_id = payload.get("call_id", "")
         status = payload.get("status", "")
         reason = payload.get("reason", "")
+        answered_by_user_id = payload.get("answered_by_user_id", "")
 
         call = await self.call_mgr.update_status(call_id, status, reason)
         if not call:
@@ -330,6 +331,7 @@ class SimsonAddon:
             "remote_node_id": call.remote_node_id,
             "target_user_id": call.metadata.get("target_user_id", ""),
             "caller_user_id": call.caller_user_id,
+            "answered_by_user_id": answered_by_user_id,
         })
 
         # Push to SSE so the Lovelace card reacts immediately.
@@ -342,6 +344,7 @@ class SimsonAddon:
             "remote_node_id": call.remote_node_id,
             "target_user_id": call.metadata.get("target_user_id", ""),
             "caller_user_id": call.caller_user_id,
+            "answered_by_user_id": answered_by_user_id,
         })
 
         # Start ring timer when outgoing call starts ringing.

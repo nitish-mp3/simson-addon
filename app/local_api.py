@@ -672,6 +672,7 @@ async function doSetup() {{
             return web.json_response({"error": "invalid json"}, status=400)
 
         call_id = body.get("call_id", "")
+        answered_by_user_id = body.get("answered_by_user_id", "")
         if not call_id:
             # Auto-find incoming call.
             active = self.call_mgr.active_call
@@ -684,7 +685,8 @@ async function doSetup() {{
         if not call or call.state != CallState.INCOMING:
             return web.json_response({"error": "call not found or not incoming"}, status=404)
 
-        msg = make_call_accept(call_id, self.cfg.node_id)
+        msg = make_call_accept(call_id, self.cfg.node_id,
+                               answered_by_user_id=answered_by_user_id)
         try:
             await self.send_fn(msg)
         except Exception as e:
