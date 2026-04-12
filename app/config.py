@@ -1,22 +1,32 @@
-"""Configuration loader — reads from /data/options.json (written by HA Supervisor).
+"""Configuration loader.
 
-Node credentials (account_id, node_id, install_token) are NEVER read from options.json.
-They live exclusively in /data/credentials.json, managed by the setup wizard and
-auto-provisioner. This prevents stale addon-config values from causing auth failures.
+Split into two tiers:
+  1. Minimal HA addon options (/data/options.json, written by Supervisor):
+       server_url, admin_token, log_level
+  2. In-addon settings (/data/settings.json, managed by the built-in Settings UI):
+       asterisk, webrtc/TURN/SIP, call_targets, local_api_port
+
+Node credentials (account_id, node_id, install_token) live exclusively in
+/data/credentials.json managed by the setup wizard / auto-provisioner and are
+never read from options.json to prevent stale values causing auth failures.
 """
 
 import json
+import logging
 import os
 
 from provisioner import load_saved_credentials
+from settings import load_settings
 
 OPTIONS_FILE = "/data/options.json"
+
+logger = logging.getLogger("simson.config")
 
 
 def _load_options() -> dict:
     """Load addon options written by HA Supervisor before container start."""
     try:
-        with open(OPTIONS_FILE) as f:
+        with open(OPTIONS_FILE, encoding="utf-8") as f:
             return json.load(f)
     except (OSError, json.JSONDecodeError):
         return {}
@@ -25,27 +35,27 @@ def _load_options() -> dict:
 class Config:
     """Addon configuration.
 
-    Infrastructure options (server_url, admin_token, log_level, port, asterisk)
-    come from /data/options.json set via the HA addon configuration UI.
+    Tier-1 options (server_url, admin_token, log_level) come from
+    /data/options.json set via the HA addon Configuration tab.
+
+    Tier-2 settings (asterisk, webrtc, call_targets, local_api_port) come from
+    /data/settings.json managed entirely through the built-in Settings UI.
+    Environment variable overrides are still honoured for headless/CI deployments.
 
     Node credentials (account_id, node_id, install_token) come ONLY from
-    /data/credentials.json, written by the setup wizard or auto-provisioner.
-    They are never read from options.json so the addon config UI cannot accidentally
-    corrupt them.
+    /data/credentials.json so the addon config UI cannot accidentally corrupt them.
     """
 
     def __init__(self):
         opts = _load_options()
+        s = load_settings()  # /data/settings.json — may not exist yet
 
-        # ── Infrastructure options (from addon config UI) ──────────────────
+        # ── Tier-1: minimal addon options ─────────────────────────────────
         self.server_url: str = opts.get("server_url", os.environ.get("SIMSON_SERVER_URL", ""))
         self.admin_token: str = opts.get("admin_token", os.environ.get("SIMSON_ADMIN_TOKEN", ""))
         self.log_level: str = opts.get("log_level", os.environ.get("SIMSON_LOG_LEVEL", "info")).upper()
 
-        # ── Node credentials (from /data/credentials.json ONLY) ───────────
-        # Do not read account_id / node_id / install_token from options.json.
-        # The HA addon config UI cannot reliably manage these — any stale value
-        # there would cause 4001 auth failures on restart.
+        # ── Node credentials (/data/credentials.json ONLY) ────────────────
         self.account_id: str = ""
         self.node_id: str = ""
         self.install_token: str = ""
@@ -61,66 +71,82 @@ class Config:
             if saved.get("capabilities"):
                 self.capabilities = saved["capabilities"]
 
-        # ── Asterisk (nested dict in options.json) ─────────────────────────
-        ast = opts.get("asterisk", {})
+        # ── Tier-2: settings managed via the in-addon UI ──────────────────
+        # Asterisk AMI
+        ast = s.get("asterisk", {})
         self.asterisk_enabled: bool = ast.get(
-            "enabled", os.environ.get("SIMSON_ASTERISK_ENABLED", "false").lower() in ("true", "1", "yes")
+            "enabled",
+            os.environ.get("SIMSON_ASTERISK_ENABLED", "false").lower() in ("true", "1", "yes"),
         )
         self.asterisk_host: str = ast.get("host", os.environ.get("SIMSON_ASTERISK_HOST", "127.0.0.1"))
-        self.asterisk_ami_port: int = int(ast.get("ami_port", os.environ.get("SIMSON_ASTERISK_AMI_PORT", 5038)))
-        self.asterisk_ami_user: str = ast.get("ami_user", os.environ.get("SIMSON_ASTERISK_AMI_USER", "simson"))
-        self.asterisk_ami_secret: str = ast.get("ami_secret", os.environ.get("SIMSON_ASTERISK_AMI_SECRET", ""))
-        self.asterisk_context: str = ast.get("context", os.environ.get("SIMSON_ASTERISK_CONTEXT", "from-simson"))
+        self.asterisk_ami_port: int = int(
+            ast.get("ami_port", os.environ.get("SIMSON_ASTERISK_AMI_PORT", 5038))
+        )
+        self.asterisk_ami_user: str = ast.get(
+            "ami_user", os.environ.get("SIMSON_ASTERISK_AMI_USER", "simson")
+        )
+        self.asterisk_ami_secret: str = ast.get(
+            "ami_secret", os.environ.get("SIMSON_ASTERISK_AMI_SECRET", "")
+        )
+        self.asterisk_context: str = ast.get(
+            "context", os.environ.get("SIMSON_ASTERISK_CONTEXT", "from-simson")
+        )
         self.asterisk_ext_prefix: str = ast.get(
             "extension_prefix", os.environ.get("SIMSON_ASTERISK_EXT_PREFIX", "9")
         )
         self.asterisk_auto_configure: bool = ast.get(
-            "auto_configure", os.environ.get("SIMSON_ASTERISK_AUTO_CONFIGURE", "false").lower() in ("true", "1", "yes")
+            "auto_configure",
+            os.environ.get("SIMSON_ASTERISK_AUTO_CONFIGURE", "false").lower() in ("true", "1", "yes"),
         )
 
-        # Ingress / local API
-        self.local_api_port: int = int(opts.get("local_api_port", os.environ.get("SIMSON_LOCAL_API_PORT", 8799)))
+        # Local API / ingress port
+        self.local_api_port: int = int(
+            s.get("local_api_port", os.environ.get("SIMSON_LOCAL_API_PORT", 8799))
+        )
 
-        # ── WebRTC / ICE / TURN / SIP ──────────────────────────────────────────
-        # These enable reliable audio even when callers are behind symmetric NAT.
-        # Set automatically by setup-asterisk.sh, or manually via addon config UI.
-        wrtc = opts.get("webrtc", {})
+        # WebRTC / ICE / TURN / SIP
+        wrtc = s.get("webrtc", {})
         self.turn_enabled: bool = wrtc.get(
-            "turn_enabled", os.environ.get("SIMSON_TURN_ENABLED", "false").lower() in ("true", "1", "yes")
+            "turn_enabled",
+            os.environ.get("SIMSON_TURN_ENABLED", "false").lower() in ("true", "1", "yes"),
         )
         self.turn_url: str = wrtc.get("turn_url", os.environ.get("SIMSON_TURN_URL", ""))
-        self.turn_username: str = wrtc.get("turn_username", os.environ.get("SIMSON_TURN_USERNAME", "simson"))
-        self.turn_credential: str = wrtc.get("turn_credential", os.environ.get("SIMSON_TURN_CREDENTIAL", ""))
-        # SIP-over-WebSocket for browser ↔ Asterisk ConfBridge audio (SIP.js)
+        self.turn_username: str = wrtc.get(
+            "turn_username", os.environ.get("SIMSON_TURN_USERNAME", "simson")
+        )
+        self.turn_credential: str = wrtc.get(
+            "turn_credential", os.environ.get("SIMSON_TURN_CREDENTIAL", "")
+        )
+        # SIP-over-WebSocket for browser ↔ Asterisk ConfBridge audio
         self.sip_enabled: bool = wrtc.get(
-            "sip_enabled", os.environ.get("SIMSON_SIP_ENABLED", "false").lower() in ("true", "1", "yes")
+            "sip_enabled",
+            os.environ.get("SIMSON_SIP_ENABLED", "false").lower() in ("true", "1", "yes"),
         )
         self.sip_ws_url: str = wrtc.get("sip_ws_url", os.environ.get("SIMSON_SIP_WS_URL", ""))
-        self.sip_username: str = wrtc.get("sip_username", os.environ.get("SIMSON_SIP_USERNAME", "webrtc-pool"))
+        self.sip_username: str = wrtc.get(
+            "sip_username", os.environ.get("SIMSON_SIP_USERNAME", "webrtc-pool")
+        )
         self.sip_password: str = wrtc.get("sip_password", os.environ.get("SIMSON_SIP_PASSWORD", ""))
         self.sip_domain: str = wrtc.get("sip_domain", os.environ.get("SIMSON_SIP_DOMAIN", ""))
 
-        # ── Call targets (from addon config UI) ────────────────────────────
-        # Each target defines a callable endpoint: another HA node, an
-        # Asterisk extension, or a queue with fallback rules.
-        raw_targets = opts.get("call_targets", [])
+        # Call targets — normalised list stored in settings.json
         self.call_targets: list[dict] = []
-        for t in raw_targets:
+        for t in s.get("call_targets", []):
             self.call_targets.append({
-                "type": t.get("type", "node"),          # node | device | asterisk | queue
-                "id": t.get("id", ""),                   # unique target identifier
+                "type": t.get("type", "node"),
+                "id": t.get("id", ""),
                 "label": t.get("label", t.get("id", "")),
-                "node_id": t.get("node_id", ""),         # for type=node / device
-                "extension": t.get("extension", ""),      # Asterisk extension
+                "node_id": t.get("node_id", ""),
+                "extension": t.get("extension", ""),
                 "context": t.get("context", self.asterisk_context),
-                "trunk": t.get("trunk", ""),              # SIP trunk
-                "caller_id": t.get("caller_id", ""),      # outbound caller ID
-                "timeout": int(t.get("timeout", 30)),     # ring timeout seconds
-                "fallback_targets": t.get("fallback_targets", []),  # list of target ids
-                "icon": t.get("icon", ""),                # optional icon for UI
+                "trunk": t.get("trunk", ""),
+                "caller_id": t.get("caller_id", ""),
+                "timeout": int(t.get("timeout", 30)),
+                "fallback_targets": t.get("fallback_targets", []),
+                "icon": t.get("icon", ""),
             })
 
-        # HA Supervisor token (always from env — not in options.json)
+        # HA Supervisor token (always from env — never in options.json)
         self.supervisor_token: str = os.environ.get("SUPERVISOR_TOKEN", "")
 
     def needs_provisioning(self) -> bool:

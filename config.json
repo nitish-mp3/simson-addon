@@ -1,6 +1,6 @@
 {
   "name": "Simson Call Relay",
-  "version": "3.4.0",
+  "version": "3.5.0",
   "slug": "simson",
   "description": "Call relay addon — connects your Home Assistant to the Simson control plane for voice/intercom calls between HA instances and Asterisk endpoints.",
   "url": "https://github.com/nitish-mp3/simson-addon",
@@ -15,72 +15,12 @@
   "options": {
     "server_url": "wss://simson-vps.niti.life/ws",
     "admin_token": "",
-    "asterisk": {
-      "enabled": false,
-      "host": "127.0.0.1",
-      "ami_port": 5038,
-      "ami_user": "simson",
-      "ami_secret": "",
-      "context": "from-simson",
-      "extension_prefix": "9",
-      "auto_configure": false
-    },
-    "call_targets": [],
-    "webrtc": {
-      "turn_enabled": false,
-      "turn_url": "",
-      "turn_username": "simson",
-      "turn_credential": "",
-      "sip_enabled": false,
-      "sip_ws_url": "",
-      "sip_username": "webrtc-pool",
-      "sip_password": "",
-      "sip_domain": ""
-    },
-    "log_level": "info",
-    "local_api_port": 8799
+    "log_level": "info"
   },
   "schema": {
     "server_url": "url",
     "admin_token": "password?",
-    "asterisk": {
-      "enabled": "bool",
-      "host": "str",
-      "ami_port": "port",
-      "ami_user": "str",
-      "ami_secret": "password",
-      "context": "str",
-      "extension_prefix": "str",
-      "auto_configure": "bool?"
-    },
-    "call_targets": [
-      {
-        "type": "list(node|device|asterisk|queue)",
-        "id": "str",
-        "label": "str",
-        "node_id": "str?",
-        "extension": "str?",
-        "context": "str?",
-        "trunk": "str?",
-        "caller_id": "str?",
-        "timeout": "int?",
-        "fallback_targets": ["str"],
-        "icon": "str?"
-      }
-    ],
-    "webrtc": {
-      "turn_enabled": "bool?",
-      "turn_url": "str?",
-      "turn_username": "str?",
-      "turn_credential": "password?",
-      "sip_enabled": "bool?",
-      "sip_ws_url": "str?",
-      "sip_username": "str?",
-      "sip_password": "password?",
-      "sip_domain": "str?"
-    },
-    "log_level": "list(debug|info|warning|error)",
-    "local_api_port": "port?"
+    "log_level": "list(debug|info|warning|error)"
   },
   "map": ["share:rw"],
   "host_network": true,

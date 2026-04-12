@@ -1,6 +1,7 @@
 """Local HTTP API — exposed via HA ingress for the integration to talk to."""
 
 import asyncio
+import copy
 import json
 import logging
 import uuid
@@ -10,7 +11,11 @@ from call_manager import CallManager, CallState, RoutingIntent
 from config import Config
 from protocol import make_call_request, make_call_accept, make_call_reject, make_call_end, make_webrtc_signal
 from provisioner import auto_provision, clear_saved_credentials
+from settings import load_settings, save_settings, validate_settings
+from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
+
+ADDON_VERSION = "3.5.0"
 
 logger = logging.getLogger("simson.api")
 
@@ -67,6 +72,8 @@ class LocalAPI:
         self.app.router.add_post("/api/remote-users", self.handle_remote_users)
         self.app.router.add_get("/api/history", self.handle_history)
         self.app.router.add_get("/api/webrtc-config", self.handle_webrtc_config)
+        self.app.router.add_get("/api/settings", self.handle_get_settings)
+        self.app.router.add_post("/api/settings", self.handle_post_settings)
 
     async def start(self):
         """Start the local API server, falling back to alternate ports if needed."""
@@ -105,278 +112,19 @@ class LocalAPI:
     # --- Handlers ---
 
     async def handle_ingress(self, request: web.Request) -> web.Response:
-        """Serve the ingress web panel — setup wizard or dashboard."""
+        """Serve the in-addon SPA (setup wizard + settings panel)."""
         if self.standalone_mode:
             return await self._handle_standalone_ui(request)
 
         provisioned = bool(self.cfg.install_token)
-        vps_connected = self.wss_client.connected if self.wss_client else False
-        active = self.call_mgr.active_call
         has_admin_token = bool(self.cfg.admin_token)
 
-        # Determine status badge.
-        if not provisioned:
-            badge_cls, badge_txt = "badge-setup", "Setup Required"
-        elif vps_connected:
-            badge_cls, badge_txt = "badge-ok", "Connected"
-        else:
-            badge_cls, badge_txt = "badge-err", "Disconnected"
-
-        # Active call section (dashboard only).
-        call_html = ""
-        if provisioned and active:
-            call_html = (
-                f'<div class="card">'
-                f'<div class="card-title">Active Call</div>'
-                f'<div class="info-row"><span class="info-label">Call ID</span>'
-                f'<span class="info-value">{active.call_id[:12]}…</span></div>'
-                f'<div class="info-row"><span class="info-label">With</span>'
-                f'<span class="info-value">{active.remote_label or active.remote_node_id}</span></div>'
-                f'<div class="info-row"><span class="info-label">Direction</span>'
-                f'<span class="info-value">{active.direction}</span></div>'
-                f'<div class="info-row"><span class="info-label">State</span>'
-                f'<span class="info-value">{active.state.value}</span></div>'
-                f'</div>'
-            )
-        elif provisioned:
-            call_html = '<div class="card"><div class="card-title">Calls</div><p class="muted">No active call</p></div>'
-
-        # Node info section (dashboard only).
-        node_html = ""
-        if provisioned:
-            vps_dot = "dot-ok" if vps_connected else "dot-err"
-            vps_label = "Connected" if vps_connected else "Disconnected"
-            node_html = (
-                f'<div class="card">'
-                f'<div class="card-title">Node Info</div>'
-                f'<div class="info-row"><span class="info-label">Node ID</span>'
-                f'<span class="info-value">{self.cfg.node_id}</span></div>'
-                f'<div class="info-row"><span class="info-label">Account</span>'
-                f'<span class="info-value">{self.cfg.account_id}</span></div>'
-                f'<div class="info-row"><span class="info-label">Server</span>'
-                f'<span class="info-value">{self.cfg.server_url}</span></div>'
-                f'<div class="info-row"><span class="info-label">VPS</span>'
-                f'<span class="info-value"><span class="dot {vps_dot}"></span>{vps_label}</span></div>'
-                f'</div>'
-            )
-
-        # Build setup card HTML (shown only when not yet provisioned).
-        # If admin_token is already in the addon config, we hide the token field
-        # and use the configured token automatically — nothing for the user to copy-paste.
-        if not provisioned:
-            if has_admin_token:
-                token_section = (
-                    '<div class="alert alert-success" style="margin-bottom:16px">'
-                    '✓ Admin token found in addon configuration — no need to enter it here.'
-                    '</div>'
-                )
-                token_js_check = "  // admin_token comes from addon config — no field to validate"
-                token_js_payload = ""  # send empty string; server uses cfg.admin_token
-            else:
-                token_section = f"""    <div class="step">
-      <div class="step-num">1</div>
-      <div class="step-text">Set your <b>VPS admin token</b> in the addon's <b>Configuration</b> tab, then come back here.<br>
-        <small style="color:#555">Or paste it below as a one-time entry.</small>
-      </div>
-    </div>
-    <div class="field">
-      <label>Admin Token <span style="color:#ef9a9a;font-size:12px">— paste here if not set in addon config</span></label>
-      <input type="password" id="f-token" placeholder="Paste your VPS admin token" autocomplete="off" />
-    </div>"""
-                token_js_check = (
-                    "  const token = (document.getElementById('f-token') || {{}}).value?.trim() || '';\n"
-                    "  if (!token) {{ result.innerHTML = '<div class=\"alert alert-error\">Admin token is required. "
-                    "Either set it in the addon Configuration tab or paste it above.</div>'; return; }}"
-                )
-                token_js_payload = 'admin_token: token, '
-
-            setup_card_html = f"""
-  <div class="card" id="setup-card">
-    <div class="card-title">Quick Setup</div>
-    {token_section}
-    <div class="step">
-      <div class="step-num">{"2" if not has_admin_token else "1"}</div>
-      <div class="step-text">Choose a <b>node label</b> (e.g. "Living Room"). This will be this node's display name.</div>
-    </div>
-    <div class="step">
-      <div class="step-num">{"3" if not has_admin_token else "2"}</div>
-      <div class="step-text"><b>Adding a second HA instance?</b> Paste the <b>Account ID</b> from your first node's panel so both share the same account. Leave empty for a brand-new setup.</div>
-    </div>
-    <div class="divider"></div>
-    <div class="field">
-      <label>Node Label</label>
-      <input type="text" id="f-label" placeholder="e.g. Living Room, Office, Kitchen" autofocus />
-      <div class="hint">A friendly name for this HA instance. Used to generate the node ID.</div>
-    </div>
-    <div class="field">
-      <label>Account ID <span style="color:#03a9f4;font-weight:500;font-size:12px">— for calling between instances</span></label>
-      <input type="text" id="f-account" placeholder="Leave empty for first setup" />
-      <div class="hint" style="color:#e6a817;background:#2a1e00;border:1px solid #e6a81733;border-radius:6px;padding:8px 10px;margin-top:6px">
-        ⚠ To call between two HA instances both nodes <b>must share the same Account ID</b>.
-        Copy it from the first node's panel.
-      </div>
-    </div>
-    <button class="btn-primary" id="btn-setup" onclick="doSetup()">Set Up Node</button>
-    <div id="setup-result"></div>
-  </div>"""
-        else:
-            setup_card_html = ""
-            token_js_check = ""
-            token_js_payload = ""
-
-        # Escape braces for f-string safety in CSS/JS — use doubled braces.
-        html = f"""<!DOCTYPE html>
-<html><head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Simson Call Relay</title>
-<style>
-*{{box-sizing:border-box;margin:0;padding:0}}
-body{{font-family:system-ui,-apple-system,sans-serif;background:#111;color:#e1e1e1;min-height:100vh}}
-.container{{max-width:600px;margin:0 auto;padding:24px 16px}}
-.header{{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px}}
-.header h1{{font-size:20px;display:flex;align-items:center;gap:10px}}
-.header h1 span{{color:#03a9f4}}
-.badge{{font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;text-transform:uppercase;letter-spacing:.5px}}
-.badge-ok{{background:#1b5e2088;color:#a5d6a7;border:1px solid #a5d6a740}}
-.badge-err{{background:#b71c1c88;color:#ef9a9a;border:1px solid #ef9a9a40}}
-.badge-setup{{background:#e6510088;color:#ffcc80;border:1px solid #ffcc8040}}
-.card{{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:20px;margin-bottom:16px}}
-.card-title{{font-size:13px;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:14px;font-weight:600}}
-.info-row{{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #222}}
-.info-row:last-child{{border-bottom:none}}
-.info-label{{color:#888;font-size:13px}}
-.info-value{{font-size:13px;font-weight:500;display:flex;align-items:center;gap:6px}}
-.dot{{width:8px;height:8px;border-radius:50%;display:inline-block}}
-.dot-ok{{background:#4caf50}} .dot-err{{background:#f44336}}
-p.muted{{color:#666;font-size:14px}}
-.field{{margin-bottom:16px}}
-.field label{{display:block;font-size:13px;color:#aaa;margin-bottom:6px;font-weight:500}}
-.field input{{width:100%;background:#222;border:1px solid #333;border-radius:8px;padding:10px 14px;color:#e1e1e1;font-size:14px;outline:none;transition:border-color .2s}}
-.field input:focus{{border-color:#03a9f4}}
-.field .hint{{font-size:12px;color:#555;margin-top:5px;line-height:1.4}}
-.btn-primary{{display:inline-flex;align-items:center;gap:8px;background:#03a9f4;color:#fff;border:none;border-radius:8px;padding:12px 28px;font-size:14px;font-weight:600;cursor:pointer;transition:background .2s,transform .1s;margin-top:4px}}
-.btn-primary:hover{{background:#0288d1}}
-.btn-primary:active{{transform:scale(.97)}}
-.btn-primary:disabled{{opacity:.5;cursor:not-allowed;transform:none}}
-.alert{{padding:12px 16px;border-radius:8px;font-size:13px;margin-top:16px;line-height:1.5}}
-.alert-success{{background:#1b5e2044;border:1px solid #4caf5033;color:#a5d6a7}}
-.alert-error{{background:#b71c1c33;border:1px solid #f4433633;color:#ef9a9a}}
-.alert-info{{background:#0d47a133;border:1px solid #2196f333;color:#90caf9}}
-.step{{display:flex;gap:12px;align-items:flex-start;margin-bottom:20px}}
-.step-num{{width:28px;height:28px;background:#03a9f422;color:#03a9f4;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0;margin-top:2px}}
-.step-text{{font-size:14px;color:#bbb;line-height:1.5}}
-.step-text b{{color:#e1e1e1}}
-.divider{{height:1px;background:#222;margin:20px 0}}
-details{{margin-top:16px}} details summary{{cursor:pointer;color:#03a9f4;font-size:13px;font-weight:500}}
-details summary:hover{{text-decoration:underline}}
-</style>
-</head><body>
-<div class="container">
-  <div class="header">
-    <h1>📞 <span>Simson Call Relay</span></h1>
-    <span class="badge {badge_cls}">{badge_txt}</span>
-  </div>
-
-  {setup_card_html}
-
-  {node_html}
-  {call_html}
-
-  {"" if not provisioned else f'''
-  <div class="card">
-    <div class="card-title">Add Another HA Instance</div>
-    <p style="color:#bbb;font-size:13px;margin-bottom:14px;line-height:1.6">
-      To call between this node and another HA instance, install the Simson addon on the second HA,
-      open its Simson panel, and use the values below during setup.
-    </p>
-    <div class="info-row">
-      <span class="info-label">Use this Account ID</span>
-      <span class="info-value" style="display:flex;align-items:center;gap:8px">
-        <code style="background:#222;padding:2px 8px;border-radius:5px;font-size:13px">{self.cfg.account_id}</code>
-        <button onclick="navigator.clipboard.writeText('{self.cfg.account_id}');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',2000)"
-          style="background:#03a9f422;color:#03a9f4;border:1px solid #03a9f433;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:12px;font-weight:600">Copy</button>
-      </span>
-    </div>
-    <div class="info-row" style="border-bottom:none">
-      <span class="info-label">Use a different Node Label</span>
-      <span class="info-value" style="color:#888">e.g. Office, Kitchen, Bedroom…</span>
-    </div>
-  </div>
-
-  <div class="card" style="border-color:#b71c1c44">
-    <div class="card-title" style="color:#ef9a9a">Danger Zone</div>
-    <p style="color:#888;font-size:13px;margin-bottom:14px">
-      Reset credentials to re-run the setup wizard. Use this if this node is on the wrong account.
-    </p>
-    <button class="btn-primary" style="background:#b71c1c;font-size:13px;padding:9px 20px" onclick="doReset()">Reset Setup</button>
-    <div id="reset-result"></div>
-  </div>
-  '''}
-</div>
-
-<script>
-async function doReset() {{
-  if (!confirm('This will clear saved credentials and show the setup wizard. Continue?')) return;
-  const btn = event.target;
-  btn.disabled = true;
-  btn.textContent = 'Resetting…';
-  try {{
-    await fetch('api/reset', {{ method: 'POST' }});
-    document.getElementById('reset-result').innerHTML =
-      '<div class="alert alert-success">Reset complete. Reloading…</div>';
-    setTimeout(() => location.reload(), 1500);
-  }} catch(e) {{
-    document.getElementById('reset-result').innerHTML =
-      '<div class="alert alert-error">Reset failed: ' + e.message + '</div>';
-    btn.disabled = false;
-    btn.textContent = 'Reset Setup';
-  }}
-}}
-async function doSetup() {{
-  const btn = document.getElementById('btn-setup');
-  const result = document.getElementById('setup-result');
-{token_js_check}
-  const label = document.getElementById('f-label').value.trim();
-  const account = document.getElementById('f-account').value.trim();
-
-  if (!label) {{ result.innerHTML = '<div class="alert alert-error">Node label is required.</div>'; return; }}
-
-  btn.disabled = true;
-  btn.textContent = 'Setting up…';
-  result.innerHTML = '<div class="alert alert-info">Creating account and node on VPS…</div>';
-
-  try {{
-    const resp = await fetch('api/provision', {{
-      method: 'POST',
-      headers: {{ 'Content-Type': 'application/json' }},
-      body: JSON.stringify({{ {token_js_payload}node_label: label, account_id: account }}),
-    }});
-    const data = await resp.json();
-    if (resp.ok) {{
-      result.innerHTML =
-        '<div class="alert alert-success">' +
-        '✓ Setup complete!<br>' +
-        '<b>Account:</b> ' + data.account_id + '<br>' +
-        '<b>Node:</b> ' + data.node_id + '<br>' +
-        '<small>Credentials saved. Reloading in 3 seconds…</small>' +
-        '</div>';
-      setTimeout(() => location.reload(), 3000);
-    }} else {{
-      result.innerHTML = '<div class="alert alert-error">✗ ' + (data.error || 'Setup failed') + '</div>';
-      btn.disabled = false;
-      btn.textContent = 'Set Up Node';
-    }}
-  }} catch (e) {{
-    result.innerHTML = '<div class="alert alert-error">✗ Network error: ' + e.message + '</div>';
-    btn.disabled = false;
-    btn.textContent = 'Set Up Node';
-  }}
-}}
-{"" if provisioned else ""}
-</script>
-{"<script>setTimeout(()=>location.reload(),10000)</script>" if provisioned else ""}
-</body></html>"""
+        html = (
+            INGRESS_UI_HTML
+            .replace("__PROVISIONED__", "true" if provisioned else "false")
+            .replace("__HAS_ADMIN_TOKEN__", "true" if has_admin_token else "false")
+            .replace("__VERSION__", ADDON_VERSION)
+        )
         return web.Response(text=html, content_type="text/html")
 
     async def _handle_standalone_ui(self, request: web.Request) -> web.Response:
@@ -393,7 +141,7 @@ async function doSetup() {{
     async def handle_health(self, request: web.Request) -> web.Response:
         return web.json_response({
             "status": "ok",
-            "addon_version": "2.3.0",
+            "addon_version": ADDON_VERSION,
             "node_id": self.cfg.node_id,
             "provisioned": bool(self.cfg.install_token),
         })
@@ -459,6 +207,61 @@ async function doSetup() {{
         self.cfg.install_token = ""
         logger.warning("Credentials reset via web UI — setup wizard will show on next load")
         return web.json_response({"reset": True})
+
+    async def handle_get_settings(self, request: web.Request) -> web.Response:
+        """Return current addon settings as JSON."""
+        return web.json_response(load_settings())
+
+    async def handle_post_settings(self, request: web.Request) -> web.Response:
+        """Save addon settings submitted from the in-addon UI."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+
+        errors = validate_settings(body)
+        if errors:
+            return web.json_response({"errors": errors}, status=422)
+
+        old = load_settings()
+        restart_required = (
+            body.get("local_api_port", 8799) != old.get("local_api_port", 8799)
+            or body.get("asterisk", {}).get("enabled") != old.get("asterisk", {}).get("enabled")
+            or body.get("asterisk", {}).get("host") != old.get("asterisk", {}).get("host")
+            or body.get("asterisk", {}).get("ami_port") != old.get("asterisk", {}).get("ami_port")
+            or body.get("asterisk", {}).get("ami_secret") != old.get("asterisk", {}).get("ami_secret")
+        )
+
+        save_settings(body)
+
+        # Apply to in-memory config immediately.
+        ast = body.get("asterisk", {})
+        self.cfg.asterisk_enabled = ast.get("enabled", False)
+        self.cfg.asterisk_host = ast.get("host", "127.0.0.1")
+        self.cfg.asterisk_ami_port = int(ast.get("ami_port", 5038))
+        self.cfg.asterisk_ami_user = ast.get("ami_user", "simson")
+        self.cfg.asterisk_ami_secret = ast.get("ami_secret", "")
+        self.cfg.asterisk_context = ast.get("context", "from-simson")
+        self.cfg.asterisk_ext_prefix = ast.get("extension_prefix", "9")
+        self.cfg.asterisk_auto_configure = ast.get("auto_configure", False)
+
+        wrtc = body.get("webrtc", {})
+        self.cfg.turn_enabled = wrtc.get("turn_enabled", False)
+        self.cfg.turn_url = wrtc.get("turn_url", "")
+        self.cfg.turn_username = wrtc.get("turn_username", "simson")
+        self.cfg.turn_credential = wrtc.get("turn_credential", "")
+        self.cfg.sip_enabled = wrtc.get("sip_enabled", False)
+        self.cfg.sip_ws_url = wrtc.get("sip_ws_url", "")
+        self.cfg.sip_username = wrtc.get("sip_username", "webrtc-pool")
+        self.cfg.sip_password = wrtc.get("sip_password", "")
+        self.cfg.sip_domain = wrtc.get("sip_domain", "")
+
+        self.cfg.call_targets = body.get("call_targets", [])
+        if self.target_dir:
+            self.target_dir.reload()
+
+        logger.info("Settings updated via UI (restart_required=%s)", restart_required)
+        return web.json_response({"saved": True, "restart_required": restart_required})
 
     # --- SSE (Server-Sent Events) for real-time push to Lovelace card ---
 
