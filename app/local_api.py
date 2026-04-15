@@ -16,7 +16,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "3.5.4"
+ADDON_VERSION = "3.5.6"
 
 logger = logging.getLogger("simson.api")
 
@@ -595,14 +595,21 @@ class LocalAPI:
         msg = make_call_request(self.cfg.node_id, to_node, call_type, metadata=metadata or None)
         call_id = msg["payload"]["call_id"]
 
+        if self.addon and hasattr(self.addon, "track_outgoing_call_request"):
+            self.addon.track_outgoing_call_request(msg.get("id", ""), call_id)
+
+        # Register locally before sending so immediate VPS error(ref=id)
+        # can always map back to an existing call and transition state.
+        await self.call_mgr.outgoing_request(call_id, to_node, call_type, routing=routing,
+                                             caller_user_id=caller_user_id)
+
         try:
             await self.send_fn(msg)
         except Exception as e:
+            if self.addon and hasattr(self.addon, "forget_outgoing_call_request"):
+                self.addon.forget_outgoing_call_request(msg.get("id", ""))
+            await self.call_mgr.update_status(call_id, "failed", "send_failed")
             return web.json_response({"error": f"send failed: {e}"}, status=502)
-
-        # Register locally.
-        await self.call_mgr.outgoing_request(call_id, to_node, call_type, routing=routing,
-                                             caller_user_id=caller_user_id)
 
         return web.json_response({
             "call_id": call_id,

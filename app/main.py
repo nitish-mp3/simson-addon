@@ -7,6 +7,7 @@ import asyncio
 import logging
 import signal
 import sys
+import time
 
 from config import Config
 from provisioner import auto_provision, load_saved_credentials
@@ -66,6 +67,35 @@ class SimsonAddon:
         # Per-user presence tracking (v3.1.0)
         self._online_users: dict[str, dict] = {}  # user_id -> {user_name, last_seen}
         self._users_query_futures: dict[str, asyncio.Future] = {}  # msg_id -> Future
+        # Track outgoing call.request envelopes so VPS error(ref=msg_id) can
+        # be mapped back to call_id and transitioned to failed cleanly.
+        self._pending_call_requests: dict[str, tuple[str, float]] = {}
+
+    def track_outgoing_call_request(self, request_id: str, call_id: str):
+        """Register a pending outgoing call.request envelope."""
+        if not request_id or not call_id:
+            return
+        self._pending_call_requests[request_id] = (call_id, time.time())
+
+    def forget_outgoing_call_request(self, request_id: str):
+        """Drop a pending call.request mapping by request envelope id."""
+        if request_id:
+            self._pending_call_requests.pop(request_id, None)
+
+    def resolve_outgoing_call_request_ref(self, ref: str) -> str:
+        """Resolve VPS error ref -> call_id and remove the mapping."""
+        if not ref:
+            return ""
+        entry = self._pending_call_requests.pop(ref, None)
+        return entry[0] if entry else ""
+
+    def clear_outgoing_request_for_call(self, call_id: str):
+        """Drop any pending envelope mapping for a call once status arrives."""
+        if not call_id:
+            return
+        for req_id, (mapped_call_id, _) in list(self._pending_call_requests.items()):
+            if mapped_call_id == call_id:
+                self._pending_call_requests.pop(req_id, None)
 
     async def run(self):
         """Start all components and run forever."""
@@ -210,11 +240,24 @@ class SimsonAddon:
         elif msg_type == TYPE_ERROR:
             code = payload.get("code", 0)
             message = payload.get("message", "")
+            ref = payload.get("ref", "")
+
+            # Map VPS errors back to the originating call and fail that call
+            # so the UI exits the calling/ringing state immediately.
+            call_id = self.resolve_outgoing_call_request_ref(ref)
+            if call_id:
+                await self._handle_call_status({
+                    "call_id": call_id,
+                    "status": "failed",
+                    "reason": message or f"vps_error_{code}",
+                })
+
             logger.warning("VPS error [%d]: %s", code, message)
             await self.ha.fire_event("simson_error", {
                 "code": code,
                 "message": message,
-                "ref": payload.get("ref", ""),
+                "ref": ref,
+                "call_id": call_id,
             })
 
         elif msg_type == TYPE_WEBRTC_SIGNAL:
@@ -313,6 +356,9 @@ class SimsonAddon:
         status = payload.get("status", "")
         reason = payload.get("reason", "")
         answered_by_user_id = payload.get("answered_by_user_id", "")
+
+        # We have a definitive status from VPS for this call request.
+        self.clear_outgoing_request_for_call(call_id)
 
         call = await self.call_mgr.update_status(call_id, status, reason)
         if not call:
@@ -717,6 +763,13 @@ class SimsonAddon:
         while True:
             await asyncio.sleep(60)
             self.call_mgr.cleanup(max_age=300)
+
+            # Prune stale pending call.request mappings to avoid leaks if a
+            # request never receives status/error (network edge cases).
+            now = time.time()
+            for req_id, (_, ts) in list(self._pending_call_requests.items()):
+                if (now - ts) > 120:
+                    self._pending_call_requests.pop(req_id, None)
 
 
 # --- Entry point ---
