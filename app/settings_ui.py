@@ -743,6 +743,28 @@ async function saveSettings() {
 // ─── SIP Endpoints management ────────────────────────────────────────────────
 let _sipEndpoints = [];
 
+function normalizeSIPEndpoint(ep) {
+  if (!ep || typeof ep !== 'object') return null;
+  return {
+    id: ep.id ?? ep.ID ?? '',
+    extension: ep.extension ?? ep.Extension ?? '',
+    username: ep.username ?? ep.Username ?? '',
+    password: ep.password ?? ep.Password ?? '',
+    description: ep.description ?? ep.Description ?? '',
+    route_to: ep.route_to ?? ep.RouteTo ?? '',
+    enabled: ep.enabled ?? ep.Enabled ?? true,
+    created_at: ep.created_at ?? ep.CreatedAt ?? '',
+    updated_at: ep.updated_at ?? ep.UpdatedAt ?? '',
+  };
+}
+
+function normalizeSIPEndpointsList(items) {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map(normalizeSIPEndpoint)
+    .filter(Boolean);
+}
+
 async function loadSIPEndpoints() {
   try {
     const r = await fetch('api/sip-endpoints');
@@ -752,12 +774,13 @@ async function loadSIPEndpoints() {
       return;
     }
     const data = await r.json();
+    let endpoints = [];
     if (Array.isArray(data)) {
-      _sipEndpoints = data;
+      endpoints = data;
     } else if (data && Array.isArray(data.endpoints)) {
-      _sipEndpoints = data.endpoints;
+      endpoints = data.endpoints;
     } else if (data && Array.isArray(data.items)) {
-      _sipEndpoints = data.items;
+      endpoints = data.items;
     } else {
       _sipEndpoints = [];
       if (data && data.error) {
@@ -766,6 +789,7 @@ async function loadSIPEndpoints() {
         return;
       }
     }
+    _sipEndpoints = normalizeSIPEndpointsList(endpoints);
     renderSIPEndpoints();
   } catch (e) {
     document.getElementById('sip-endpoints-body').innerHTML =
@@ -891,8 +915,9 @@ async function createSIPEndpoint() {
     });
 
     if (r.ok) {
-      const ep = await r.json();
-      _sipEndpoints.push(ep);
+      const epRaw = await r.json();
+      const ep = normalizeSIPEndpoint(epRaw);
+      if (ep) _sipEndpoints.push(ep);
       if (resultDiv) resultDiv.innerHTML =
         '<div class="alert alert-success" style="margin-top:10px">✓ Phone created! Reloading…</div>';
       setTimeout(() => {
