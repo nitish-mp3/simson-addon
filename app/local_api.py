@@ -5,6 +5,7 @@ import copy
 import json
 import logging
 import uuid
+from urllib.parse import urlsplit, urlunsplit
 from aiohttp import web
 
 from call_manager import CallManager, CallState, RoutingIntent
@@ -15,7 +16,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "3.5.0"
+ADDON_VERSION = "3.5.3"
 
 logger = logging.getLogger("simson.api")
 
@@ -803,12 +804,34 @@ class LocalAPI:
         })
 
     def _ws_to_http_url(self, ws_url: str) -> str:
-        """Convert WebSocket URL to HTTP URL for admin API."""
-        if ws_url.startswith("wss://"):
-            return "https://" + ws_url[6:]
-        elif ws_url.startswith("ws://"):
-            return "http://" + ws_url[5:]
-        return ws_url
+        """Convert a WS/WSS URL to an HTTP(S) base URL for admin API calls.
+
+        Examples:
+          wss://example.com/ws       -> https://example.com
+          wss://example.com/simson/ws -> https://example.com/simson
+          ws://example.com/ws/       -> http://example.com
+
+        Query strings and fragments are intentionally dropped.
+        """
+        if not ws_url:
+            return ws_url
+
+        parsed = urlsplit(ws_url)
+        scheme = parsed.scheme.lower()
+
+        if scheme == "wss":
+            out_scheme = "https"
+        elif scheme == "ws":
+            out_scheme = "http"
+        else:
+            # Keep non-WS URLs unchanged except for dropping query/fragment.
+            out_scheme = parsed.scheme
+
+        path = (parsed.path or "").rstrip("/")
+        if path.endswith("/ws"):
+            path = path[:-3].rstrip("/")
+
+        return urlunsplit((out_scheme, parsed.netloc, path, "", ""))
 
 
 def _call_to_dict(call) -> dict:

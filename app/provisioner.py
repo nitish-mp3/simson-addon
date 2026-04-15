@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import socket
+from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 
@@ -63,11 +64,24 @@ def _save_credentials(account_id: str, node_id: str, install_token: str,
 
 def _admin_url(server_url: str) -> str:
     """Convert wss://host/ws to https://host for admin API calls."""
-    url = server_url.replace("wss://", "https://").replace("ws://", "http://")
-    url = url.rstrip("/")
-    if url.endswith("/ws"):
-        url = url[:-3]
-    return url
+    if not server_url:
+        return server_url
+
+    parsed = urlsplit(server_url)
+    scheme = parsed.scheme.lower()
+
+    if scheme == "wss":
+        out_scheme = "https"
+    elif scheme == "ws":
+        out_scheme = "http"
+    else:
+        out_scheme = parsed.scheme
+
+    path = (parsed.path or "").rstrip("/")
+    if path.endswith("/ws"):
+        path = path[:-3].rstrip("/")
+
+    return urlunsplit((out_scheme, parsed.netloc, path, "", ""))
 
 
 async def auto_provision(server_url: str, admin_token: str,
