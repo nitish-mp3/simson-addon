@@ -270,14 +270,17 @@ class LocalAPI:
         """List SIP endpoints for this account by calling VPS admin API."""
         if not self.cfg.account_id or not self.cfg.admin_token or not self.cfg.server_url:
             return web.json_response(
-                {"error": "Not provisioned or admin_token not set"},
+                {"error": "Not yet provisioned — no account created on VPS"},
                 status=400,
             )
+        
+        # Convert WebSocket URL to HTTP URL
+        http_url = self._ws_to_http_url(self.cfg.server_url)
         
         try:
             import aiohttp
             async with aiohttp.ClientSession() as session:
-                url = f"{self.cfg.server_url}/admin/accounts/{self.cfg.account_id}/sip-endpoints"
+                url = f"{http_url}/admin/accounts/{self.cfg.account_id}/sip-endpoints"
                 headers = {"Authorization": f"Bearer {self.cfg.admin_token}"}
                 async with session.get(url, headers=headers, ssl=False) as resp:
                     if resp.status == 200:
@@ -297,7 +300,7 @@ class LocalAPI:
         """Create a new SIP endpoint by calling VPS admin API."""
         if not self.cfg.account_id or not self.cfg.admin_token or not self.cfg.server_url:
             return web.json_response(
-                {"error": "Not provisioned or admin_token not set"},
+                {"error": "Not yet provisioned — no account created on VPS"},
                 status=400,
             )
         
@@ -313,10 +316,12 @@ class LocalAPI:
                 status=400,
             )
         
+        http_url = self._ws_to_http_url(self.cfg.server_url)
+        
         try:
             import aiohttp
             async with aiohttp.ClientSession() as session:
-                url = f"{self.cfg.server_url}/admin/accounts/{self.cfg.account_id}/sip-endpoints"
+                url = f"{http_url}/admin/accounts/{self.cfg.account_id}/sip-endpoints"
                 headers = {
                     "Authorization": f"Bearer {self.cfg.admin_token}",
                     "Content-Type": "application/json",
@@ -348,7 +353,7 @@ class LocalAPI:
         """Delete a SIP endpoint by calling VPS admin API."""
         if not self.cfg.account_id or not self.cfg.admin_token or not self.cfg.server_url:
             return web.json_response(
-                {"error": "Not provisioned or admin_token not set"},
+                {"error": "Not yet provisioned — no account created on VPS"},
                 status=400,
             )
         
@@ -356,10 +361,12 @@ class LocalAPI:
         if not endpoint_id:
             return web.json_response({"error": "endpoint id required"}, status=400)
         
+        http_url = self._ws_to_http_url(self.cfg.server_url)
+        
         try:
             import aiohttp
             async with aiohttp.ClientSession() as session:
-                url = f"{self.cfg.server_url}/admin/sip-endpoints/{endpoint_id}"
+                url = f"{http_url}/admin/sip-endpoints/{endpoint_id}"
                 headers = {"Authorization": f"Bearer {self.cfg.admin_token}"}
                 async with session.delete(url, headers=headers, ssl=False) as resp:
                     if resp.status in (200, 204):
@@ -794,6 +801,14 @@ class LocalAPI:
             "ice_servers": ice_servers,
             "sip": sip_config,
         })
+
+    def _ws_to_http_url(self, ws_url: str) -> str:
+        """Convert WebSocket URL to HTTP URL for admin API."""
+        if ws_url.startswith("wss://"):
+            return "https://" + ws_url[6:]
+        elif ws_url.startswith("ws://"):
+            return "http://" + ws_url[5:]
+        return ws_url
 
 
 def _call_to_dict(call) -> dict:
