@@ -246,11 +246,14 @@ class SimsonAddon:
             # so the UI exits the calling/ringing state immediately.
             call_id = self.resolve_outgoing_call_request_ref(ref)
             if call_id:
+                logger.info("Mapped VPS error ref %s to call %s", ref, call_id)
                 await self._handle_call_status({
                     "call_id": call_id,
                     "status": "failed",
                     "reason": message or f"vps_error_{code}",
                 })
+            elif ref:
+                logger.debug("VPS error ref %s had no pending call mapping", ref)
 
             logger.warning("VPS error [%d]: %s", code, message)
             await self.ha.fire_event("simson_error", {

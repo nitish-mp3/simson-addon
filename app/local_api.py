@@ -574,15 +574,21 @@ class LocalAPI:
         # Build metadata with routing info if available.
         metadata = {}
         if routing:
-            metadata["routing"] = {
-                "target_type": routing.target_type,
-                "target_id": routing.target_id,
-                "extension": routing.extension,
-                "context": routing.context,
-                "trunk": routing.trunk,
-                "caller_id": routing.caller_id,
-                "timeout": routing.timeout,
-            }
+            # Central SIP path (to_node_id = sip:EXT) needs conservative,
+            # flat metadata for compatibility with older VPS payload decoders.
+            if routing.target_type == "asterisk" and str(to_node).startswith("sip:"):
+                if routing.caller_id:
+                    metadata["caller_id"] = routing.caller_id
+            else:
+                metadata["routing"] = {
+                    "target_type": routing.target_type,
+                    "target_id": routing.target_id,
+                    "extension": routing.extension,
+                    "context": routing.context,
+                    "trunk": routing.trunk,
+                    "caller_id": routing.caller_id,
+                    "timeout": routing.timeout,
+                }
 
         # Per-user targeting: include target_user_id so only that user's card rings.
         if target_user_id:
