@@ -255,6 +255,26 @@ class SimsonAddon:
             elif ref:
                 logger.debug("VPS error ref %s had no pending call mapping", ref)
 
+            # Some VPS builds may return error refs that don't match the
+            # original call.request envelope ID. Fall back to the most recent
+            # outgoing call still in requesting/ringing so UI does not get
+            # stuck in "Calling...".
+            if not call_id:
+                active = self.call_mgr.active_call
+                if (
+                    active
+                    and active.direction == "outgoing"
+                    and active.state in (CallState.REQUESTING, CallState.RINGING)
+                    and (time.time() - active.started_at) < 20
+                ):
+                    call_id = active.call_id
+                    logger.info("Fallback-mapped VPS error to recent outgoing call %s", call_id)
+                    await self._handle_call_status({
+                        "call_id": call_id,
+                        "status": "failed",
+                        "reason": message or f"vps_error_{code}",
+                    })
+
             logger.warning("VPS error [%d]: %s", code, message)
             await self.ha.fire_event("simson_error", {
                 "code": code,
