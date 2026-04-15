@@ -515,9 +515,20 @@ class LocalAPI:
                     )
                 else:
                     return web.json_response({"error": f"unknown target: {target_id}"}, status=404)
-            to_node = self.target_dir.resolve_node_id(target_id) if routing.target_type != "asterisk" else self.cfg.node_id
+
             if routing.target_type == "asterisk":
                 call_type = "sip"
+                ext = (routing.extension or "").strip()
+                if self.asterisk and self.asterisk.connected:
+                    # Local AMI path: call through this node's Asterisk.
+                    to_node = self.cfg.node_id
+                elif ext:
+                    # Central VPS SIP path: route directly to virtual SIP node.
+                    to_node = f"sip:{ext}"
+                else:
+                    return web.json_response({"error": "asterisk target missing extension"}, status=400)
+            else:
+                to_node = self.target_dir.resolve_node_id(target_id)
         elif not to_node:
             return web.json_response({"error": "target_node_id or target_id required"}, status=400)
 
