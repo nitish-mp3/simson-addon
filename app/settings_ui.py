@@ -751,7 +751,21 @@ async function loadSIPEndpoints() {
         '<p class="muted">Unable to load SIP endpoints.</p>';
       return;
     }
-    _sipEndpoints = await r.json();
+    const data = await r.json();
+    if (Array.isArray(data)) {
+      _sipEndpoints = data;
+    } else if (data && Array.isArray(data.endpoints)) {
+      _sipEndpoints = data.endpoints;
+    } else if (data && Array.isArray(data.items)) {
+      _sipEndpoints = data.items;
+    } else {
+      _sipEndpoints = [];
+      if (data && data.error) {
+        document.getElementById('sip-endpoints-body').innerHTML =
+          '<p class="muted">Unable to load SIP endpoints: ' + esc(data.error) + '</p>';
+        return;
+      }
+    }
     renderSIPEndpoints();
   } catch (e) {
     document.getElementById('sip-endpoints-body').innerHTML =
@@ -762,6 +776,7 @@ async function loadSIPEndpoints() {
 function renderSIPEndpoints() {
   const body = document.getElementById('sip-endpoints-body');
   if (!body) return;
+  const endpoints = Array.isArray(_sipEndpoints) ? _sipEndpoints : [];
 
   const html = `
     <div style="margin-bottom:14px">
@@ -804,9 +819,9 @@ function renderSIPEndpoints() {
     </div>
 
     <div id="sip-list">
-      ${_sipEndpoints.length === 0
+      ${endpoints.length === 0
         ? '<p class="muted">no sip phones configured</p>'
-        : _sipEndpoints.map((ep, i) => `
+        : endpoints.map((ep, i) => `
           <div style="display:flex;justify-content:space-between;align-items:center;
                       padding:10px;background:var(--surface2);border-radius:6px;
                       margin-bottom:8px;border:1px solid var(--border)">

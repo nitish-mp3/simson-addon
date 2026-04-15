@@ -16,7 +16,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "3.5.3"
+ADDON_VERSION = "3.5.4"
 
 logger = logging.getLogger("simson.api")
 
@@ -285,7 +285,19 @@ class LocalAPI:
                 headers = {"Authorization": f"Bearer {self.cfg.admin_token}"}
                 async with session.get(url, headers=headers, ssl=False) as resp:
                     if resp.status == 200:
-                        endpoints = await resp.json()
+                        try:
+                            payload = await resp.json(content_type=None)
+                        except Exception as e:
+                            logger.warning("VPS SIP endpoint list returned invalid JSON: %s", e)
+                            return web.json_response([])
+
+                        endpoints = self._normalize_sip_endpoints_payload(payload)
+                        if not isinstance(payload, list):
+                            logger.warning(
+                                "Unexpected VPS SIP endpoint payload type: %s; normalized to %d entries",
+                                type(payload).__name__,
+                                len(endpoints),
+                            )
                         return web.json_response(endpoints)
                     else:
                         error = await resp.text()
@@ -802,6 +814,18 @@ class LocalAPI:
             "ice_servers": ice_servers,
             "sip": sip_config,
         })
+
+    @staticmethod
+    def _normalize_sip_endpoints_payload(payload) -> list:
+        """Normalize possible VPS response shapes to a plain endpoints list."""
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict):
+            if isinstance(payload.get("endpoints"), list):
+                return payload["endpoints"]
+            if isinstance(payload.get("items"), list):
+                return payload["items"]
+        return []
 
     def _ws_to_http_url(self, ws_url: str) -> str:
         """Convert a WS/WSS URL to an HTTP(S) base URL for admin API calls.
