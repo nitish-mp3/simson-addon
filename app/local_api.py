@@ -74,6 +74,9 @@ class LocalAPI:
         self.app.router.add_get("/api/webrtc-config", self.handle_webrtc_config)
         self.app.router.add_get("/api/settings", self.handle_get_settings)
         self.app.router.add_post("/api/settings", self.handle_post_settings)
+        self.app.router.add_get("/api/sip-endpoints", self.handle_list_sip_endpoints)
+        self.app.router.add_post("/api/sip-endpoints", self.handle_create_sip_endpoint)
+        self.app.router.add_delete("/api/sip-endpoints/{id}", self.handle_delete_sip_endpoint)
 
     async def start(self):
         """Start the local API server, falling back to alternate ports if needed."""
@@ -262,6 +265,115 @@ class LocalAPI:
 
         logger.info("Settings updated via UI (restart_required=%s)", restart_required)
         return web.json_response({"saved": True, "restart_required": restart_required})
+
+    async def handle_list_sip_endpoints(self, request: web.Request) -> web.Response:
+        """List SIP endpoints for this account by calling VPS admin API."""
+        if not self.cfg.account_id or not self.cfg.admin_token or not self.cfg.server_url:
+            return web.json_response(
+                {"error": "Not provisioned or admin_token not set"},
+                status=400,
+            )
+        
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                url = f"{self.cfg.server_url}/admin/accounts/{self.cfg.account_id}/sip-endpoints"
+                headers = {"Authorization": f"Bearer {self.cfg.admin_token}"}
+                async with session.get(url, headers=headers, ssl=False) as resp:
+                    if resp.status == 200:
+                        endpoints = await resp.json()
+                        return web.json_response(endpoints)
+                    else:
+                        error = await resp.text()
+                        logger.error(f"VPS SIP endpoint list failed: {resp.status} {error}")
+                        return web.json_response(
+                            {"error": f"VPS returned {resp.status}"}, status=resp.status
+                        )
+        except Exception as e:
+            logger.error(f"SIP endpoint list error: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_create_sip_endpoint(self, request: web.Request) -> web.Response:
+        """Create a new SIP endpoint by calling VPS admin API."""
+        if not self.cfg.account_id or not self.cfg.admin_token or not self.cfg.server_url:
+            return web.json_response(
+                {"error": "Not provisioned or admin_token not set"},
+                status=400,
+            )
+        
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+        
+        # Validate required fields
+        if not body.get("extension") or not body.get("username") or not body.get("password"):
+            return web.json_response(
+                {"error": "extension, username, and password are required"},
+                status=400,
+            )
+        
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                url = f"{self.cfg.server_url}/admin/accounts/{self.cfg.account_id}/sip-endpoints"
+                headers = {
+                    "Authorization": f"Bearer {self.cfg.admin_token}",
+                    "Content-Type": "application/json",
+                }
+                payload = {
+                    "extension": body.get("extension"),
+                    "username": body.get("username"),
+                    "password": body.get("password"),
+                    "description": body.get("description", ""),
+                    "route_to": body.get("route_to", ""),
+                    "enabled": body.get("enabled", True),
+                }
+                async with session.post(url, json=payload, headers=headers, ssl=False) as resp:
+                    if resp.status in (200, 201):
+                        endpoint = await resp.json()
+                        logger.info(f"SIP endpoint created: ext={endpoint.get('extension')}")
+                        return web.json_response(endpoint, status=resp.status)
+                    else:
+                        error = await resp.text()
+                        logger.error(f"VPS SIP create failed: {resp.status} {error}")
+                        return web.json_response(
+                            {"error": f"VPS returned {resp.status}: {error}"}, status=resp.status
+                        )
+        except Exception as e:
+            logger.error(f"SIP endpoint create error: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_delete_sip_endpoint(self, request: web.Request) -> web.Response:
+        """Delete a SIP endpoint by calling VPS admin API."""
+        if not self.cfg.account_id or not self.cfg.admin_token or not self.cfg.server_url:
+            return web.json_response(
+                {"error": "Not provisioned or admin_token not set"},
+                status=400,
+            )
+        
+        endpoint_id = request.match_info.get("id")
+        if not endpoint_id:
+            return web.json_response({"error": "endpoint id required"}, status=400)
+        
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                url = f"{self.cfg.server_url}/admin/sip-endpoints/{endpoint_id}"
+                headers = {"Authorization": f"Bearer {self.cfg.admin_token}"}
+                async with session.delete(url, headers=headers, ssl=False) as resp:
+                    if resp.status in (200, 204):
+                        logger.info(f"SIP endpoint deleted: {endpoint_id}")
+                        return web.json_response({"deleted": True})
+                    else:
+                        error = await resp.text()
+                        logger.error(f"VPS SIP delete failed: {resp.status} {error}")
+                        return web.json_response(
+                            {"error": f"VPS returned {resp.status}"}, status=resp.status
+                        )
+        except Exception as e:
+            logger.error(f"SIP endpoint delete error: {e}")
+            return web.json_response({"error": str(e)}, status=500)
 
     # --- SSE (Server-Sent Events) for real-time push to Lovelace card ---
 

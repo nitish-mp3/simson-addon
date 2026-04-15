@@ -481,6 +481,11 @@ p.muted{padding:4px 0}
 
       <!-- Port ---------------------------------------------------- -->
       <div class="section">
+        <div class="section-head"><h3 class="section-head-left">☎ SIP Phone Endpoints</h3></div>
+        <div class="section-body" id="sip-endpoints-body"></div>
+      </div>
+
+      <!-- Port ---------------------------------------------------- -->
         <div class="section-head"><h3 class="section-head-left">🔌 Local API Port</h3></div>
         <div class="section-body">
           <div style="height:14px"></div>
@@ -564,7 +569,7 @@ async function init() {
 }
 
 async function refreshAll() {
-  await Promise.all([pollStatus(), loadSettings()]);
+  await Promise.all([pollStatus(), loadSettings(), loadSIPEndpoints()]);
 }
 
 // ─── Status polling ──────────────────────────────────────────────────────────
@@ -735,7 +740,183 @@ async function saveSettings() {
   btn.textContent = 'Save Settings';
 }
 
-// ─── Section toggles ─────────────────────────────────────────────────────────
+// ─── SIP Endpoints management ────────────────────────────────────────────────
+let _sipEndpoints = [];
+
+async function loadSIPEndpoints() {
+  try {
+    const r = await fetch('api/sip-endpoints');
+    if (!r.ok) {
+      document.getElementById('sip-endpoints-body').innerHTML =
+        '<p class="muted">Unable to load SIP endpoints.</p>';
+      return;
+    }
+    _sipEndpoints = await r.json();
+    renderSIPEndpoints();
+  } catch (e) {
+    document.getElementById('sip-endpoints-body').innerHTML =
+      '<p class="muted">Error: ' + esc(e.message) + '</p>';
+  }
+}
+
+function renderSIPEndpoints() {
+  const body = document.getElementById('sip-endpoints-body');
+  if (!body) return;
+
+  const html = `
+    <div style="margin-bottom:14px">
+      <button class="btn-sm" onclick="showCreateSIPForm()" style="margin-bottom:12px">
+        + Add SIP Phone
+      </button>
+      <div id="sip-create-form" class="hidden" style="background:var(--surface2);border:1px solid var(--border);
+                border-radius:var(--radius-sm);padding:14px;margin-bottom:14px">
+        <div class="field-row" style="flex-direction:column">
+          <div class="field" style="width:100%">
+            <label>Extension</label>
+            <input type="text" id="sip-ext" placeholder="1001" autocomplete="off">
+            <div class="field-hint">Dial number for this phone (e.g., 1001, 1002)</div>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Username <span class="hint-tag">— SIP auth username</span></label>
+            <input type="text" id="sip-user" placeholder="phone1" autocomplete="off">
+          </div>
+          <div class="field">
+            <label>Password <span class="hint-tag">— SIP auth password</span></label>
+            <input type="password" id="sip-pass" autocomplete="new-password">
+          </div>
+        </div>
+        <div class="field-row" style="flex-direction:column">
+          <div class="field" style="width:100%">
+            <label>Label <span class="hint-tag">— optional description</span></label>
+            <input type="text" id="sip-desc" placeholder="Front desk phone" autocomplete="off">
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:10px">
+          <button class="btn btn-primary btn-sm" style="padding:8px 16px"
+                  onclick="createSIPEndpoint()">Create</button>
+          <button class="btn-secondary btn-sm" style="padding:8px 16px;background:var(--surface3);border:1px solid var(--border)"
+                  onclick="hideSIPForm()">Cancel</button>
+        </div>
+        <div id="sip-create-result"></div>
+      </div>
+    </div>
+
+    <div id="sip-list">
+      ${_sipEndpoints.length === 0
+        ? '<p class="muted">no sip phones configured</p>'
+        : _sipEndpoints.map((ep, i) => `
+          <div style="display:flex;justify-content:space-between;align-items:center;
+                      padding:10px;background:var(--surface2);border-radius:6px;
+                      margin-bottom:8px;border:1px solid var(--border)">
+            <div>
+              <div style="font-weight:600;color:var(--text);font-size:14px">
+                [${esc(ep.extension)}] ${esc(ep.description || ep.username)}
+              </div>
+              <div style="color:var(--text3);font-size:12px;margin-top:3px">
+                Username: <code style="background:var(--surface3);padding:2px 6px;border-radius:3px;font-family:monospace">${esc(ep.username)}</code>
+              </div>
+            </div>
+            <button class="btn-icon del"
+                    onclick="deleteSIPEndpoint('${ep.id}', ${i})"
+                    title="Delete SIP endpoint">✕</button>
+          </div>
+        `).join('')
+      }
+    </div>
+  `;
+  body.innerHTML = html;
+}
+
+function showCreateSIPForm() {
+  const form = document.getElementById('sip-create-form');
+  if (form) form.classList.remove('hidden');
+}
+
+function hideSIPForm() {
+  const form = document.getElementById('sip-create-form');
+  if (form) form.classList.add('hidden');
+  ['sip-ext','sip-user','sip-pass','sip-desc'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  const resultDiv = document.getElementById('sip-create-result');
+  if (resultDiv) resultDiv.innerHTML = '';
+}
+
+async function createSIPEndpoint() {
+  const ext = getVal('sip-ext').trim();
+  const user = getVal('sip-user').trim();
+  const pass = getVal('sip-pass').trim();
+  const desc = getVal('sip-desc').trim();
+  const resultDiv = document.getElementById('sip-create-result');
+
+  if (!ext || !user || !pass) {
+    if (resultDiv) resultDiv.innerHTML =
+      '<div class="alert alert-error" style="margin-top:10px">Extension, username, and password are required</div>';
+    return;
+  }
+
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = 'Creating…';
+
+  try {
+    const r = await fetch('api/sip-endpoints', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        extension: ext,
+        username: user,
+        password: pass,
+        description: desc,
+        enabled: true,
+      }),
+    });
+
+    if (r.ok) {
+      const ep = await r.json();
+      _sipEndpoints.push(ep);
+      if (resultDiv) resultDiv.innerHTML =
+        '<div class="alert alert-success" style="margin-top:10px">✓ Phone created! Reloading…</div>';
+      setTimeout(() => {
+        renderSIPEndpoints();
+        hideSIPForm();
+      }, 800);
+    } else {
+      const err = await r.json();
+      if (resultDiv) resultDiv.innerHTML =
+        '<div class="alert alert-error" style="margin-top:10px">✗ ' +
+        esc(err.error || 'Failed to create phone') + '</div>';
+      btn.disabled = false;
+      btn.textContent = 'Create';
+    }
+  } catch (e) {
+    if (resultDiv) resultDiv.innerHTML =
+      '<div class="alert alert-error" style="margin-top:10px">✗ ' + esc(e.message) + '</div>';
+    btn.disabled = false;
+    btn.textContent = 'Create';
+  }
+}
+
+async function deleteSIPEndpoint(id, idx) {
+  if (!confirm('Delete this SIP phone? It will no longer be able to register.')) return;
+
+  try {
+    const r = await fetch(`api/sip-endpoints/${id}`, {method: 'DELETE'});
+    if (r.ok) {
+      _sipEndpoints.splice(idx, 1);
+      renderSIPEndpoints();
+    } else {
+      alert('Delete failed. See browser console for details.');
+    }
+  } catch (e) {
+    alert('Delete error: ' + e.message);
+  }
+}
+
+// ─── Section toggles ────────────────────────────────────────────────────────
 function onAstToggle() {
   setSectionEnabled('ast-body', 'ast-section-badge', getCheck('s-ast-enabled'));
 }
