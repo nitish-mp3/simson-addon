@@ -896,6 +896,7 @@ def _call_to_dict(call) -> dict:
         "ended_at": call.ended_at,
         "end_reason": call.end_reason,
         "fallback_attempt": call.fallback_attempt,
+        "sip_bridge_id": call.metadata.get("sip_bridge_id", ""),
         "target_user_id": call.metadata.get("target_user_id", ""),
         "target_user_name": call.metadata.get("target_user_name", ""),
         "caller_user_id": call.caller_user_id,

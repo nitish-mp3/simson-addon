@@ -323,7 +323,9 @@ class SimsonAddon:
         from_node = payload.get("from_node_id", "")
         from_label = payload.get("from_label", "")
         call_type = payload.get("call_type", "voice")
-        metadata = payload.get("metadata", {})
+        metadata = payload.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
         target_user_id = metadata.get("target_user_id", "")
         target_user_name = metadata.get("target_user_name", "")
 
@@ -345,6 +347,7 @@ class SimsonAddon:
             "call_type": call_type,
             "target_user_id": target_user_id,
             "target_user_name": target_user_name,
+            "metadata": metadata,
         })
 
         # Create a persistent notification so the user sees the call even
@@ -362,6 +365,7 @@ class SimsonAddon:
             "from_node_id": from_node,
             "from_label": from_label,
             "call_type": call_type,
+            "metadata": metadata,
         })
 
         # If Asterisk is enabled and call type is voice/sip, trigger it.
@@ -379,6 +383,7 @@ class SimsonAddon:
         status = payload.get("status", "")
         reason = payload.get("reason", "")
         answered_by_user_id = payload.get("answered_by_user_id", "")
+        sip_bridge_id = payload.get("sip_bridge_id", "")
 
         # We have a definitive status from VPS for this call request.
         self.clear_outgoing_request_for_call(call_id)
@@ -386,6 +391,9 @@ class SimsonAddon:
         call = await self.call_mgr.update_status(call_id, status, reason)
         if not call:
             return
+
+        if sip_bridge_id:
+            call.metadata["sip_bridge_id"] = sip_bridge_id
 
         # Cancel ring timer if call is no longer ringing.
         if status not in ("ringing", "requesting"):
@@ -398,6 +406,8 @@ class SimsonAddon:
             "reason": reason,
             "direction": call.direction,
             "remote_node_id": call.remote_node_id,
+            "call_type": call.call_type,
+            "sip_bridge_id": call.metadata.get("sip_bridge_id", ""),
             "target_user_id": call.metadata.get("target_user_id", ""),
             "caller_user_id": call.caller_user_id,
             "answered_by_user_id": answered_by_user_id,
@@ -411,6 +421,8 @@ class SimsonAddon:
             "reason": reason,
             "direction": call.direction,
             "remote_node_id": call.remote_node_id,
+            "call_type": call.call_type,
+            "sip_bridge_id": call.metadata.get("sip_bridge_id", ""),
             "target_user_id": call.metadata.get("target_user_id", ""),
             "caller_user_id": call.caller_user_id,
             "answered_by_user_id": answered_by_user_id,
@@ -438,6 +450,7 @@ class SimsonAddon:
             "remote_node_id": call.remote_node_id,
             "remote_label": call.remote_label,
             "call_type": call.call_type,
+            "sip_bridge_id": call.metadata.get("sip_bridge_id", ""),
             "target_user_id": call.metadata.get("target_user_id", ""),
             "caller_user_id": call.caller_user_id,
         }
@@ -468,6 +481,8 @@ class SimsonAddon:
                 "reason": call.end_reason,
                 "direction": call.direction,
                 "remote_node_id": call.remote_node_id,
+                "call_type": call.call_type,
+                "sip_bridge_id": call.metadata.get("sip_bridge_id", ""),
                 "target_user_id": call.metadata.get("target_user_id", ""),
                 "caller_user_id": call.caller_user_id,
             })
@@ -478,6 +493,8 @@ class SimsonAddon:
                 "reason": call.end_reason,
                 "direction": call.direction,
                 "remote_node_id": call.remote_node_id,
+                "call_type": call.call_type,
+                "sip_bridge_id": call.metadata.get("sip_bridge_id", ""),
                 "target_user_id": call.metadata.get("target_user_id", ""),
                 "caller_user_id": call.caller_user_id,
             })
