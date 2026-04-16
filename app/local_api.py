@@ -826,12 +826,40 @@ class LocalAPI:
             ice_servers.append(entry)
 
         # ── SIP-over-WebSocket config (for Asterisk ConfBridge audio) ────────
+        sip_ws_url = (self.cfg.sip_ws_url or "").strip()
+        sip_domain = (self.cfg.sip_domain or "").strip()
+        sip_username = (self.cfg.sip_username or "webrtc-pool").strip() or "webrtc-pool"
+        sip_password = (self.cfg.sip_password or "simsonwebrtc").strip() or "simsonwebrtc"
+
+        # If SIP fields are partially configured, derive missing WS URL/domain
+        # from server_url (e.g. wss://host/ws -> wss://host/sip/ws).
+        if (not sip_ws_url or not sip_domain) and self.cfg.server_url:
+            parsed = urlsplit(self.cfg.server_url)
+            host = parsed.hostname or ""
+            netloc = parsed.netloc or host
+            scheme = "wss" if parsed.scheme == "wss" else "ws"
+            base_path = (parsed.path or "").rstrip("/")
+            if base_path.endswith("/ws"):
+                base_path = base_path[:-3]
+            if not base_path:
+                base_path = ""
+            if not sip_ws_url and netloc:
+                sip_ws_url = f"{scheme}://{netloc}{base_path}/sip/ws"
+            if not sip_domain and host:
+                sip_domain = host
+
+        sip_ready = bool(
+            sip_ws_url
+            and sip_username
+            and sip_password
+            and sip_domain
+        )
         sip_config: dict = {
-            "enabled": self.cfg.sip_enabled,
-            "ws_url": self.cfg.sip_ws_url,
-            "username": self.cfg.sip_username,
-            "password": self.cfg.sip_password,
-            "domain": self.cfg.sip_domain,
+            "enabled": bool(self.cfg.sip_enabled or sip_ready),
+            "ws_url": sip_ws_url,
+            "username": sip_username,
+            "password": sip_password,
+            "domain": sip_domain,
         }
 
         return web.json_response({
