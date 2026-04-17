@@ -444,6 +444,23 @@ class SimsonAddon:
             if reason in ("declined", "rejected", "timeout", "busy", "no_answer"):
                 await self._attempt_fallback(call, reason)
 
+        # Show a persistent HA notification when an outgoing call fails so the
+        # user always sees feedback — even if the Lovelace card isn't open.
+        if status == "failed" and call.direction == "outgoing":
+            reason_msg = {
+                "phone_unavailable": "SIP phone is not registered. Check the phone's SIP account settings.",
+                "originate_failed":  "Could not reach the SIP server. Check your Asterisk/AMI configuration.",
+                "busy":              "The phone is busy.",
+                "no_answer":         "No answer.",
+                "timeout":           "Call timed out with no answer.",
+                "error":             "An unexpected error occurred.",
+            }.get(reason, f"Call failed ({reason})." if reason else "Call failed.")
+            await self.ha.create_notification(
+                notification_id=f"simson_call_{call.call_id[:12]}",
+                title="Call Failed",
+                message=f"📵 {call.remote_label or call.remote_node_id}: {reason_msg}",
+            )
+
     async def _on_call_state_change(self, call: CallInfo):
         """Update HA entity state when call state changes."""
         state = call.state.value
