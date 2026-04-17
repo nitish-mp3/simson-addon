@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 
 PROTOCOL_VERSION = "1.0.0"
-ADDON_VERSION = "1.0.0"
+ADDON_VERSION = "3.7.0"
 
 # Message types
 TYPE_HELLO = "hello"
@@ -34,6 +34,7 @@ ERR_UNAUTHORIZED = 4001
 ERR_FORBIDDEN = 4003
 ERR_NODE_OFFLINE = 4004
 ERR_RATE_LIMITED = 4029
+ERR_SIP_UNAVAILABLE = 4051  # SIP phone not registered or unreachable
 ERR_INTERNAL = 5000
 
 

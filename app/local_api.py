@@ -16,7 +16,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "3.5.7"
+ADDON_VERSION = "3.7.0"
 
 logger = logging.getLogger("simson.api")
 

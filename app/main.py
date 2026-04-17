@@ -14,6 +14,7 @@ from provisioner import auto_provision, load_saved_credentials
 from protocol import (
     TYPE_CALL_INVITE, TYPE_CALL_STATUS, TYPE_ERROR, TYPE_WEBRTC_SIGNAL,
     TYPE_USERS_LIST,
+    ERR_SIP_UNAVAILABLE,
     make_call_request, make_call_end, make_users_update,
 )
 from wss_client import WSSClient
@@ -244,6 +245,12 @@ class SimsonAddon:
 
             # Map VPS errors back to the originating call and fail that call
             # so the UI exits the calling/ringing state immediately.
+            #
+            # code 4051 = SIP phone not registered — give the user a clear,
+            # actionable reason string rather than a raw error code.
+            if code == ERR_SIP_UNAVAILABLE and not message:
+                message = "SIP phone is not registered — check the phone's SIP settings"
+
             call_id = self.resolve_outgoing_call_request_ref(ref)
             if call_id:
                 logger.info("Mapped VPS error ref %s to call %s", ref, call_id)
