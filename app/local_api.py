@@ -577,8 +577,11 @@ class LocalAPI:
             # Central SIP path (to_node_id = sip:EXT) needs conservative,
             # flat metadata for compatibility with older VPS payload decoders.
             if routing.target_type == "asterisk" and str(to_node).startswith("sip:"):
-                if routing.caller_id:
-                    metadata["caller_id"] = routing.caller_id
+                # Always send a caller_id so the SIP phone shows a useful callback number.
+                metadata["caller_id"] = (
+                    routing.caller_id
+                    or f'"{self.cfg.node_label or self.cfg.node_id}" <100>'
+                )
             else:
                 metadata["routing"] = {
                     "target_type": routing.target_type,
