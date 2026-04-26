@@ -344,9 +344,7 @@ class StandaloneAgent:
                 logger.info("Ring timeout for call %s", call.call_id[:8])
                 await self.call_mgr.update_status(call.call_id, "ended", "timeout")
                 try:
-                    await self.wss.send(make_call_end(
-                        self.cfg.node_id, call.remote_node_id, call.call_id, "timeout"
-                    ))
+                    await self.wss.send(make_call_end(call.call_id, self.cfg.node_id, "timeout"))
                 except Exception:
                     pass
 

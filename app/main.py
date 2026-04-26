@@ -65,6 +65,7 @@ class SimsonAddon:
         )
         self._background_tasks: list[asyncio.Task] = []
         self._ring_timers: dict[str, asyncio.Task] = {}  # call_id -> timeout task
+        self._incoming_invite_timeout_sec = 45
         # Per-user presence tracking (v3.1.0)
         self._online_users: dict[str, dict] = {}  # user_id -> {user_name, last_seen}
         self._users_query_futures: dict[str, asyncio.Future] = {}  # msg_id -> Future
@@ -375,6 +376,8 @@ class SimsonAddon:
             "metadata": metadata,
         })
 
+        self._start_ring_timer(call)
+
         # If Asterisk is enabled and call type is voice/sip, trigger it.
         if self.asterisk and self.asterisk.connected and call_type in ("voice", "sip"):
             ext = metadata.get("extension", "s")
@@ -550,7 +553,7 @@ class SimsonAddon:
 
     def _start_ring_timer(self, call: CallInfo):
         """Start a timer that fires if the remote doesn't answer in time."""
-        timeout = 30
+        timeout = self._incoming_invite_timeout_sec if call.direction == "incoming" else 30
         if call.routing:
             timeout = call.routing.timeout
         self._cancel_ring_timer(call.call_id)
@@ -573,7 +576,7 @@ class SimsonAddon:
             return
 
         call = self.call_mgr.get(call_id)
-        if not call or call.state not in (CallState.RINGING, CallState.REQUESTING):
+        if not call or call.state not in (CallState.RINGING, CallState.REQUESTING, CallState.INCOMING):
             return
 
         logger.info("Call %s timed out after %ds", call_id, timeout)
@@ -585,26 +588,37 @@ class SimsonAddon:
         except Exception as e:
             logger.warning("Failed to send timeout end: %s", e)
 
-        await self.call_mgr.update_status(call_id, "timeout", "timeout")
+        timeout_status = "missed" if call.direction == "incoming" else "timeout"
+        timeout_reason = "missed" if call.direction == "incoming" else "timeout"
+        await self.call_mgr.update_status(call_id, timeout_status, timeout_reason)
 
         # Fire HA events.
         await self.ha.fire_event("simson_call_status", {
             "call_id": call_id,
-            "status": "timeout",
-            "reason": "timeout",
+            "status": timeout_status,
+            "reason": timeout_reason,
             "direction": call.direction,
             "remote_node_id": call.remote_node_id,
+            "call_type": call.call_type,
+            "sip_bridge_id": call.metadata.get("sip_bridge_id", ""),
+            "target_user_id": call.metadata.get("target_user_id", ""),
+            "caller_user_id": call.caller_user_id,
         })
         self.api.push_sse_event({
             "type": "call_status",
             "call_id": call_id,
-            "status": "timeout",
-            "reason": "timeout",
+            "status": timeout_status,
+            "reason": timeout_reason,
             "direction": call.direction,
             "remote_node_id": call.remote_node_id,
+            "call_type": call.call_type,
+            "sip_bridge_id": call.metadata.get("sip_bridge_id", ""),
+            "target_user_id": call.metadata.get("target_user_id", ""),
+            "caller_user_id": call.caller_user_id,
         })
 
-        await self._attempt_fallback(call, "timeout")
+        if call.direction == "outgoing":
+            await self._attempt_fallback(call, "timeout")
 
     async def _attempt_fallback(self, call: CallInfo, reason: str):
         """Try the next fallback target if available."""
@@ -826,6 +840,7 @@ class SimsonAddon:
         """Clean up ended calls periodically."""
         while True:
             await asyncio.sleep(60)
+            await self._expire_stale_nonterminal_calls()
             self.call_mgr.cleanup(max_age=300)
 
             # Prune stale pending call.request mappings to avoid leaks if a
@@ -834,6 +849,45 @@ class SimsonAddon:
             for req_id, (_, ts) in list(self._pending_call_requests.items()):
                 if (now - ts) > 120:
                     self._pending_call_requests.pop(req_id, None)
+
+    async def _expire_stale_nonterminal_calls(self):
+        """Clear calls that missed their terminal VPS status.
+
+        This is a defensive cleanup for network/restart races. Without it, an
+        incoming SIP invite can remain in HA as "ringing" forever, causing the
+        dashboard card to show a phantom call every time it loads.
+        """
+        now = time.time()
+        for call in list(self.call_mgr.all_calls):
+            if call.state not in (CallState.INCOMING, CallState.RINGING, CallState.REQUESTING):
+                continue
+
+            max_age = self._incoming_invite_timeout_sec + 30 if call.direction == "incoming" else 180
+            if not call.started_at or (now - call.started_at) <= max_age:
+                continue
+
+            status = "missed" if call.direction == "incoming" else "timeout"
+            reason = "stale_incoming" if call.direction == "incoming" else "stale_outgoing"
+            logging.getLogger("simson.cleanup").warning(
+                "Expiring stale %s call %s after %.0fs",
+                call.direction,
+                call.call_id,
+                now - call.started_at,
+            )
+
+            if call.direction == "incoming":
+                try:
+                    await self.wss.send(make_call_end(call.call_id, self.cfg.node_id, reason))
+                except Exception as e:
+                    logging.getLogger("simson.cleanup").debug(
+                        "Failed to send stale incoming call.end: %s", e
+                    )
+
+            await self._handle_call_status({
+                "call_id": call.call_id,
+                "status": status,
+                "reason": reason,
+            })
 
 
 # --- Entry point ---
