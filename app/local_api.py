@@ -4,7 +4,6 @@ import asyncio
 import copy
 import json
 import logging
-import uuid
 from urllib.parse import urlsplit, urlunsplit
 from aiohttp import web
 
@@ -519,11 +518,9 @@ class LocalAPI:
             if routing.target_type == "asterisk":
                 call_type = "sip"
                 ext = (routing.extension or "").strip()
-                if self.asterisk and self.asterisk.connected:
-                    # Local AMI path: call through this node's Asterisk.
-                    to_node = self.cfg.node_id
-                elif ext:
-                    # Central VPS SIP path: route directly to virtual SIP node.
+                if ext:
+                    # Central VPS SIP path: route through Asterisk ConfBridge so
+                    # the browser card joins the same audio room as the SIP phone.
                     to_node = f"sip:{ext}"
                 else:
                     return web.json_response({"error": "asterisk target missing extension"}, status=400)
@@ -535,40 +532,6 @@ class LocalAPI:
         # Check no active call for this user (allows multiple users on same node to call concurrently).
         if self.call_mgr.active_call_for_user(caller_user_id):
             return web.json_response({"error": "already in a call"}, status=409)
-
-        # ── Direct Asterisk origination (no VPS hop) ──────────────────────────
-        # When the target is an Asterisk device and we have a live AMI connection,
-        # originate the call directly rather than routing through the VPS.
-        if routing and routing.target_type == "asterisk" and self.asterisk and self.asterisk.connected:
-            call_id = str(uuid.uuid4())
-            ext = routing.extension or routing.target_id
-            remote_label = routing.target_label or ext
-            success = await self.asterisk.originate_call(
-                extension=ext,
-                caller_id=self.cfg.node_label or self.cfg.node_id,
-                variables={"SIMSON_CALL_ID": call_id},
-            )
-            if not success:
-                return web.json_response({"error": "Asterisk AMI origination failed"}, status=502)
-
-            call = await self.call_mgr.outgoing_request(
-                call_id,
-                f"asterisk:{ext}",  # synthetic remote node id for local AMI calls
-                "sip",
-                routing=routing,
-                caller_user_id=caller_user_id,
-            )
-            if caller_user_id:
-                call.metadata["caller_user_id"] = caller_user_id
-            # Synthesise an immediate "ringing" so the ring timer starts.
-            asyncio.get_event_loop().create_task(
-                self.call_mgr.update_status(call_id, "ringing")
-            )
-            logger.info("Direct AMI call originated: ext=%s call_id=%s", ext, call_id)
-            return web.json_response(
-                {"call_id": call_id, "status": "requesting", "target_id": target_id or ext},
-                status=201,
-            )
 
         # ── Normal VPS-routed call ────────────────────────────────────────────
         # Build metadata with routing info if available.
