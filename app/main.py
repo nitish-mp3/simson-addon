@@ -72,6 +72,8 @@ class SimsonAddon:
         # Track outgoing call.request envelopes so VPS error(ref=msg_id) can
         # be mapped back to call_id and transitioned to failed cleanly.
         self._pending_call_requests: dict[str, tuple[str, float]] = {}
+        # Deduplicate repeated incoming invites from the same SIP source.
+        self._recent_invite_sources: dict[str, float] = {}
 
     def track_outgoing_call_request(self, request_id: str, call_id: str):
         """Register a pending outgoing call.request envelope."""
@@ -336,6 +338,20 @@ class SimsonAddon:
             metadata = {}
         target_user_id = metadata.get("target_user_id", "")
         target_user_name = metadata.get("target_user_name", "")
+
+        existing = self.call_mgr.get(call_id)
+        if existing and existing.state in (CallState.INCOMING, CallState.RINGING, CallState.ACTIVE):
+            logger.info("Ignoring duplicate invite for existing call %s", call_id)
+            return
+
+        now = time.time()
+        source_key = f"{from_node}|{metadata.get('sip_extension', '')}|{call_type}"
+        if (now - self._recent_invite_sources.get(source_key, 0)) < 3:
+            active = self.call_mgr.active_call
+            if active and active.direction == "incoming" and active.remote_node_id == from_node:
+                logger.warning("Suppressing rapid duplicate incoming invite from %s", from_node)
+                return
+        self._recent_invite_sources[source_key] = now
 
         logger.info(
             "Incoming call %s from %s (%s), type=%s, target_user=%s",
