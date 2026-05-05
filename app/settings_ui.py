@@ -482,10 +482,18 @@ p.muted{padding:4px 0}
       <!-- Port ---------------------------------------------------- -->
       <div class="section">
         <div class="section-head"><h3 class="section-head-left">☎ SIP Phone Endpoints</h3></div>
-        <div class="section-body" id="sip-endpoints-body"></div>
+        <div class="section-body" id="sip-endpoints-body">
+          <div style="height:14px"></div>
+          <p class="field-hint" style="margin-bottom:12px">
+            Create dedicated desk-phone numbers here and optionally pin each one to a specific
+            Simson node using <b>Route To Node ID</b>. Leave routing blank to let incoming calls
+            ring any available node in the same account.
+          </p>
+        </div>
       </div>
 
       <!-- Port ---------------------------------------------------- -->
+      <div class="section">
         <div class="section-head"><h3 class="section-head-left">🔌 Local API Port</h3></div>
         <div class="section-body">
           <div style="height:14px"></div>
@@ -832,9 +840,20 @@ function renderSIPEndpoints() {
             <input type="text" id="sip-desc" placeholder="Front desk phone" autocomplete="off">
           </div>
         </div>
+        <div class="field-row" style="flex-direction:column">
+          <div class="field" style="width:100%">
+            <label>Route To Node ID <span class="hint-tag">— optional dedicated destination</span></label>
+            <input type="text" id="sip-route" placeholder="living_room">
+            <div class="field-hint">If set, incoming calls for this number ring this node first.</div>
+          </div>
+        </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="sip-enabled" checked>
+          <label for="sip-enabled">Endpoint enabled</label>
+        </div>
         <div style="display:flex;gap:10px;margin-top:10px">
           <button class="btn btn-primary btn-sm" style="padding:8px 16px"
-                  onclick="createSIPEndpoint()">Create</button>
+                  onclick="createSIPEndpoint(event)">Create</button>
           <button class="btn-secondary btn-sm" style="padding:8px 16px;background:var(--surface3);border:1px solid var(--border)"
                   onclick="hideSIPForm()">Cancel</button>
         </div>
@@ -846,20 +865,50 @@ function renderSIPEndpoints() {
       ${endpoints.length === 0
         ? '<p class="muted">no sip phones configured</p>'
         : endpoints.map((ep, i) => `
-          <div style="display:flex;justify-content:space-between;align-items:center;
-                      padding:10px;background:var(--surface2);border-radius:6px;
-                      margin-bottom:8px;border:1px solid var(--border)">
-            <div>
-              <div style="font-weight:600;color:var(--text);font-size:14px">
-                [${esc(ep.extension)}] ${esc(ep.description || ep.username)}
+          <div style="padding:12px;background:var(--surface2);border-radius:8px;
+                      margin-bottom:10px;border:1px solid var(--border)">
+            <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
+              <div style="min-width:0">
+                <div style="font-weight:600;color:var(--text);font-size:14px">
+                  [${esc(ep.extension)}] ${esc(ep.description || ep.username)}
+                </div>
+                <div style="color:var(--text3);font-size:12px;margin-top:4px;line-height:1.5">
+                  Username: <code style="background:var(--surface3);padding:2px 6px;border-radius:3px;font-family:monospace">${esc(ep.username)}</code>
+                  · Status: <b style="color:${ep.enabled ? 'var(--green-light)' : 'var(--red-light)'}">${ep.enabled ? 'Enabled' : 'Disabled'}</b>
+                  · Route: <b>${esc(ep.route_to || 'Any available node')}</b>
+                </div>
               </div>
-              <div style="color:var(--text3);font-size:12px;margin-top:3px">
-                Username: <code style="background:var(--surface3);padding:2px 6px;border-radius:3px;font-family:monospace">${esc(ep.username)}</code>
+              <button class="btn-icon del"
+                      onclick="deleteSIPEndpoint('${ep.id}', ${i})"
+                      title="Delete SIP endpoint">✕</button>
+            </div>
+            <div class="field-row" style="margin-top:12px">
+              <div class="field">
+                <label>Description</label>
+                <input type="text" id="ep-desc-${i}" value="${esc(ep.description)}" placeholder="Front desk phone">
+              </div>
+              <div class="field">
+                <label>Route To Node ID</label>
+                <input type="text" id="ep-route-${i}" value="${esc(ep.route_to)}" placeholder="living_room">
               </div>
             </div>
-            <button class="btn-icon del"
-                    onclick="deleteSIPEndpoint('${ep.id}', ${i})"
-                    title="Delete SIP endpoint">✕</button>
+            <div class="field-row" style="align-items:flex-end">
+              <div class="field">
+                <label>Rotate Password <span class="hint-tag">— optional</span></label>
+                <input type="password" id="ep-pass-${i}" placeholder="Leave blank to keep current password">
+              </div>
+              <div class="field" style="max-width:180px">
+                <label class="checkbox-row" style="padding:0">
+                  <input type="checkbox" id="ep-enabled-${i}" ${ep.enabled ? 'checked' : ''}>
+                  <span>Enabled</span>
+                </label>
+              </div>
+            </div>
+            <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:6px">
+              <button class="btn-secondary btn-sm"
+                      style="padding:8px 16px;background:var(--surface3);border:1px solid var(--border)"
+                      onclick="updateSIPEndpoint('${ep.id}', ${i}, event)">Save Changes</button>
+            </div>
           </div>
         `).join('')
       }
@@ -876,19 +925,22 @@ function showCreateSIPForm() {
 function hideSIPForm() {
   const form = document.getElementById('sip-create-form');
   if (form) form.classList.add('hidden');
-  ['sip-ext','sip-user','sip-pass','sip-desc'].forEach(id => {
+  ['sip-ext','sip-user','sip-pass','sip-desc','sip-route'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
+  setCheck('sip-enabled', true);
   const resultDiv = document.getElementById('sip-create-result');
   if (resultDiv) resultDiv.innerHTML = '';
 }
 
-async function createSIPEndpoint() {
+async function createSIPEndpoint(event) {
   const ext = getVal('sip-ext').trim();
   const user = getVal('sip-user').trim();
   const pass = getVal('sip-pass').trim();
   const desc = getVal('sip-desc').trim();
+  const routeTo = getVal('sip-route').trim();
+  const enabled = getCheck('sip-enabled');
   const resultDiv = document.getElementById('sip-create-result');
 
   if (!ext || !user || !pass) {
@@ -910,7 +962,8 @@ async function createSIPEndpoint() {
         username: user,
         password: pass,
         description: desc,
-        enabled: true,
+        route_to: routeTo,
+        enabled,
       }),
     });
 
@@ -937,6 +990,42 @@ async function createSIPEndpoint() {
       '<div class="alert alert-error" style="margin-top:10px">✗ ' + esc(e.message) + '</div>';
     btn.disabled = false;
     btn.textContent = 'Create';
+  }
+}
+
+async function updateSIPEndpoint(id, idx, event) {
+  const btn = event?.target;
+  const description = getVal(`ep-desc-${idx}`).trim();
+  const route_to = getVal(`ep-route-${idx}`).trim();
+  const password = getVal(`ep-pass-${idx}`).trim();
+  const enabled = getCheck(`ep-enabled-${idx}`);
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+  }
+
+  try {
+    const r = await fetch(`api/sip-endpoints/${id}`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({description, route_to, password, enabled}),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      throw new Error(data.error || 'Failed to update SIP endpoint');
+    }
+
+    const updated = normalizeSIPEndpoint(data);
+    if (updated) _sipEndpoints[idx] = updated;
+    renderSIPEndpoints();
+    setSaveStatus('✓ SIP endpoint updated', 'ok');
+  } catch (e) {
+    alert('Update failed: ' + e.message);
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Save Changes';
+    }
   }
 }
 

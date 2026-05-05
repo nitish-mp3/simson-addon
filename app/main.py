@@ -695,7 +695,11 @@ class SimsonAddon:
         # Register the new call with updated fallback state.
         new_routing = call.routing
         new_call = await self.call_mgr.outgoing_request(
-            new_call_id, fallback_node, call_type, routing=new_routing
+            new_call_id,
+            fallback_node,
+            call_type,
+            routing=new_routing,
+            remote_label=fallback_routing.target_label if fallback_routing else fallback_id,
         )
         new_call.fallback_attempt = next_idx
 

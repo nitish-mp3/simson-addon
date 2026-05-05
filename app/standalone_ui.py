@@ -148,45 +148,183 @@ STANDALONE_UI_HTML = r"""<!DOCTYPE html>
 <audio id="remote-audio" autoplay></audio>
 
 <script>
-// ── State ─────────────────────────────────────────────────────────────────────
+const VERSION = "standalone-ui-3.8.0";
 const BASE = window.location.origin;
+const FALLBACK_ICE_SERVERS = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+];
+
 let _callId = null;
 let _currentRemote = "";
-let _callStart = null;
+let _remoteNodeId = "";
+let _currentCallType = "voice";
+let _sipBridgeId = "";
+let _callStartMs = null;
 let _timerInterval = null;
 let _muted = false;
 let _pc = null;
 let _localStream = null;
 let _pendingCandidates = [];
+let _pendingOffer = null;
+let _startingWebRTC = false;
 let _callState = "idle";
+let _isCaller = false;
+let _webrtcConfig = null;
+let _sipUA = null;
+let _pendingSIPBridgeId = null;
+let _ringCtx = null;
+let _ringLoop = null;
 
-// ── Logging ───────────────────────────────────────────────────────────────────
 function log(msg) {
   const el = document.getElementById("log");
-  el.textContent = `[${new Date().toLocaleTimeString()}] ${msg}\n` + el.textContent.slice(0,500);
+  el.textContent = `[${new Date().toLocaleTimeString()}] ${msg}\n` + el.textContent.slice(0, 900);
 }
 
-// ── Status ────────────────────────────────────────────────────────────────────
+function esc(s) {
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function updateStatus(connected) {
-  const b = document.getElementById("status-badge");
-  if (connected) { b.textContent = "Online"; b.className = "badge badge-ok"; }
-  else            { b.textContent = "Offline"; b.className = "badge badge-err"; }
+  const badge = document.getElementById("status-badge");
+  if (connected) {
+    badge.textContent = "Online";
+    badge.className = "badge badge-ok";
+  } else {
+    badge.textContent = "Offline";
+    badge.className = "badge badge-err";
+  }
 }
 
-// ── Periodic status poll ──────────────────────────────────────────────────────
+function showIncoming(from, callType) {
+  document.getElementById("incoming-from").textContent = from || "Unknown";
+  document.getElementById("incoming-type").textContent =
+    callType === "sip" ? "Desk phone / SIP bridge call" : "Voice call";
+  document.getElementById("incoming-card").style.display = "";
+  document.getElementById("active-card").style.display = "none";
+}
+
+function showActive(remote, callType = _currentCallType) {
+  document.getElementById("active-remote").textContent =
+    remote || (callType === "sip" ? "SIP Bridge" : "Active Call");
+  document.getElementById("incoming-card").style.display = "none";
+  document.getElementById("active-card").style.display = "";
+}
+
+function showIdle() {
+  document.getElementById("incoming-card").style.display = "none";
+  document.getElementById("active-card").style.display = "none";
+  _callState = "idle";
+}
+
+function startTimer(answeredAtSeconds = null) {
+  if (_timerInterval) clearInterval(_timerInterval);
+  _callStartMs = answeredAtSeconds ? answeredAtSeconds * 1000 : Date.now();
+  const tick = () => {
+    const total = Math.max(0, Math.floor((Date.now() - _callStartMs) / 1000));
+    const mins = Math.floor(total / 60);
+    const secs = total % 60;
+    document.getElementById("call-timer").textContent = `${mins}:${String(secs).padStart(2, "0")}`;
+  };
+  tick();
+  _timerInterval = setInterval(tick, 1000);
+}
+
+function stopTimer() {
+  if (_timerInterval) clearInterval(_timerInterval);
+  _timerInterval = null;
+  _callStartMs = null;
+  document.getElementById("call-timer").textContent = "0:00";
+}
+
+function playRingtone() {
+  stopRingtone();
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    _ringCtx = ctx;
+    _ringLoop = setInterval(() => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = 660;
+      gain.gain.setValueAtTime(0.12, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.35);
+    }, 1300);
+  } catch (e) {
+    log("ringtone unavailable: " + e.message);
+  }
+}
+
+function stopRingtone() {
+  if (_ringLoop) {
+    clearInterval(_ringLoop);
+    _ringLoop = null;
+  }
+  if (_ringCtx) {
+    _ringCtx.close().catch(() => {});
+    _ringCtx = null;
+  }
+}
+
+function isSipCall(remoteNodeId = _remoteNodeId, callType = _currentCallType) {
+  return callType === "sip" || String(remoteNodeId || "").startsWith("sip:");
+}
+
 async function pollStatus() {
   try {
     const r = await fetch(BASE + "/api/status");
-    if (r.ok) {
-      const d = await r.json();
-      updateStatus(d.vps_connected);
-    }
-  } catch(_) { updateStatus(false); }
+    if (!r.ok) return;
+    const data = await r.json();
+    updateStatus(data.vps_connected);
+    syncFromStatus(data);
+  } catch (_) {
+    updateStatus(false);
+  }
 }
-setInterval(pollStatus, 8000);
-pollStatus();
 
-// ── Load targets ──────────────────────────────────────────────────────────────
+function syncFromStatus(data) {
+  const active = data.active_call;
+  if (!active) {
+    if (_callState !== "idle") {
+      stopRingtone();
+      cleanupMedia();
+      showIdle();
+      stopTimer();
+    }
+    return;
+  }
+
+  _callId = active.call_id;
+  _callState = active.state;
+  _remoteNodeId = active.remote_node_id || _remoteNodeId;
+  _currentRemote = active.remote_label || active.remote_node_id || _currentRemote;
+  _currentCallType = active.call_type || _currentCallType;
+  _sipBridgeId = active.sip_bridge_id || _sipBridgeId;
+  _isCaller = active.direction === "outgoing";
+
+  if (active.state === "incoming") {
+    showIncoming(_currentRemote, _currentCallType);
+    playRingtone();
+  } else if (active.state === "active") {
+    stopRingtone();
+    showActive(_currentRemote, _currentCallType);
+    startTimer(active.answered_at || active.started_at || null);
+    if (isSipCall()) {
+      if (_sipBridgeId) startSIPCall(_sipBridgeId).catch(e => log("sip bridge start error: " + e.message));
+    } else if (_remoteNodeId) {
+      startWebRTC().catch(e => log("webrtc start error: " + e.message));
+    }
+  }
+}
+
 async function loadTargets() {
   try {
     const r = await fetch(BASE + "/api/targets");
@@ -201,16 +339,16 @@ async function loadTargets() {
     list.innerHTML = targets.map(t => `
       <div class="target-row">
         <div>
-          <div class="target-name">${esc(t.label || t.id)}</div>
-          <div class="target-type">${esc(t.type || "node")}</div>
+          <div class="target-name">${esc(t.label || t.extension || t.id)}</div>
+          <div class="target-type">${esc(t.type || "node")}${t.extension ? ` · ext ${esc(t.extension)}` : ""}</div>
         </div>
-        <button class="btn btn-call btn-sm" onclick="dialTarget('${esc(t.id)}','${esc(t.type||'')}')">📞 Call</button>
+        <button class="btn btn-call btn-sm" onclick="dialTarget('${encodeURIComponent(t.id || "")}','${encodeURIComponent(t.type || "")}','${encodeURIComponent(t.node_id || "")}','${encodeURIComponent(t.label || t.extension || t.id || "")}')">📞 Call</button>
       </div>`).join("");
-  } catch(e) { log("targets load error: " + e); }
+  } catch (e) {
+    log("targets load error: " + e.message);
+  }
 }
-loadTargets();
 
-// ── Load history ──────────────────────────────────────────────────────────────
 async function loadHistory() {
   try {
     const r = await fetch(BASE + "/api/history");
@@ -222,268 +360,829 @@ async function loadHistory() {
       list.innerHTML = '<div style="color:var(--muted);font-size:12px">No history yet.</div>';
       return;
     }
-    list.innerHTML = history.slice(0,20).map(h => {
+    list.innerHTML = history.slice(0, 20).map(h => {
       const dir = h.direction === "incoming" ? "⬇" : "⬆";
-      const dt = h.started_at ? new Date(h.started_at*1000).toLocaleTimeString() : "";
+      const dt = h.started_at ? new Date(h.started_at * 1000).toLocaleTimeString() : "";
       const state = h.end_reason || h.state || "";
       return `<div class="history-row">
         <span class="history-dir">${dir}</span>
-        <span class="history-label">${esc(h.remote_label||h.remote_node_id||"?")}</span>
+        <span class="history-label">${esc(h.remote_label || h.remote_node_id || "?")}</span>
         <span class="history-state">${esc(state)} ${dt}</span>
       </div>`;
     }).join("");
-  } catch(e) { log("history load error: " + e); }
+  } catch (e) {
+    log("history load error: " + e.message);
+  }
 }
-loadHistory();
 
-// ── SSE ───────────────────────────────────────────────────────────────────────
 function connectSSE() {
   const es = new EventSource(BASE + "/api/events");
-  es.onopen = () => { log("SSE connected"); updateStatus(true); };
-  es.onerror = () => { log("SSE disconnected — reconnecting…"); updateStatus(false); setTimeout(connectSSE, 5000); };
+  es.onopen = () => {
+    log("SSE connected");
+    updateStatus(true);
+  };
+  es.onerror = () => {
+    log("SSE disconnected, retrying");
+    updateStatus(false);
+    setTimeout(connectSSE, 5000);
+  };
   es.onmessage = (e) => {
-    try { handleEvent(JSON.parse(e.data)); } catch(err) { log("parse error: " + err); }
+    try {
+      handleEvent(JSON.parse(e.data));
+    } catch (err) {
+      log("event parse error: " + err.message);
+    }
   };
 }
-connectSSE();
 
 function handleEvent(ev) {
-  const type = ev.type;
-  if (type === "incoming_call") {
+  if (ev.type === "init") {
+    updateStatus(!!ev.vps_connected);
+    return;
+  }
+
+  if (ev.type === "incoming_call") {
     _callId = ev.call_id;
+    _callState = "incoming";
+    _isCaller = false;
+    _remoteNodeId = ev.from_node_id || "";
     _currentRemote = ev.from_label || ev.from_node_id || "Unknown";
-    showIncoming(_currentRemote, ev.call_type);
+    _currentCallType = ev.call_type || "voice";
+    _sipBridgeId = ev.metadata?.sip_bridge_id || "";
+    showIncoming(_currentRemote, _currentCallType);
     playRingtone();
-  } else if (type === "call_status") {
-    const s = ev.status;
-    _callState = s;
-    if (s === "active") {
-      _callId = ev.call_id;
-      _currentRemote = _currentRemote || ev.remote_node_id || "";
-      stopRingtone();
-      showActive(_currentRemote);
-      startTimer();
-      startWebRTC(ev.remote_node_id);
-    } else if (["ended","failed","missed","declined","timeout"].includes(s)) {
-      stopRingtone();
-      showIdle();
-      stopTimer();
-      cleanupWebRTC();
-      _callId = null;
-      setTimeout(loadHistory, 2000);
+    return;
+  }
+
+  if (ev.type === "call_status") {
+    _callId = ev.call_id || _callId;
+    _callState = ev.status || _callState;
+    _remoteNodeId = ev.remote_node_id || _remoteNodeId;
+    _currentCallType = ev.call_type || _currentCallType;
+    _sipBridgeId = ev.sip_bridge_id || _sipBridgeId;
+
+    if (ev.status === "ringing") {
+      log("remote ringing");
+      return;
     }
-  } else if (type === "webrtc_signal") {
-    handleWebRTCSignal(ev);
+
+    if (ev.status === "active") {
+      stopRingtone();
+      _currentRemote = _currentRemote || ev.remote_node_id || "Connected";
+      showActive(_currentRemote, _currentCallType);
+      if (!_timerInterval) startTimer();
+      if (isSipCall()) {
+        if (_sipBridgeId) {
+          startSIPCall(_sipBridgeId).catch(e => log("sip bridge start error: " + e.message));
+        } else {
+          log("active SIP call missing bridge id");
+        }
+      } else {
+        startWebRTC().catch(e => log("webrtc start error: " + e.message));
+      }
+      return;
+    }
+
+    if (["ended", "failed", "missed", "declined", "timeout"].includes(ev.status)) {
+      stopRingtone();
+      stopTimer();
+      cleanupMedia();
+      showIdle();
+      _callId = null;
+      _remoteNodeId = "";
+      _currentRemote = "";
+      _currentCallType = "voice";
+      _sipBridgeId = "";
+      setTimeout(loadHistory, 800);
+      return;
+    }
+  }
+
+  if (ev.type === "webrtc_signal") {
+    handleWebRTCSignal(ev).catch(e => log("webrtc signal error: " + e.message));
   }
 }
 
-// ── UI show/hide ──────────────────────────────────────────────────────────────
-function showIncoming(from, callType) {
-  document.getElementById("incoming-from").textContent = from;
-  document.getElementById("incoming-type").textContent =
-    (callType === "sip" ? "SIP/Phone call" : "Voice call");
-  document.getElementById("incoming-card").style.display = "";
-  document.getElementById("active-card").style.display = "none";
-}
-function showActive(remote) {
-  document.getElementById("active-remote").textContent = remote || "Active Call";
-  document.getElementById("incoming-card").style.display = "none";
-  document.getElementById("active-card").style.display = "";
-}
-function showIdle() {
-  document.getElementById("incoming-card").style.display = "none";
-  document.getElementById("active-card").style.display = "none";
-  _callState = "idle";
-}
-
-// ── Timer ─────────────────────────────────────────────────────────────────────
-function startTimer() {
-  _callStart = Date.now();
-  _timerInterval = setInterval(() => {
-    const s = Math.floor((Date.now() - _callStart) / 1000);
-    const m = Math.floor(s / 60), ss = s % 60;
-    document.getElementById("call-timer").textContent =
-      m + ":" + String(ss).padStart(2,"0");
-  }, 1000);
-}
-function stopTimer() {
-  clearInterval(_timerInterval);
-  document.getElementById("call-timer").textContent = "0:00";
-  _callStart = null;
-}
-
-// ── Ringtone ──────────────────────────────────────────────────────────────────
-function playRingtone() {
-  const ctx = new (window.AudioContext || window.webkitAudioContext)();
-  let stop = false;
-  function beep() {
-    if (stop) return;
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.connect(g); g.connect(ctx.destination);
-    o.frequency.value = 660; g.gain.value = 0.1;
-    o.start(); o.stop(ctx.currentTime + 0.4);
-    setTimeout(() => { if (!stop) beep(); }, 1200);
-  }
-  beep();
-  window._stopRingtone = () => { stop = true; ctx.close(); };
-}
-function stopRingtone() {
-  if (window._stopRingtone) { window._stopRingtone(); window._stopRingtone = null; }
-}
-
-// ── Actions ───────────────────────────────────────────────────────────────────
 async function dialNode() {
   const input = document.getElementById("dial-node").value.trim();
   if (!input) return;
+
   _currentRemote = input;
+  _isCaller = true;
   _callState = "requesting";
+
+  const isNumeric = /^\d+$/.test(input);
+  const body = isNumeric
+    ? { target_id: "asterisk_" + input, call_type: "sip" }
+    : { target_node_id: input, call_type: "voice" };
+
+  _currentCallType = isNumeric ? "sip" : "voice";
+  _remoteNodeId = isNumeric ? `sip:${input}` : input;
+
   try {
-    const body = input.match(/^\d+$/)
-      ? { target_id: "asterisk_" + input, call_type: "sip" }
-      : { target_node_id: input, call_type: "voice" };
     const r = await fetch(BASE + "/api/call", {
-      method: "POST", headers: {"Content-Type":"application/json"},
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
     const d = await r.json();
-    if (r.ok) { _callId = d.call_id; log("call started: " + d.call_id); }
-    else       { log("call error: " + (d.error||r.status)); alert(d.error || "Failed to start call"); }
-  } catch(e) { log("dial error: " + e); }
+    if (r.ok) {
+      _callId = d.call_id;
+      log("call started: " + d.call_id);
+    } else {
+      log("call error: " + (d.error || r.status));
+      alert(d.error || "Failed to start call");
+    }
+  } catch (e) {
+    log("dial error: " + e.message);
+  }
 }
 
-async function dialTarget(targetId, type) {
-  _currentRemote = targetId;
+async function dialTarget(targetId, type, nodeId = "", label = "") {
+  targetId = decodeURIComponent(targetId || "");
+  type = decodeURIComponent(type || "");
+  nodeId = decodeURIComponent(nodeId || "");
+  label = decodeURIComponent(label || "");
+  _currentRemote = label || targetId;
+  _isCaller = true;
+  _callState = "requesting";
+  _currentCallType = type === "asterisk" ? "sip" : "voice";
+  _remoteNodeId = type === "asterisk" ? `sip:${targetId.replace(/^asterisk_/, "")}` : (nodeId || targetId);
+
   try {
     const r = await fetch(BASE + "/api/call", {
-      method: "POST", headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({ target_id: targetId, call_type: type === "asterisk" ? "sip" : "voice" }),
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target_id: targetId, call_type: _currentCallType }),
     });
     const d = await r.json();
-    if (r.ok) { _callId = d.call_id; log("call started: " + d.call_id); }
-    else       { log("call error: " + (d.error||r.status)); alert(d.error || "Failed to start call"); }
-  } catch(e) { log("dial error: " + e); }
+    if (r.ok) {
+      _callId = d.call_id;
+      log("call started: " + d.call_id);
+    } else {
+      log("call error: " + (d.error || r.status));
+      alert(d.error || "Failed to start call");
+    }
+  } catch (e) {
+    log("dial error: " + e.message);
+  }
 }
 
 async function answerCall() {
   stopRingtone();
-  document.getElementById("incoming-card").style.display = "none";
   try {
-    await fetch(BASE + "/api/answer", {
-      method: "POST", headers: {"Content-Type":"application/json"},
+    const resp = await fetch(BASE + "/api/answer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ call_id: _callId || "" }),
     });
-    showActive(_currentRemote);
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.error || "Answer failed");
+    }
+    showActive(_currentRemote, _currentCallType);
     startTimer();
-  } catch(e) { log("answer error: " + e); }
+    if (isSipCall() && _sipBridgeId) {
+      startSIPCall(_sipBridgeId).catch(e => log("sip bridge answer error: " + e.message));
+    }
+  } catch (e) {
+    log("answer error: " + e.message);
+  }
 }
 
 async function declineCall() {
   stopRingtone();
+  cleanupMedia();
   showIdle();
   try {
     await fetch(BASE + "/api/reject", {
-      method: "POST", headers: {"Content-Type":"application/json"},
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ call_id: _callId || "", reason: "declined" }),
     });
-  } catch(e) { log("decline error: " + e); }
+  } catch (e) {
+    log("decline error: " + e.message);
+  }
   _callId = null;
 }
 
 async function hangupCall() {
-  stopTimer();
-  cleanupWebRTC();
   const cid = _callId;
+  stopTimer();
+  cleanupMedia();
   showIdle();
   _callId = null;
   try {
     await fetch(BASE + "/api/hangup", {
-      method: "POST", headers: {"Content-Type":"application/json"},
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ call_id: cid || "" }),
     });
-  } catch(e) { log("hangup error: " + e); }
-  setTimeout(loadHistory, 2000);
+  } catch (e) {
+    log("hangup error: " + e.message);
+  }
+  setTimeout(loadHistory, 800);
 }
 
 function toggleMute() {
   _muted = !_muted;
-  if (_localStream) _localStream.getAudioTracks().forEach(t => t.enabled = !_muted);
+  if (_localStream) {
+    _localStream.getAudioTracks().forEach(t => { t.enabled = !_muted; });
+  }
   document.getElementById("btn-mute").textContent = _muted ? "🔇 Unmute" : "🎙 Mute";
 }
 
-// ── WebRTC ────────────────────────────────────────────────────────────────────
-async function startWebRTC(remoteNodeId) {
-  if (_pc) return;
+async function fetchWebRTCConfig() {
+  if (_webrtcConfig) return _webrtcConfig;
   try {
-    _localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    _pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
-    _localStream.getTracks().forEach(t => _pc.addTrack(t, _localStream));
+    const resp = await fetch(BASE + "/api/webrtc-config");
+    if (resp.ok) {
+      _webrtcConfig = await resp.json();
+      return _webrtcConfig;
+    }
+  } catch (_) {}
+  return { ice_servers: FALLBACK_ICE_SERVERS, sip: { enabled: false } };
+}
+
+async function ensureLocalAudio() {
+  if (_localStream) return _localStream;
+  _localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  return _localStream;
+}
+
+async function startWebRTC() {
+  if (_pc || _startingWebRTC || !_remoteNodeId) return;
+  _startingWebRTC = true;
+  try {
+    const cfg = await fetchWebRTCConfig();
+    const iceServers = cfg.ice_servers || FALLBACK_ICE_SERVERS;
+    await ensureLocalAudio();
+    _pc = new RTCPeerConnection({ iceServers });
+    _pendingCandidates = [];
+
     _pc.ontrack = (ev) => {
       const audio = document.getElementById("remote-audio");
-      if (ev.streams[0]) audio.srcObject = ev.streams[0];
+      if (ev.streams?.[0]) {
+        audio.srcObject = ev.streams[0];
+      } else {
+        const ms = new MediaStream();
+        ms.addTrack(ev.track);
+        audio.srcObject = ms;
+      }
+      audio.play().catch(() => {});
     };
+
     _pc.onicecandidate = (ev) => {
-      if (ev.candidate) sendSignal({ type: "ice", candidate: ev.candidate });
+      if (ev.candidate) {
+        sendSignal("ice-candidate", {
+          candidate: ev.candidate.candidate,
+          sdpMid: ev.candidate.sdpMid,
+          sdpMLineIndex: ev.candidate.sdpMLineIndex,
+        });
+      }
     };
-    const polite = (document.getElementById("node-id").textContent || "") < (remoteNodeId || "");
-    if (!polite) {
+
+    _pc.onconnectionstatechange = () => {
+      if (_pc?.connectionState === "failed") {
+        log("webrtc connection failed");
+      }
+    };
+
+    if (_isCaller && _localStream) {
+      _localStream.getTracks().forEach(track => _pc.addTrack(track, _localStream));
       const offer = await _pc.createOffer();
       await _pc.setLocalDescription(offer);
-      sendSignal({ type: "offer", sdp: offer });
+      sendSignal("offer", {
+        type: _pc.localDescription.type,
+        sdp: _pc.localDescription.sdp,
+      });
     }
-    for (const c of _pendingCandidates) {
-      await _pc.addIceCandidate(c).catch(() => {});
+
+    if (_pendingOffer) {
+      const offerEvent = _pendingOffer;
+      _pendingOffer = null;
+      await handleWebRTCSignal(offerEvent);
     }
-    _pendingCandidates = [];
-  } catch(e) { log("webrtc error: " + e); }
+  } finally {
+    _startingWebRTC = false;
+  }
 }
 
 async function handleWebRTCSignal(ev) {
-  if (ev.signal_type === "offer" || ev.sdp?.type === "offer") {
-    if (!_pc) await startWebRTC(ev.from_node_id || "");
+  const signalType = ev.signal_type || "";
+  const data = ev.data;
+
+  if (!signalType || !data) return;
+
+  if (signalType === "offer") {
+    if (_startingWebRTC) {
+      _pendingOffer = ev;
+      return;
+    }
+    if (!_pc) await startWebRTC();
     if (!_pc) return;
-    await _pc.setRemoteDescription(new RTCSessionDescription(ev.sdp || ev));
+
+    if (_localStream && !_pc.getSenders().some(s => s.track)) {
+      _localStream.getTracks().forEach(track => _pc.addTrack(track, _localStream));
+    }
+
+    await _pc.setRemoteDescription(new RTCSessionDescription(data));
     const answer = await _pc.createAnswer();
     await _pc.setLocalDescription(answer);
-    sendSignal({ type: "answer", sdp: answer });
-  } else if (ev.signal_type === "answer" || ev.sdp?.type === "answer") {
-    if (_pc && _pc.signalingState !== "stable") {
-      await _pc.setRemoteDescription(new RTCSessionDescription(ev.sdp || ev)).catch(() => {});
+    sendSignal("answer", {
+      type: _pc.localDescription.type,
+      sdp: _pc.localDescription.sdp,
+    });
+    for (const candidate of _pendingCandidates) {
+      await _pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
     }
-  } else if (ev.candidate || ev.signal_type === "ice") {
-    const c = ev.candidate;
+    _pendingCandidates = [];
+    return;
+  }
+
+  if (signalType === "answer") {
+    if (_pc && _pc.signalingState === "have-local-offer") {
+      await _pc.setRemoteDescription(new RTCSessionDescription(data));
+      for (const candidate of _pendingCandidates) {
+        await _pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
+      }
+      _pendingCandidates = [];
+    }
+    return;
+  }
+
+  if (signalType === "ice-candidate") {
     if (_pc && _pc.remoteDescription) {
-      await _pc.addIceCandidate(c).catch(() => {});
+      await _pc.addIceCandidate(new RTCIceCandidate(data)).catch(() => {});
     } else {
-      _pendingCandidates.push(c);
+      _pendingCandidates.push(data);
     }
   }
 }
 
-function sendSignal(signal) {
+function sendSignal(signalType, data) {
+  if (!_callId || !_remoteNodeId) return;
   fetch(BASE + "/api/webrtc/signal", {
-    method: "POST", headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({ call_id: _callId, signal }),
-  }).catch(() => {});
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      call_id: _callId,
+      to_node_id: _remoteNodeId,
+      signal_type: signalType,
+      data,
+    }),
+  }).catch(e => log("signal send error: " + e.message));
 }
 
-function cleanupWebRTC() {
-  if (_pc) { _pc.close(); _pc = null; }
-  if (_localStream) { _localStream.getTracks().forEach(t => t.stop()); _localStream = null; }
+class MinimalSIPUA {
+  constructor({ uri, password, wsUrl, iceServers, onAudioTrack, onRegistered, onError, onBye }) {
+    this._uri = uri;
+    this._password = password;
+    this._wsUrl = wsUrl;
+    this._iceServers = iceServers || [];
+    this._onAudioTrack = onAudioTrack;
+    this._onRegistered = onRegistered;
+    this._onError = onError;
+    this._onBye = onBye;
+    this._ws = null;
+    this._pc = null;
+    this._localStream = null;
+    this._cseq = 1;
+    this._tag = this._rand(10);
+    this._regCallId = this._rand(16) + "@" + this._domain();
+    this._callId = null;
+    this._registered = false;
+    this._regInterval = null;
+    this._inviteCSeq = null;
+    this._lastAck = null;
+    this._regRetryCount = 0;
+    this._regRetryMax = 3;
+    this._regRetryDelay = 1000;
+  }
+
+  connect() {
+    try {
+      this._ws = new WebSocket(this._wsUrl, "sip");
+    } catch (e) {
+      this._onError && this._onError(new Error("SIP WS connection failed: " + e.message));
+      return;
+    }
+    this._ws.onopen = () => this._register();
+    this._ws.onmessage = (e) => {
+      if (e.data && e.data.trim()) this._handleRaw(e.data);
+    };
+    this._ws.onerror = () => this._onError && this._onError(new Error("SIP WebSocket error"));
+    this._ws.onclose = () => {
+      this._registered = false;
+      if (this._regInterval) clearInterval(this._regInterval);
+      this._regInterval = null;
+    };
+  }
+
+  disconnect() {
+    if (this._registered) this._sendUnregister();
+    setTimeout(() => { this._ws && this._ws.close(); }, 400);
+    this._cleanup();
+  }
+
+  async dial(extension) {
+    if (!this._registered) {
+      this._onError && this._onError(new Error("SIP not registered"));
+      return;
+    }
+    try {
+      this._localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    } catch (e) {
+      this._onError && this._onError(e);
+      return;
+    }
+    this._pc = new RTCPeerConnection({ iceServers: this._iceServers });
+    this._pc.ontrack = (ev) => this._onAudioTrack && this._onAudioTrack(ev.streams?.[0] || null, ev.track);
+    for (const t of this._localStream.getAudioTracks()) this._pc.addTrack(t, this._localStream);
+
+    const offer = await this._pc.createOffer();
+    await this._pc.setLocalDescription(offer);
+    await this._waitICE();
+
+    this._callId = this._rand(16) + "@" + this._domain();
+    this._lastAck = null;
+    const target = "sip:" + extension + "@" + this._domain();
+    this._inviteCSeq = this._cseq;
+    this._send(this._buildRequest("INVITE", target, this._callId, this._cseq++, "", this._pc.localDescription.sdp));
+  }
+
+  _rand(n = 8) { return Math.random().toString(36).slice(2, 2 + n); }
+  _domain() { return this._uri.split("@")[1]; }
+  _user() { return this._uri.split(":")[1]?.split("@")[0] || ""; }
+
+  _buildRequest(method, targetUri, callId, cseq, extraHeaders = "", body = "", toUri = null) {
+    const via = `SIP/2.0/WS ${this._domain()};branch=z9hG4bK${this._rand()};rport`;
+    const from = `<${this._uri}>;tag=${this._tag}`;
+    const to = `<${toUri || targetUri}>`;
+    const ctLen = body ? `Content-Type: application/sdp\r\nContent-Length: ${body.length}` : "Content-Length: 0";
+    return `${method} ${targetUri} SIP/2.0\r\n` +
+      `Via: ${via}\r\nMax-Forwards: 70\r\nFrom: ${from}\r\nTo: ${to}\r\n` +
+      `Call-ID: ${callId}\r\nCSeq: ${cseq} ${method}\r\nContact: <${this._uri};transport=ws>\r\n` +
+      `User-Agent: Simson/${VERSION}\r\n` + (extraHeaders || "") + `${ctLen}\r\n\r\n${body}`;
+  }
+
+  _buildResponse(code, phrase, from, to, callId, via, cseq, body = "") {
+    const ctLen = body ? `Content-Type: application/sdp\r\nContent-Length: ${body.length}` : "Content-Length: 0";
+    return `SIP/2.0 ${code} ${phrase}\r\nVia: ${via}\r\nFrom: ${from}\r\nTo: ${to}\r\n` +
+      `Call-ID: ${callId}\r\nCSeq: ${cseq}\r\nContact: <${this._uri};transport=ws>\r\n${ctLen}\r\n\r\n${body}`;
+  }
+
+  _send(msg) {
+    if (this._ws && this._ws.readyState === WebSocket.OPEN) this._ws.send(msg);
+  }
+
+  _register() {
+    this._send(this._buildRequest("REGISTER", "sip:" + this._domain(), this._regCallId, this._cseq++, "Expires: 3600\r\n", "", this._uri));
+  }
+
+  _sendUnregister() {
+    this._send(this._buildRequest("REGISTER", "sip:" + this._domain(), this._regCallId, this._cseq++, "Expires: 0\r\n", "", this._uri));
+  }
+
+  _hdr(raw, name) {
+    const lo = name.toLowerCase();
+    const line = raw.split("\r\n").find(l => l.toLowerCase().startsWith(lo + ":"));
+    return line ? line.slice(name.length + 1).trim() : null;
+  }
+
+  _body(raw) {
+    const idx = raw.indexOf("\r\n\r\n");
+    return idx >= 0 ? raw.slice(idx + 4) : "";
+  }
+
+  _handleRaw(data) {
+    try {
+      const first = data.split("\r\n")[0];
+      if (first.startsWith("SIP/2.0")) {
+        const code = parseInt(first.split(" ")[1], 10);
+        const cseqHdr = this._hdr(data, "CSeq") || "";
+        const method = cseqHdr.split(" ")[1] || "";
+        this._handleResponse(code, method, data);
+      } else {
+        const method = first.split(" ")[0];
+        this._handleRequest(method, data);
+      }
+    } catch (_) {}
+  }
+
+  _handleResponse(code, method, raw) {
+    if (method === "REGISTER") {
+      if (code === 200) {
+        this._registered = true;
+        this._regRetryCount = 0;
+        if (this._regInterval) clearInterval(this._regInterval);
+        this._regInterval = setInterval(() => { if (this._registered) this._register(); }, 300000);
+        this._onRegistered && this._onRegistered();
+      } else if (code === 401 || code === 407) {
+        this._handleDigestChallenge(code, raw, "REGISTER", "sip:" + this._domain());
+      } else if (this._regRetryCount < this._regRetryMax) {
+        this._regRetryCount++;
+        const delay = this._regRetryDelay * Math.pow(2, this._regRetryCount - 1);
+        setTimeout(() => { if (!this._registered) this._register(); }, delay);
+      } else {
+        this._onError && this._onError(new Error("SIP REGISTER rejected: " + code));
+      }
+      return;
+    }
+
+    if (method === "INVITE") {
+      if (code >= 100 && code < 200) return;
+      if (code === 200) {
+        this._handleInvite200OK(raw);
+      } else if (code === 401 || code === 407) {
+        const target = "sip:" + (this._activeBridge || "") + "@" + this._domain();
+        this._handleDigestChallenge(code, raw, "INVITE", target);
+      } else {
+        this._cleanup();
+        this._callId = null;
+        this._onError && this._onError(new Error("SIP INVITE failed: " + code));
+      }
+    }
+  }
+
+  _handleRequest(method, raw) {
+    if (method === "INVITE") this._handleIncomingInvite(raw);
+    if (method === "BYE") this._handleBye(raw);
+  }
+
+  async _handleInvite200OK(raw) {
+    if (!this._pc) return;
+    if (this._lastAck) {
+      this._send(this._lastAck);
+      return;
+    }
+
+    const sdp = this._body(raw);
+    if (!sdp) return;
+    await this._pc.setRemoteDescription({ type: "answer", sdp }).catch(() => {});
+    const cseqHdr = this._hdr(raw, "CSeq") || "";
+    const ackCSeq = parseInt(cseqHdr, 10) || this._inviteCSeq || 1;
+    const toHdr = this._hdr(raw, "To") || "";
+    const fromHdr = this._hdr(raw, "From") || "";
+    const callId = this._hdr(raw, "Call-ID") || this._callId;
+    const contactHdr = this._hdr(raw, "Contact") || "";
+    const ackUri = contactHdr.match(/<([^>]+)>/)?.[1] || "sip:" + this._domain();
+    const via = `SIP/2.0/WS ${this._domain()};branch=z9hG4bK${this._rand()};rport`;
+    const ack = `ACK ${ackUri} SIP/2.0\r\nVia: ${via}\r\nMax-Forwards: 70\r\nFrom: ${fromHdr}\r\nTo: ${toHdr}\r\nCall-ID: ${callId}\r\nCSeq: ${ackCSeq} ACK\r\nContent-Length: 0\r\n\r\n`;
+    this._lastAck = ack;
+    this._send(ack);
+  }
+
+  async _handleIncomingInvite(raw) {
+    const from = this._hdr(raw, "From") || "";
+    const to = this._hdr(raw, "To") || "";
+    const callId = this._hdr(raw, "Call-ID") || this._rand(16);
+    const via = this._hdr(raw, "Via") || "";
+    const cseq = this._hdr(raw, "CSeq") || "1 INVITE";
+    const sdpOffer = this._body(raw);
+    this._send(this._buildResponse(100, "Trying", from, to, callId, via, cseq));
+
+    if (!sdpOffer) {
+      this._send(this._buildResponse(400, "Bad Request", from, to, callId, via, cseq));
+      return;
+    }
+
+    if (!this._pc) {
+      try {
+        this._localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      } catch (_) {
+        this._send(this._buildResponse(486, "Busy Here", from, to, callId, via, cseq));
+        return;
+      }
+      this._pc = new RTCPeerConnection({ iceServers: this._iceServers });
+      this._pc.ontrack = (ev) => this._onAudioTrack && this._onAudioTrack(ev.streams?.[0] || null, ev.track);
+      for (const t of this._localStream.getAudioTracks()) this._pc.addTrack(t, this._localStream);
+    }
+
+    const toWithTag = to + ";tag=" + this._rand(8);
+    this._callId = callId;
+    await this._pc.setRemoteDescription({ type: "offer", sdp: sdpOffer });
+    const answer = await this._pc.createAnswer();
+    await this._pc.setLocalDescription(answer);
+    await this._waitICE();
+    this._send(this._buildResponse(200, "OK", from, toWithTag, callId, via, cseq, this._pc.localDescription.sdp));
+  }
+
+  _handleBye(raw) {
+    const from = this._hdr(raw, "From") || "";
+    const to = this._hdr(raw, "To") || "";
+    const callId = this._hdr(raw, "Call-ID") || "";
+    const via = this._hdr(raw, "Via") || "";
+    const cseq = this._hdr(raw, "CSeq") || "1 BYE";
+    this._send(this._buildResponse(200, "OK", from, to, callId, via, cseq));
+    this._cleanup();
+    this._callId = null;
+    this._onBye && this._onBye();
+  }
+
+  _handleDigestChallenge(code, raw, method, uri) {
+    const hdrName = code === 401 ? "WWW-Authenticate" : "Proxy-Authenticate";
+    const auth = this._hdr(raw, hdrName) || "";
+    const realm = auth.match(/realm="([^"]+)"/)?.[1] || this._domain();
+    const nonce = auth.match(/nonce="([^"]+)"/)?.[1] || "";
+    const opaque = auth.match(/opaque="([^"]+)"/)?.[1] || "";
+    const qop = auth.match(/qop="([^"]+)"/)?.[1] || "";
+    const ha1 = this._md5(this._user() + ":" + realm + ":" + this._password);
+    const ha2 = this._md5(method + ":" + uri);
+    let resp;
+    let authHeader;
+    if (qop && qop.split(",").map(q => q.trim()).includes("auth")) {
+      const nc = "00000001";
+      const cnonce = this._rand(8);
+      resp = this._md5(ha1 + ":" + nonce + ":" + nc + ":" + cnonce + ":auth:" + ha2);
+      authHeader = `Digest username="${this._user()}",realm="${realm}",nonce="${nonce}",uri="${uri}",response="${resp}",algorithm=MD5,qop=auth,nc=${nc},cnonce="${cnonce}"`;
+    } else {
+      resp = this._md5(ha1 + ":" + nonce + ":" + ha2);
+      authHeader = `Digest username="${this._user()}",realm="${realm}",nonce="${nonce}",uri="${uri}",response="${resp}",algorithm=MD5`;
+    }
+    if (opaque) authHeader += `,opaque="${opaque}"`;
+    const authLine = (code === 401 ? "Authorization" : "Proxy-Authorization") + ": " + authHeader;
+
+    if (method === "REGISTER") {
+      this._send(this._buildRequest("REGISTER", "sip:" + this._domain(), this._regCallId, this._cseq++, "Expires: 3600\r\n" + authLine + "\r\n", "", this._uri));
+    } else if (method === "INVITE") {
+      const sdp = this._pc?.localDescription?.sdp || "";
+      this._inviteCSeq = this._cseq;
+      this._send(this._buildRequest("INVITE", uri, this._callId, this._cseq++, authLine + "\r\n", sdp));
+    }
+  }
+
+  _waitICE() {
+    return new Promise((resolve) => {
+      if (!this._pc || this._pc.iceGatheringState === "complete") {
+        resolve();
+        return;
+      }
+      const done = () => {
+        if (this._pc?.iceGatheringState === "complete") resolve();
+      };
+      this._pc.addEventListener("icegatheringstatechange", done);
+      setTimeout(resolve, 4000);
+    });
+  }
+
+  _cleanup() {
+    if (this._regInterval) {
+      clearInterval(this._regInterval);
+      this._regInterval = null;
+    }
+    if (this._pc) {
+      this._pc.close();
+      this._pc = null;
+    }
+    if (this._localStream) {
+      this._localStream.getTracks().forEach(t => t.stop());
+      this._localStream = null;
+    }
+    this._lastAck = null;
+    this._inviteCSeq = null;
+  }
+
+  _md5(str) {
+    const add = (a, b) => ((a + b) | 0);
+    const rl = (n, s) => (n << s) | (n >>> (32 - s));
+    const S = [7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22,5,9,14,20,5,9,14,20,5,9,14,20,5,9,14,20,4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23,6,10,15,21,6,10,15,21,6,10,15,21,6,10,15,21];
+    const K = Array.from({ length: 64 }, (_, i) => Math.floor(Math.abs(Math.sin(i + 1)) * 0x100000000) >>> 0);
+    const bytes = new TextEncoder().encode(str);
+    const n = bytes.length;
+    const padLen = (55 - n % 64 + 64) % 64;
+    const msg = new Uint8Array(n + 1 + padLen + 8);
+    msg.set(bytes);
+    msg[n] = 0x80;
+    const dv = new DataView(msg.buffer);
+    dv.setUint32(n + 1 + padLen, (n * 8) >>> 0, true);
+    dv.setUint32(n + 1 + padLen + 4, Math.floor(n / 0x20000000), true);
+    let a = 0x67452301, b = 0xefcdab89, c = 0x98badcfe, d = 0x10325476;
+    for (let i = 0; i < msg.length; i += 64) {
+      const M = Array.from({ length: 16 }, (_, j) => dv.getInt32(i + j * 4, true));
+      let A = a, B = b, C = c, D = d;
+      for (let j = 0; j < 64; j++) {
+        let F, g;
+        if (j < 16) { F = (B & C) | (~B & D); g = j; }
+        else if (j < 32) { F = (D & B) | (~D & C); g = (5 * j + 1) % 16; }
+        else if (j < 48) { F = B ^ C ^ D; g = (3 * j + 5) % 16; }
+        else { F = C ^ (B | ~D); g = (7 * j) % 16; }
+        const temp = D;
+        D = C;
+        C = B;
+        B = add(B, rl(add(add(add(A, F), M[g]), K[j]), S[j]));
+        A = temp;
+      }
+      a = add(a, A);
+      b = add(b, B);
+      c = add(c, C);
+      d = add(d, D);
+    }
+    return [a, b, c, d].map(v =>
+      [(v >>> 0) & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff]
+        .map(byte => byte.toString(16).padStart(2, "0")).join("")
+    ).join("");
+  }
+}
+
+async function startSIPCall(bridgeId) {
+  if (!bridgeId) return;
+  if (_pendingSIPBridgeId === bridgeId || (_sipUA && _sipUA._activeBridge === bridgeId)) return;
+  _pendingSIPBridgeId = bridgeId;
+
+  if (_sipUA) {
+    try { _sipUA.disconnect(); } catch (_) {}
+    _sipUA = null;
+  }
+
+  const cfg = await fetchWebRTCConfig();
+  const sip = cfg.sip || {};
+  if (!sip.enabled || !sip.ws_url || !sip.username || !sip.password || !sip.domain) {
+    _pendingSIPBridgeId = null;
+    log("SIP bridge unavailable: configure SIP-over-WebSocket in the addon settings");
+    return;
+  }
+
+  const uri = "sip:" + sip.username + "@" + sip.domain;
+  _sipUA = new MinimalSIPUA({
+    uri,
+    password: sip.password,
+    wsUrl: sip.ws_url,
+    iceServers: cfg.ice_servers || FALLBACK_ICE_SERVERS,
+    onAudioTrack: (stream, track) => {
+      const audio = document.getElementById("remote-audio");
+      if (stream) {
+        audio.srcObject = stream;
+      } else {
+        const ms = new MediaStream();
+        ms.addTrack(track);
+        audio.srcObject = ms;
+      }
+      audio.play().catch(() => {});
+    },
+    onRegistered: () => {
+      _sipUA._activeBridge = bridgeId;
+      _pendingSIPBridgeId = null;
+      _sipUA.dial(bridgeId).catch(e => {
+        log("SIP dial error: " + e.message);
+        cleanupSIPUA();
+      });
+    },
+    onError: (e) => {
+      log("SIP error: " + e.message);
+      _pendingSIPBridgeId = null;
+      cleanupSIPUA();
+    },
+    onBye: () => {
+      cleanupSIPUA();
+      if (_callId) {
+        fetch(BASE + "/api/hangup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ call_id: _callId }),
+        }).catch(() => {});
+      }
+    },
+  });
+  _sipUA.connect();
+}
+
+function cleanupSIPUA() {
+  if (_sipUA) {
+    try { _sipUA.disconnect(); } catch (_) {}
+    _sipUA = null;
+  }
+  _pendingSIPBridgeId = null;
+}
+
+function cleanupMedia() {
+  cleanupSIPUA();
+  if (_pc) {
+    _pc.close();
+    _pc = null;
+  }
+  if (_localStream) {
+    _localStream.getTracks().forEach(t => t.stop());
+    _localStream = null;
+  }
+  _pendingCandidates = [];
+  _pendingOffer = null;
+  _muted = false;
+  document.getElementById("btn-mute").textContent = "🎙 Mute";
   const audio = document.getElementById("remote-audio");
+  audio.pause();
   audio.srcObject = null;
 }
 
-// ── Utility ───────────────────────────────────────────────────────────────────
-function esc(s) {
-  return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
-    .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
-}
-
-// Keyboard shortcut: Enter in dial box triggers call
 document.getElementById("dial-node").addEventListener("keydown", e => {
   if (e.key === "Enter") dialNode();
 });
+
+setInterval(pollStatus, 8000);
+pollStatus();
+loadTargets();
+loadHistory();
+connectSSE();
 </script>
 </body>
 </html>"""

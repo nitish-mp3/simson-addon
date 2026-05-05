@@ -103,11 +103,13 @@ class CallManager:
     async def outgoing_request(self, call_id: str, to_node_id: str,
                                call_type: str = "voice",
                                routing: RoutingIntent | None = None,
-                               caller_user_id: str = "") -> CallInfo:
+                               caller_user_id: str = "",
+                               remote_label: str = "") -> CallInfo:
         """Register an outgoing call request we just sent."""
         call = CallInfo(
             call_id=call_id,
             remote_node_id=to_node_id,
+            remote_label=remote_label,
             call_type=call_type,
             direction="outgoing",
             state=CallState.REQUESTING,

@@ -15,7 +15,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "3.7.0"
+ADDON_VERSION = "3.8.0"
 
 logger = logging.getLogger("simson.api")
 
@@ -76,6 +76,7 @@ class LocalAPI:
         self.app.router.add_post("/api/settings", self.handle_post_settings)
         self.app.router.add_get("/api/sip-endpoints", self.handle_list_sip_endpoints)
         self.app.router.add_post("/api/sip-endpoints", self.handle_create_sip_endpoint)
+        self.app.router.add_put("/api/sip-endpoints/{id}", self.handle_update_sip_endpoint)
         self.app.router.add_delete("/api/sip-endpoints/{id}", self.handle_delete_sip_endpoint)
 
     async def start(self):
@@ -361,6 +362,62 @@ class LocalAPI:
             logger.error(f"SIP endpoint create error: {e}")
             return web.json_response({"error": str(e)}, status=500)
 
+    async def handle_update_sip_endpoint(self, request: web.Request) -> web.Response:
+        """Update an existing SIP endpoint by calling VPS admin API."""
+        if not self.cfg.account_id or not self.cfg.admin_token or not self.cfg.server_url:
+            return web.json_response(
+                {"error": "Not yet provisioned — no account created on VPS"},
+                status=400,
+            )
+
+        endpoint_id = request.match_info.get("id")
+        if not endpoint_id:
+            return web.json_response({"error": "endpoint id required"}, status=400)
+
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+
+        payload = {}
+        if "description" in body:
+            payload["description"] = body.get("description", "")
+        if body.get("password"):
+            payload["password"] = body["password"]
+        if "route_to" in body:
+            payload["route_to"] = body.get("route_to", "")
+        if "enabled" in body:
+            payload["enabled"] = bool(body.get("enabled"))
+
+        if not payload:
+            return web.json_response({"error": "no updatable fields supplied"}, status=400)
+
+        http_url = self._ws_to_http_url(self.cfg.server_url)
+
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                url = f"{http_url}/admin/sip-endpoints/{endpoint_id}"
+                headers = {
+                    "Authorization": f"Bearer {self.cfg.admin_token}",
+                    "Content-Type": "application/json",
+                }
+                async with session.put(url, json=payload, headers=headers, ssl=False) as resp:
+                    if resp.status == 200:
+                        endpoint = await resp.json()
+                        logger.info("SIP endpoint updated: %s", endpoint_id)
+                        return web.json_response(endpoint)
+
+                    error = await resp.text()
+                    logger.error("VPS SIP update failed: %s %s", resp.status, error)
+                    return web.json_response(
+                        {"error": f"VPS returned {resp.status}: {error}"},
+                        status=resp.status,
+                    )
+        except Exception as e:
+            logger.error("SIP endpoint update error: %s", e)
+            return web.json_response({"error": str(e)}, status=500)
+
     async def handle_delete_sip_endpoint(self, request: web.Request) -> web.Response:
         """Delete a SIP endpoint by calling VPS admin API."""
         if not self.cfg.account_id or not self.cfg.admin_token or not self.cfg.server_url:
@@ -536,7 +593,9 @@ class LocalAPI:
         # ── Normal VPS-routed call ────────────────────────────────────────────
         # Build metadata with routing info if available.
         metadata = {}
+        remote_label = ""
         if routing:
+            remote_label = routing.target_label or routing.extension or routing.target_id
             # Central SIP path (to_node_id = sip:EXT) needs conservative,
             # flat metadata for compatibility with older VPS payload decoders.
             if routing.target_type == "asterisk" and str(to_node).startswith("sip:"):
@@ -545,6 +604,8 @@ class LocalAPI:
                     routing.caller_id
                     or f'"{self.cfg.node_label or self.cfg.node_id}" <100>'
                 )
+                metadata["extension"] = routing.extension
+                metadata["target_label"] = remote_label
             else:
                 metadata["routing"] = {
                     "target_type": routing.target_type,
@@ -573,7 +634,8 @@ class LocalAPI:
         # Register locally before sending so immediate VPS error(ref=id)
         # can always map back to an existing call and transition state.
         await self.call_mgr.outgoing_request(call_id, to_node, call_type, routing=routing,
-                                             caller_user_id=caller_user_id)
+                                             caller_user_id=caller_user_id,
+                                             remote_label=remote_label or target_id or to_node)
 
         try:
             await self.send_fn(msg)
