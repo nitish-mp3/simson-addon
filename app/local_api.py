@@ -605,6 +605,8 @@ class LocalAPI:
                     or f'"{self.cfg.node_label or self.cfg.node_id}" <100>'
                 )
                 metadata["extension"] = routing.extension
+                metadata["context"] = routing.context
+                metadata["trunk"] = routing.trunk
                 metadata["target_label"] = remote_label
             else:
                 metadata["routing"] = {
@@ -857,7 +859,7 @@ class LocalAPI:
         sip_ws_url = (self.cfg.sip_ws_url or "").strip()
         sip_domain = (self.cfg.sip_domain or "").strip()
         sip_username = (self.cfg.sip_username or "webrtc-pool").strip() or "webrtc-pool"
-        sip_password = (self.cfg.sip_password or "simsonwebrtc").strip() or "simsonwebrtc"
+        sip_password = (self.cfg.sip_password or "").strip()
 
         # If SIP fields are partially configured, derive missing WS URL/domain
         # from server_url (e.g. wss://host/ws -> wss://host/sip/ws).
@@ -876,14 +878,9 @@ class LocalAPI:
             if not sip_domain and host:
                 sip_domain = host
 
-        sip_ready = bool(
-            sip_ws_url
-            and sip_username
-            and sip_password
-            and sip_domain
-        )
+        sip_ready = bool(sip_ws_url and sip_username and sip_password and sip_domain)
         sip_config: dict = {
-            "enabled": bool(self.cfg.sip_enabled or sip_ready),
+            "enabled": bool(self.cfg.sip_enabled and sip_ready),
             "ws_url": sip_ws_url,
             "username": sip_username,
             "password": sip_password,

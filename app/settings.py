@@ -141,8 +141,13 @@ def validate_settings(data: dict) -> list[str]:
     wrtc = data.get("webrtc") or {}
     if wrtc.get("turn_enabled") and not str(wrtc.get("turn_url", "")).strip():
         errors.append("TURN: URL is required when TURN relay is enabled")
-    if wrtc.get("sip_enabled") and not str(wrtc.get("sip_ws_url", "")).strip():
-        errors.append("SIP: WebSocket URL is required when SIP-over-WebSocket is enabled")
+    if wrtc.get("sip_enabled"):
+        if not str(wrtc.get("sip_ws_url", "")).strip():
+            errors.append("SIP: WebSocket URL is required when SIP-over-WebSocket is enabled")
+        if not str(wrtc.get("sip_password", "")).strip():
+            errors.append("SIP: password is required when SIP-over-WebSocket is enabled")
+        if not str(wrtc.get("sip_domain", "")).strip():
+            errors.append("SIP: domain is required when SIP-over-WebSocket is enabled")
 
     # ── Call targets ────────────────────────────────────────────────────────
     seen_ids: set[str] = set()

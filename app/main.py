@@ -663,6 +663,8 @@ class SimsonAddon:
         # Resolve the fallback target.
         fallback_routing = self.target_dir.resolve_routing(fallback_id)
         fallback_node = self.target_dir.resolve_node_id(fallback_id)
+        if fallback_routing and fallback_routing.target_type == "asterisk":
+            fallback_node = f"sip:{fallback_routing.extension}"
 
         if not fallback_node:
             logger.warning("Fallback target %s could not be resolved", fallback_id)
@@ -671,15 +673,25 @@ class SimsonAddon:
         # Build metadata.
         metadata = {}
         if fallback_routing:
-            metadata["routing"] = {
-                "target_type": fallback_routing.target_type,
-                "target_id": fallback_routing.target_id,
-                "extension": fallback_routing.extension,
-                "context": fallback_routing.context,
-                "trunk": fallback_routing.trunk,
-                "caller_id": fallback_routing.caller_id,
-                "timeout": fallback_routing.timeout,
-            }
+            if fallback_routing.target_type == "asterisk" and str(fallback_node).startswith("sip:"):
+                metadata.update({
+                    "extension": fallback_routing.extension,
+                    "context": fallback_routing.context,
+                    "trunk": fallback_routing.trunk,
+                    "caller_id": fallback_routing.caller_id
+                    or f'"{self.cfg.node_label or self.cfg.node_id}" <100>',
+                    "target_label": fallback_routing.target_label or fallback_id,
+                })
+            else:
+                metadata["routing"] = {
+                    "target_type": fallback_routing.target_type,
+                    "target_id": fallback_routing.target_id,
+                    "extension": fallback_routing.extension,
+                    "context": fallback_routing.context,
+                    "trunk": fallback_routing.trunk,
+                    "caller_id": fallback_routing.caller_id,
+                    "timeout": fallback_routing.timeout,
+                }
             metadata["fallback_from"] = call.call_id
 
         call_type = "sip" if fallback_routing and fallback_routing.target_type == "asterisk" else "voice"
