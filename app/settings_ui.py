@@ -487,7 +487,8 @@ p.muted{padding:4px 0}
           <p class="field-hint" style="margin-bottom:12px">
             Create dedicated desk-phone numbers here and optionally pin each one to a specific
             Simson node using <b>Route To Node ID</b>. Leave routing blank to let incoming calls
-            ring any available node in the same account.
+            ring any available node in the same account. Busy or no-answer routing is configured
+            in <b>Call Targets</b> with fallback target IDs.
           </p>
         </div>
       </div>
@@ -1143,14 +1144,24 @@ function targetForm(t, i) {
     </div>
     <div class="field-row" id="t${i}-ast-row"${!isAst?' style="display:none"':''}>
       <div class="field">
-        <label>Asterisk Extension</label>
+        <label>Asterisk Extension / Number</label>
         <input type="text" id="t${i}-ext" value="${esc(t.extension||'')}"
-               placeholder="101" oninput="targetField(${i},'extension',this.value)">
+               placeholder="101 or 919876543210" oninput="targetField(${i},'extension',this.value)">
+        <div class="field-hint">Internal extension, or an external/landline number when a trunk is set.</div>
       </div>
       <div class="field">
         <label>Context</label>
         <input type="text" id="t${i}-ctx" value="${esc(t.context||'')}"
                placeholder="from-simson" oninput="targetField(${i},'context',this.value)">
+      </div>
+    </div>
+    <div class="field-row" id="t${i}-trunk-row"${!isAst?' style="display:none"':''}>
+      <div class="field" style="width:100%">
+        <label>SIP/PSTN Trunk <span class="hint-tag">optional</span></label>
+        <input type="text" id="t${i}-trunk" value="${esc(t.trunk||'')}"
+               placeholder="provider-trunk"
+               oninput="targetField(${i},'trunk',this.value)">
+        <div class="field-hint">Set this to the PJSIP trunk name for landline/PSTN routing. Leave empty for an internal SIP extension.</div>
       </div>
     </div>
     <div class="field-row">
@@ -1165,6 +1176,15 @@ function targetForm(t, i) {
                min="5" max="300" oninput="targetField(${i},'timeout',parseInt(this.value)||30)">
       </div>
     </div>
+    <div class="field-row" style="flex-direction:column">
+      <div class="field" style="width:100%">
+        <label>Fallback Target IDs <span class="hint-tag">busy / no-answer</span></label>
+        <input type="text" id="t${i}-fallbacks" value="${esc((t.fallback_targets||[]).join(', '))}"
+               placeholder="front_desk, mobile_backup"
+               oninput="targetField(${i},'fallback_targets',splitTargetList(this.value))">
+        <div class="field-hint">Comma-separated target IDs to try in order if this target is busy, declined, or times out.</div>
+      </div>
+    </div>
     <div style="display:flex;justify-content:flex-end;margin-top:6px">
       <button type="button" class="btn-secondary btn"
               style="font-size:12px;padding:7px 14px"
@@ -1177,13 +1197,21 @@ function onTargetTypeChange(i, value) {
   _targets[i].type = value;
   const nodeRow = document.getElementById(`t${i}-node-row`);
   const astRow = document.getElementById(`t${i}-ast-row`);
+  const trunkRow = document.getElementById(`t${i}-trunk-row`);
   if (nodeRow) nodeRow.style.display = value === 'asterisk' ? 'none' : '';
   if (astRow) astRow.style.display = value === 'asterisk' ? '' : 'none';
+  if (trunkRow) trunkRow.style.display = value === 'asterisk' ? '' : 'none';
   // Update pill without full re-render
   const pill = document.querySelector(`#tc-${i} .target-type-pill`);
   if (pill) pill.textContent = value;
 }
 function targetField(i, key, value) { if (_targets[i]) _targets[i][key] = value; }
+function splitTargetList(value) {
+  return String(value || '')
+    .split(',')
+    .map(v => v.trim())
+    .filter(Boolean);
+}
 
 function collectTargetValues(i) {
   // Flush any in-flight input values back to _targets[i] before re-render
@@ -1191,12 +1219,14 @@ function collectTargetValues(i) {
   const fields = {
     id:`t${i}-id`, label:`t${i}-label`, icon:`t${i}-icon`,
     node_id:`t${i}-node`, extension:`t${i}-ext`, context:`t${i}-ctx`,
-    caller_id:`t${i}-cid`,
+    trunk:`t${i}-trunk`, caller_id:`t${i}-cid`,
   };
   for (const [key, elId] of Object.entries(fields)) {
     const el = document.getElementById(elId);
     if (el) _targets[i][key] = el.value;
   }
+  const fallbacks = document.getElementById(`t${i}-fallbacks`);
+  if (fallbacks) _targets[i].fallback_targets = splitTargetList(fallbacks.value);
   const to = document.getElementById(`t${i}-timeout`);
   if (to) _targets[i].timeout = parseInt(to.value) || 30;
   const ty = document.getElementById(`t${i}-type`);

@@ -10,10 +10,12 @@ import copy
 import json
 import logging
 import os
+import re
 
 logger = logging.getLogger("simson.settings")
 
 SETTINGS_FILE = "/data/settings.json"
+ASTERISK_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 # Canonical defaults — every key that the UI and Config class expect must
 # appear here so a missing or partial settings.json always yields a safe result.
@@ -161,6 +163,25 @@ def validate_settings(data: dict) -> list[str]:
             seen_ids.add(tid)
         if not str(target.get("label", "")).strip():
             errors.append(f"Call target #{idx}: label is required")
+        target_type = str(target.get("type", "node")).strip()
+        if target_type == "asterisk" and not str(target.get("extension", "")).strip():
+            errors.append(f"Call target #{idx}: Asterisk extension/number is required")
+        trunk = str(target.get("trunk", "")).strip()
+        if trunk and not ASTERISK_NAME_RE.match(trunk):
+            errors.append(
+                f"Call target #{idx}: trunk may only contain letters, numbers, dash, and underscore"
+            )
+        fallbacks = target.get("fallback_targets") or []
+        if not isinstance(fallbacks, list):
+            errors.append(f"Call target #{idx}: fallback target IDs must be a list")
+        else:
+            for fallback_id in fallbacks:
+                if not str(fallback_id).strip():
+                    errors.append(f"Call target #{idx}: fallback target IDs cannot be empty")
+                    break
+                if str(fallback_id).strip() == tid:
+                    errors.append(f"Call target #{idx}: fallback target cannot point to itself")
+                    break
         try:
             to = int(target.get("timeout", 30))
             if not 5 <= to <= 300:
