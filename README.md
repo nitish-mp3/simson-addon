@@ -1,5 +1,5 @@
 # Simson Call Relay — HAOS Addon
-
+..
 Connects your Home Assistant instance to the Simson VPS control plane for voice/intercom calls between HA instances and Asterisk endpoints.
 
 ## Installation
