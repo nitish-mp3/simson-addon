@@ -15,7 +15,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "3.8.3"
+ADDON_VERSION = "3.8.4"
 
 logger = logging.getLogger("simson.api")
 
@@ -153,15 +153,17 @@ class LocalAPI:
     async def handle_status(self, request: web.Request) -> web.Response:
         active = self.call_mgr.active_call
         vps_connected = self.wss_client.connected if self.wss_client else False
-        return web.json_response({
+        status = {
             "node_id": self.cfg.node_id,
             "account_id": self.cfg.account_id,
             "server_url": self.cfg.server_url,
             "vps_connected": vps_connected,
             "provisioned": bool(self.cfg.install_token),
             "active_call": _call_to_dict(active) if active else None,
-            "asterisk_connected": self.asterisk.connected if self.asterisk else False,
-        })
+        }
+        if self.asterisk:
+            status["asterisk_connected"] = self.asterisk.connected
+        return web.json_response(status)
 
     async def handle_provision(self, request: web.Request) -> web.Response:
         """Provision account + node on VPS from the ingress panel."""
@@ -862,12 +864,10 @@ class LocalAPI:
         sip_password = (self.cfg.sip_password or "").strip()
         sip_enabled = bool(self.cfg.sip_enabled)
 
-        # Production path: the VPS owns central SIP/WebRTC credentials. If the
-        # addon has no local SIP password, fetch the node/admin-scoped config so
-        # the browser can actually join the Asterisk ConfBridge.
-        remote_cfg = {}
-        if not sip_password or not sip_enabled:
-            remote_cfg = await self._fetch_vps_webrtc_config()
+        # Production path: the VPS owns central SIP/WebRTC credentials. Fetch it
+        # every time so stale legacy addon settings cannot override the working
+        # Asterisk media bridge.
+        remote_cfg = await self._fetch_vps_webrtc_config()
         if remote_cfg:
             remote_ice = remote_cfg.get("ice_servers")
             if isinstance(remote_ice, list) and remote_ice:
@@ -881,13 +881,13 @@ class LocalAPI:
                 remote_username = str(remote_sip.get("username") or "").strip()
                 remote_password = str(remote_sip.get("password") or "").strip()
 
-                if remote_ws_url and not sip_ws_url:
+                if remote_ws_url:
                     sip_ws_url = remote_ws_url
-                if remote_domain and not sip_domain:
+                if remote_domain:
                     sip_domain = remote_domain
-                if remote_username and (not sip_username or sip_username == "webrtc-pool"):
+                if remote_username:
                     sip_username = remote_username
-                if remote_password and not sip_password:
+                if remote_password:
                     sip_password = remote_password
                 if remote_enabled:
                     sip_enabled = True

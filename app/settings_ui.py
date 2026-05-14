@@ -327,138 +327,40 @@ p.muted{padding:4px 0}
     <!-- ── Settings tab ─────────────────────────────────────────── -->
     <div id="tab-settings" class="hidden">
 
-      <!-- Asterisk ------------------------------------------------ -->
-      <div class="section" id="section-asterisk">
+      <!-- Audio Bridge -------------------------------------------- -->
+      <div class="section" id="section-audio-bridge">
         <div class="section-head">
           <div class="section-head-left">
-            <h3>☎ Asterisk Integration</h3>
-            <span id="ast-section-badge" class="section-badge section-badge-off">Off</span>
+            <h3>☎ SIP Audio Bridge</h3>
+            <span class="section-badge section-badge-on">Automatic</span>
           </div>
-          <label class="switch" title="Enable Asterisk AMI">
-            <input type="checkbox" id="s-ast-enabled" onchange="onAstToggle()">
-            <span class="slider"></span>
-          </label>
         </div>
-        <div class="section-body collapsed" id="ast-body">
+        <div class="section-body">
           <div style="height:14px"></div>
-          <div class="field-row">
-            <div class="field">
-              <label>Host</label>
-              <input type="text" id="s-ast-host" placeholder="127.0.0.1">
-            </div>
-            <div class="field" style="max-width:130px">
-              <label>AMI Port</label>
-              <input type="number" id="s-ast-port" placeholder="5038" min="1" max="65535">
-            </div>
-          </div>
-          <div class="field-row">
-            <div class="field">
-              <label>AMI Username</label>
-              <input type="text" id="s-ast-user" placeholder="simson" autocomplete="off">
-            </div>
-            <div class="field">
-              <label>AMI Secret</label>
-              <input type="password" id="s-ast-secret" autocomplete="new-password">
-            </div>
-          </div>
-          <div class="field-row">
-            <div class="field">
-              <label>Dialplan Context</label>
-              <input type="text" id="s-ast-context" placeholder="from-simson">
-            </div>
-            <div class="field" style="max-width:160px">
-              <label>Extension Prefix</label>
-              <input type="text" id="s-ast-prefix" placeholder="9">
-            </div>
-          </div>
-          <div class="checkbox-row">
-            <input type="checkbox" id="s-ast-autoconf">
-            <label for="s-ast-autoconf">Auto-configure Asterisk on startup
-              <span style="color:var(--text3);font-size:11px">(writes conf files, reloads modules)</span>
-            </label>
+          <p class="field-hint" style="margin-bottom:10px">
+            Browser ↔ SIP phone audio is handled by the VPS Asterisk bridge.
+            This addon now fetches SIP WebSocket credentials automatically, so
+            you do not need to configure local AMI, TURN, or browser SIP secrets here.
+          </p>
+          <div class="alert alert-info" style="margin-top:8px">
+            Keep SIP phones/ATAs on G.711 only: PCMU / G.711u and PCMA / G.711a.
+            Do not enable Opus, video, SRTP, or TLS on regular desk phones unless
+            the VPS trunk is explicitly configured for it.
           </div>
         </div>
       </div>
 
-      <!-- TURN ---------------------------------------------------- -->
-      <div class="section" id="section-turn">
-        <div class="section-head">
-          <div class="section-head-left">
-            <h3>🔄 TURN Relay</h3>
-            <span id="turn-section-badge" class="section-badge section-badge-off">Off</span>
-          </div>
-          <label class="switch" title="Enable TURN relay">
-            <input type="checkbox" id="s-turn-enabled" onchange="onTurnToggle()">
-            <span class="slider"></span>
-          </label>
-        </div>
-        <div class="section-body collapsed" id="turn-body">
+      <!-- SIP Phone Endpoints ------------------------------------- -->
+      <div class="section">
+        <div class="section-head"><h3 class="section-head-left">☎ SIP Phone Endpoints</h3></div>
+        <div class="section-body" id="sip-endpoints-body">
           <div style="height:14px"></div>
           <p class="field-hint" style="margin-bottom:12px">
-            Improves audio reliability behind symmetric NAT. Requires a TURN server
-            such as coturn.
+            Create a SIP account for each desk phone, ATA, or SIP landline device.
+            Put this node's <b>Node ID</b> in <b>Route To Node ID</b> when calls to
+            that extension should ring this HAOS addon directly. Leave it blank only
+            when any available node in the account may answer.
           </p>
-          <div class="field-row" style="flex-direction:column">
-            <div class="field" style="width:100%">
-              <label>TURN URL</label>
-              <input type="text" id="s-turn-url"
-                     placeholder="turn:your-turn-server.example.com:3478">
-            </div>
-          </div>
-          <div class="field-row">
-            <div class="field">
-              <label>Username</label>
-              <input type="text" id="s-turn-user" placeholder="simson" autocomplete="off">
-            </div>
-            <div class="field">
-              <label>Credential</label>
-              <input type="password" id="s-turn-cred" autocomplete="new-password">
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- SIP-over-WebSocket -------------------------------------- -->
-      <div class="section" id="section-sip">
-        <div class="section-head">
-          <div class="section-head-left">
-            <h3>🎤 SIP-over-WebSocket</h3>
-            <span id="sip-section-badge" class="section-badge section-badge-off">Off</span>
-          </div>
-          <label class="switch" title="Enable SIP-over-WebSocket">
-            <input type="checkbox" id="s-sip-enabled" onchange="onSipToggle()">
-            <span class="slider"></span>
-          </label>
-        </div>
-        <div class="section-body collapsed" id="sip-body">
-          <div style="height:14px"></div>
-          <p class="field-hint" style="margin-bottom:12px">
-            Browser-based SIP audio via Asterisk ConfBridge. Requires
-            Asterisk &gt;= 16 with the PJSIP WebSocket transport enabled.
-          </p>
-          <div class="field-row" style="flex-direction:column">
-            <div class="field" style="width:100%">
-              <label>WebSocket URL</label>
-              <input type="text" id="s-sip-url"
-                     placeholder="ws://asterisk-host:8088/ws">
-            </div>
-          </div>
-          <div class="field-row">
-            <div class="field">
-              <label>SIP Username</label>
-              <input type="text" id="s-sip-user" placeholder="webrtc-pool" autocomplete="off">
-            </div>
-            <div class="field">
-              <label>SIP Password</label>
-              <input type="password" id="s-sip-pass" autocomplete="new-password">
-            </div>
-          </div>
-          <div class="field-row" style="flex-direction:column">
-            <div class="field" style="width:100%">
-              <label>SIP Domain <span class="hint-tag">— leave empty to use server hostname</span></label>
-              <input type="text" id="s-sip-domain" placeholder="asterisk-host.example.com">
-            </div>
-          </div>
         </div>
       </div>
 
@@ -479,44 +381,10 @@ p.muted{padding:4px 0}
         </div>
       </div>
 
-      <!-- Port ---------------------------------------------------- -->
-      <div class="section">
-        <div class="section-head"><h3 class="section-head-left">☎ SIP Phone Endpoints</h3></div>
-        <div class="section-body" id="sip-endpoints-body">
-          <div style="height:14px"></div>
-          <p class="field-hint" style="margin-bottom:12px">
-            Create dedicated desk-phone numbers here and optionally pin each one to a specific
-            Simson node using <b>Route To Node ID</b>. Leave routing blank to let incoming calls
-            ring any available node in the same account. Busy or no-answer routing is configured
-            in <b>Call Targets</b> with fallback target IDs.
-          </p>
-        </div>
-      </div>
-
-      <!-- Port ---------------------------------------------------- -->
-      <div class="section">
-        <div class="section-head"><h3 class="section-head-left">🔌 Local API Port</h3></div>
-        <div class="section-body">
-          <div style="height:14px"></div>
-          <div class="field-row">
-            <div class="field" style="max-width:160px">
-              <label>Port <span class="hint-tag">default: 8799</span></label>
-              <input type="number" id="s-port" min="1024" max="65535" placeholder="8799">
-            </div>
-            <div class="field" style="justify-content:flex-end;padding-top:20px">
-              <span class="field-hint">
-                Changing the port requires an addon restart.<br>
-                Must match the ingress port in config.json.
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <!-- Errors + Save bar --------------------------------------- -->
       <div id="save-errors-box" class="save-errors hidden"></div>
       <div id="save-restart-note" class="save-restart-note hidden">
-        ⚠ Some changes (Asterisk connection, API port) will take full effect after restarting the addon.
+        ⚠ Some changes may take full effect after restarting the addon.
       </div>
 
       <div class="save-bar">
@@ -554,6 +422,7 @@ let _targets = [];            // working copy of call_targets for the form
 let _currentTab = 'overview';
 let _settingsDirty = false;   // warn if navigate away with unsaved changes
 let _pollingTimer = null;
+let _loadedSettings = {};     // preserves hidden infrastructure defaults
 
 // ─── Bootstrap ──────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', init);
@@ -647,33 +516,7 @@ async function loadSettings() {
 }
 
 function applySettingsToForm(s) {
-  const ast = s.asterisk || {};
-  setCheck('s-ast-enabled', ast.enabled);
-  setVal('s-ast-host', ast.host ?? '127.0.0.1');
-  setVal('s-ast-port', ast.ami_port ?? 5038);
-  setVal('s-ast-user', ast.ami_user ?? 'simson');
-  setVal('s-ast-secret', ast.ami_secret ?? '');
-  setVal('s-ast-context', ast.context ?? 'from-simson');
-  setVal('s-ast-prefix', ast.extension_prefix ?? '9');
-  setCheck('s-ast-autoconf', ast.auto_configure);
-  setSectionEnabled('ast-body', 'ast-section-badge', ast.enabled);
-
-  const wrtc = s.webrtc || {};
-  setCheck('s-turn-enabled', wrtc.turn_enabled);
-  setVal('s-turn-url', wrtc.turn_url ?? '');
-  setVal('s-turn-user', wrtc.turn_username ?? 'simson');
-  setVal('s-turn-cred', wrtc.turn_credential ?? '');
-  setSectionEnabled('turn-body', 'turn-section-badge', wrtc.turn_enabled);
-
-  setCheck('s-sip-enabled', wrtc.sip_enabled);
-  setVal('s-sip-url', wrtc.sip_ws_url ?? '');
-  setVal('s-sip-user', wrtc.sip_username ?? 'webrtc-pool');
-  setVal('s-sip-pass', wrtc.sip_password ?? '');
-  setVal('s-sip-domain', wrtc.sip_domain ?? '');
-  setSectionEnabled('sip-body', 'sip-section-badge', wrtc.sip_enabled);
-
-  setVal('s-port', s.local_api_port ?? 8799);
-
+  _loadedSettings = JSON.parse(JSON.stringify(s || {}));
   _targets = JSON.parse(JSON.stringify(s.call_targets || []));
   renderTargets();
   _settingsDirty = false;
@@ -681,28 +524,29 @@ function applySettingsToForm(s) {
 }
 
 function collectSettings() {
+  const previousPort = parseInt(_loadedSettings.local_api_port);
   return {
-    local_api_port: parseInt(getVal('s-port')) || 8799,
+    local_api_port: Number.isFinite(previousPort) ? previousPort : 8799,
     asterisk: {
-      enabled: getCheck('s-ast-enabled'),
-      host: getVal('s-ast-host') || '127.0.0.1',
-      ami_port: parseInt(getVal('s-ast-port')) || 5038,
-      ami_user: getVal('s-ast-user') || 'simson',
-      ami_secret: getVal('s-ast-secret'),
-      context: getVal('s-ast-context') || 'from-simson',
-      extension_prefix: getVal('s-ast-prefix') || '9',
-      auto_configure: getCheck('s-ast-autoconf'),
+      enabled: false,
+      host: '127.0.0.1',
+      ami_port: 5038,
+      ami_user: 'simson',
+      ami_secret: '',
+      context: 'from-simson',
+      extension_prefix: '9',
+      auto_configure: false,
     },
     webrtc: {
-      turn_enabled: getCheck('s-turn-enabled'),
-      turn_url: getVal('s-turn-url'),
-      turn_username: getVal('s-turn-user') || 'simson',
-      turn_credential: getVal('s-turn-cred'),
-      sip_enabled: getCheck('s-sip-enabled'),
-      sip_ws_url: getVal('s-sip-url'),
-      sip_username: getVal('s-sip-user') || 'webrtc-pool',
-      sip_password: getVal('s-sip-pass'),
-      sip_domain: getVal('s-sip-domain'),
+      turn_enabled: false,
+      turn_url: '',
+      turn_username: 'simson',
+      turn_credential: '',
+      sip_enabled: false,
+      sip_ws_url: '',
+      sip_username: 'webrtc-pool',
+      sip_password: '',
+      sip_domain: '',
     },
     call_targets: collectTargets(),
   };
@@ -813,6 +657,12 @@ function renderSIPEndpoints() {
 
   const html = `
     <div style="margin-bottom:14px">
+      <div class="alert alert-info" style="margin-top:0;margin-bottom:12px">
+        Phone/ATA setup: SIP server/domain is your VPS hostname, port 5060,
+        transport TCP or UDP, username/auth username from the endpoint below,
+        and codecs PCMU/G.711u plus PCMA/G.711a only. For an analog landline
+        phone, put these same SIP settings in the ATA box.
+      </div>
       <button class="btn-sm" onclick="showCreateSIPForm()" style="margin-bottom:12px">
         + Add SIP Phone
       </button>
@@ -822,7 +672,7 @@ function renderSIPEndpoints() {
           <div class="field" style="width:100%">
             <label>Extension</label>
             <input type="text" id="sip-ext" placeholder="1001" autocomplete="off">
-            <div class="field-hint">Dial number for this phone (e.g., 1001, 1002)</div>
+            <div class="field-hint">Dial number for this phone. Use the same value as Username unless your phone requires a separate auth ID.</div>
           </div>
         </div>
         <div class="field-row">
@@ -845,7 +695,7 @@ function renderSIPEndpoints() {
           <div class="field" style="width:100%">
             <label>Route To Node ID <span class="hint-tag">— optional dedicated destination</span></label>
             <input type="text" id="sip-route" placeholder="living_room">
-            <div class="field-hint">If set, incoming calls for this number ring this node first.</div>
+            <div class="field-hint">Set this to the Node ID shown on Overview to make this SIP/landline device ring that HAOS addon.</div>
           </div>
         </div>
         <div class="checkbox-row">
@@ -1043,26 +893,6 @@ async function deleteSIPEndpoint(id, idx) {
     }
   } catch (e) {
     alert('Delete error: ' + e.message);
-  }
-}
-
-// ─── Section toggles ────────────────────────────────────────────────────────
-function onAstToggle() {
-  setSectionEnabled('ast-body', 'ast-section-badge', getCheck('s-ast-enabled'));
-}
-function onTurnToggle() {
-  setSectionEnabled('turn-body', 'turn-section-badge', getCheck('s-turn-enabled'));
-}
-function onSipToggle() {
-  setSectionEnabled('sip-body', 'sip-section-badge', getCheck('s-sip-enabled'));
-}
-function setSectionEnabled(bodyId, badgeId, on) {
-  const body = document.getElementById(bodyId);
-  const badge = document.getElementById(badgeId);
-  if (body) body.classList.toggle('collapsed', !on);
-  if (badge) {
-    badge.textContent = on ? 'On' : 'Off';
-    badge.className = 'section-badge ' + (on ? 'section-badge-on' : 'section-badge-off');
   }
 }
 
