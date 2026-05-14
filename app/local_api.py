@@ -5,7 +5,7 @@ import copy
 import json
 import logging
 from urllib.parse import urlsplit, urlunsplit
-from aiohttp import web
+from aiohttp import ClientSession, ClientTimeout, web
 
 from call_manager import CallManager, CallState, RoutingIntent
 from config import Config
@@ -15,7 +15,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "3.8.0"
+ADDON_VERSION = "3.8.3"
 
 logger = logging.getLogger("simson.api")
 
@@ -860,6 +860,37 @@ class LocalAPI:
         sip_domain = (self.cfg.sip_domain or "").strip()
         sip_username = (self.cfg.sip_username or "webrtc-pool").strip() or "webrtc-pool"
         sip_password = (self.cfg.sip_password or "").strip()
+        sip_enabled = bool(self.cfg.sip_enabled)
+
+        # Production path: the VPS owns central SIP/WebRTC credentials. If the
+        # addon has no local SIP password, fetch the node/admin-scoped config so
+        # the browser can actually join the Asterisk ConfBridge.
+        remote_cfg = {}
+        if not sip_password or not sip_enabled:
+            remote_cfg = await self._fetch_vps_webrtc_config()
+        if remote_cfg:
+            remote_ice = remote_cfg.get("ice_servers")
+            if isinstance(remote_ice, list) and remote_ice:
+                ice_servers = remote_ice
+
+            remote_sip = remote_cfg.get("sip") or {}
+            if isinstance(remote_sip, dict):
+                remote_enabled = bool(remote_sip.get("enabled"))
+                remote_ws_url = str(remote_sip.get("ws_url") or "").strip()
+                remote_domain = str(remote_sip.get("domain") or "").strip()
+                remote_username = str(remote_sip.get("username") or "").strip()
+                remote_password = str(remote_sip.get("password") or "").strip()
+
+                if remote_ws_url and not sip_ws_url:
+                    sip_ws_url = remote_ws_url
+                if remote_domain and not sip_domain:
+                    sip_domain = remote_domain
+                if remote_username and (not sip_username or sip_username == "webrtc-pool"):
+                    sip_username = remote_username
+                if remote_password and not sip_password:
+                    sip_password = remote_password
+                if remote_enabled:
+                    sip_enabled = True
 
         # If SIP fields are partially configured, derive missing WS URL/domain
         # from server_url (e.g. wss://host/ws -> wss://host/sip/ws).
@@ -880,7 +911,7 @@ class LocalAPI:
 
         sip_ready = bool(sip_ws_url and sip_username and sip_password and sip_domain)
         sip_config: dict = {
-            "enabled": bool(self.cfg.sip_enabled and sip_ready),
+            "enabled": bool(sip_enabled and sip_ready),
             "ws_url": sip_ws_url,
             "username": sip_username,
             "password": sip_password,
@@ -891,6 +922,52 @@ class LocalAPI:
             "ice_servers": ice_servers,
             "sip": sip_config,
         })
+
+    async def _fetch_vps_webrtc_config(self) -> dict:
+        """Fetch central WebRTC/SIP config from VPS.
+
+        Prefer admin auth when configured, but also support node-scoped auth so
+        deployed addons do not need users to manually duplicate SIP passwords.
+        """
+        if not self.cfg.server_url:
+            return {}
+        base = self._ws_to_http_url(self.cfg.server_url)
+        if not base:
+            return {}
+
+        timeout = ClientTimeout(total=5)
+        async with ClientSession(timeout=timeout) as session:
+            # Existing deployments: admin token can read the canonical config.
+            if self.cfg.admin_token:
+                try:
+                    headers = {"Authorization": f"Bearer {self.cfg.admin_token}"}
+                    async with session.get(f"{base}/admin/webrtc-config", headers=headers) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if isinstance(data, dict):
+                                return data
+                        logger.debug("VPS admin webrtc-config returned HTTP %s", resp.status)
+                except Exception as exc:
+                    logger.debug("VPS admin webrtc-config fetch failed: %s", exc)
+
+            # Production path: node install token authenticates this addon only.
+            if self.cfg.account_id and self.cfg.node_id and self.cfg.install_token:
+                try:
+                    headers = {
+                        "X-Simson-Account-ID": self.cfg.account_id,
+                        "X-Simson-Node-ID": self.cfg.node_id,
+                        "X-Simson-Install-Token": self.cfg.install_token,
+                    }
+                    async with session.get(f"{base}/node/webrtc-config", headers=headers) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if isinstance(data, dict):
+                                return data
+                        logger.debug("VPS node webrtc-config returned HTTP %s", resp.status)
+                except Exception as exc:
+                    logger.debug("VPS node webrtc-config fetch failed: %s", exc)
+
+        return {}
 
     @staticmethod
     def _normalize_sip_endpoints_payload(payload) -> list:
