@@ -18,6 +18,19 @@ from target_directory import TargetDirectory
 ADDON_VERSION = "3.8.5"
 DEFAULT_PSTN_TRUNK = "7009"
 
+
+def _normalize_pstn_digits(digits: str, trunk: str) -> str:
+    """Normalize numbers for the current GSM gateway trunk.
+
+    Synway's GSM port dials plain digits; for Indian mobile callbacks, sending
+    91XXXXXXXXXX without a leading + can be treated as an invalid 12-digit
+    domestic number by the SIM.  For trunk 7009, dial the local 10-digit mobile
+    number instead.
+    """
+    if str(trunk).strip() == DEFAULT_PSTN_TRUNK and len(digits) == 12 and digits.startswith("91"):
+        return digits[2:]
+    return digits
+
 logger = logging.getLogger("simson.api")
 
 
@@ -564,6 +577,7 @@ class LocalAPI:
             digits = "".join(ch for ch in str(phone_number) if ch.isdigit())
             trunk = "".join(ch for ch in str(trunk or DEFAULT_PSTN_TRUNK).strip()
                             if ch.isalnum() or ch in ("-", "_"))
+            dial_digits = _normalize_pstn_digits(digits, trunk)
             if not (2 <= len(digits) <= 15):
                 return web.json_response(
                     {"error": "phone_number must contain 2-15 digits"}, status=400
@@ -572,16 +586,16 @@ class LocalAPI:
                 return web.json_response({"error": "trunk is required"}, status=400)
             routing = RoutingIntent(
                 target_type="asterisk",
-                target_id=f"pstn_{trunk}_{digits}",
+                target_id=f"pstn_{trunk}_{dial_digits}",
                 target_label=body.get("target_label", "") or f"+{digits}",
-                extension=digits,
+                extension=dial_digits,
                 context=self.cfg.asterisk_context,
                 trunk=trunk,
                 caller_id=body.get("caller_id", ""),
                 timeout=int(body.get("timeout", 60) or 60),
             )
             call_type = "sip"
-            to_node = f"sip:{digits}"
+            to_node = f"sip:{dial_digits}"
 
         # If target_id is given, resolve from directory.
         elif target_id and self.target_dir:
@@ -594,11 +608,11 @@ class LocalAPI:
                     inferred_trunk = ""
                     digits = "".join(ch for ch in str(ext) if ch.isdigit())
                     if str(ext).strip().startswith("+") or len(digits) >= 7:
-                        ext = digits
                         inferred_trunk = "".join(
                             ch for ch in str(trunk or DEFAULT_PSTN_TRUNK).strip()
                             if ch.isalnum() or ch in ("-", "_")
                         )
+                        ext = _normalize_pstn_digits(digits, inferred_trunk)
                     routing = RoutingIntent(
                         target_type="asterisk",
                         target_id=target_id,
