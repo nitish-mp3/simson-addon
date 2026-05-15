@@ -591,12 +591,21 @@ class LocalAPI:
                 # but aren't stored in the directory.  Build a synthetic routing.
                 if target_id.startswith("asterisk_"):
                     ext = target_id[len("asterisk_"):]
+                    inferred_trunk = ""
+                    digits = "".join(ch for ch in str(ext) if ch.isdigit())
+                    if str(ext).strip().startswith("+") or len(digits) >= 7:
+                        ext = digits
+                        inferred_trunk = "".join(
+                            ch for ch in str(trunk or DEFAULT_PSTN_TRUNK).strip()
+                            if ch.isalnum() or ch in ("-", "_")
+                        )
                     routing = RoutingIntent(
                         target_type="asterisk",
                         target_id=target_id,
                         target_label=ext,
                         extension=ext,
                         context=self.cfg.asterisk_context,
+                        trunk=inferred_trunk,
                         timeout=60,
                     )
                 else:
