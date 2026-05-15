@@ -55,6 +55,38 @@ Use this when a desk phone, SIP phone, or analog landline phone through an ATA s
 
 For an analog landline handset, configure these SIP settings on the ATA device, then plug the handset into the ATA's phone port.
 
+## Route PSTN/GSM Gateways to HAOS
+
+Use one dedicated SIP endpoint per gateway. Do not reuse a desk-phone endpoint for a gateway.
+
+Recommended endpoint layout:
+
+- `7001` - HT841 / landline FXO gateway, `Route To Node ID = office2`
+- `7002` - SMG4008 / GSM gateway, `Route To Node ID = office2`
+- `7009` - SMG4008 active GSM port, `Route To Node ID = office2`
+
+Gateway SIP registration:
+
+- SIP server/domain: `simson-vps.niti.life`
+- Port: `5060`
+- Transport: TCP or UDP
+- SIP/Auth user: the gateway endpoint username, for example `7001`
+- Password: the gateway endpoint password
+- Codecs: PCMU/G.711u and PCMA/G.711a only
+- DTMF: RFC2833/RFC4733
+
+Inbound outside-call routing:
+
+- Configure the gateway's inbound PSTN/GSM route to send calls to the registered gateway endpoint number, for example `7009`.
+- Simson accepts that gateway number in a locked inbound context and uses the endpoint's `Route To Node ID` to ring the right HAOS addon.
+
+Outbound HAOS-to-PSTN/GSM routing:
+
+- Use the card's **Phone via Gateway** dial row and enter a number such as `+9192387324`; the leading `+` is accepted and sent as digits.
+- Use trunk `7009` for the current GSM gateway, or create a Call Target with type `asterisk` for saved speed-dials.
+- Put the gateway endpoint extension in **SIP/PSTN Trunk**, for example `7001` for landline, `7002`, or `7009` for GSM.
+- The VPS dials `PJSIP/<outside-number>@<gateway-endpoint>` and bridges the answered call back to the HAOS browser card.
+
 ## Call from HAOS to a SIP Phone or Landline
 
 To call an internal SIP phone from the HA card, dial its extension or create a **Call Target**:

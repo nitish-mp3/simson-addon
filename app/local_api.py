@@ -15,7 +15,8 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "3.8.4"
+ADDON_VERSION = "3.8.5"
+DEFAULT_PSTN_TRUNK = "7009"
 
 logger = logging.getLogger("simson.api")
 
@@ -547,6 +548,8 @@ class LocalAPI:
             return web.json_response({"error": "invalid json"}, status=400)
 
         target_id = body.get("target_id", "")
+        phone_number = body.get("phone_number", "")
+        trunk = body.get("trunk", "")
         to_node = body.get("target_node_id", "") or body.get("to_node_id", "")
         call_type = body.get("call_type", "voice")
         target_user_id = body.get("target_user_id", "")
@@ -555,8 +558,33 @@ class LocalAPI:
 
         routing = None
 
+        # Direct PSTN/GSM dial: the card can pass a one-off number and trunk
+        # instead of requiring a saved target for every outside phone number.
+        if phone_number:
+            digits = "".join(ch for ch in str(phone_number) if ch.isdigit())
+            trunk = "".join(ch for ch in str(trunk or DEFAULT_PSTN_TRUNK).strip()
+                            if ch.isalnum() or ch in ("-", "_"))
+            if not (2 <= len(digits) <= 15):
+                return web.json_response(
+                    {"error": "phone_number must contain 2-15 digits"}, status=400
+                )
+            if not trunk:
+                return web.json_response({"error": "trunk is required"}, status=400)
+            routing = RoutingIntent(
+                target_type="asterisk",
+                target_id=f"pstn_{trunk}_{digits}",
+                target_label=body.get("target_label", "") or f"+{digits}",
+                extension=digits,
+                context=self.cfg.asterisk_context,
+                trunk=trunk,
+                caller_id=body.get("caller_id", ""),
+                timeout=int(body.get("timeout", 60) or 60),
+            )
+            call_type = "sip"
+            to_node = f"sip:{digits}"
+
         # If target_id is given, resolve from directory.
-        if target_id and self.target_dir:
+        elif target_id and self.target_dir:
             routing = self.target_dir.resolve_routing(target_id)
             if not routing:
                 # Auto-discovered Asterisk targets have id format "asterisk_{ext}"
@@ -577,6 +605,8 @@ class LocalAPI:
             if routing.target_type == "asterisk":
                 call_type = "sip"
                 ext = (routing.extension or "").strip()
+                if routing.trunk:
+                    ext = "".join(ch for ch in ext if ch.isdigit())
                 if ext:
                     # Central VPS SIP path: route through Asterisk ConfBridge so
                     # the browser card joins the same audio room as the SIP phone.
