@@ -468,6 +468,7 @@ class SimsonAddon:
         if status == "failed" and call.direction == "outgoing":
             reason_msg = {
                 "phone_unavailable": "SIP phone is not registered. Check the phone's SIP account settings.",
+                "gateway_unavailable": "Gateway call failed. Check the Synway route, SIM/port state, and enabled SIP codecs.",
                 "originate_failed":  "Could not reach the SIP server. Check your Asterisk/AMI configuration.",
                 "busy":              "The phone is busy.",
                 "no_answer":         "No answer.",
