@@ -376,10 +376,11 @@ class SimsonAddon:
 
         # Create a persistent notification so the user sees the call even
         # when the Lovelace card is not visible.
+        target_suffix = f" for {target_user_name}" if target_user_name else ""
         await self.ha.create_notification(
             notification_id=f"simson_call_{call_id[:12]}",
             title="Incoming Call",
-            message=f"📞 {from_label or from_node} is calling ({call_type})",
+            message=f"📞 {from_label or from_node} is calling{target_suffix} ({call_type})",
         )
 
         # Push to SSE so the Lovelace card shows incoming call immediately.

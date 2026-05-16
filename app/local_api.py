@@ -9,13 +9,13 @@ from aiohttp import ClientSession, ClientTimeout, web
 
 from call_manager import CallManager, CallState, RoutingIntent
 from config import Config
-from protocol import make_call_request, make_call_accept, make_call_reject, make_call_end, make_webrtc_signal
+from protocol import make_call_request, make_call_accept, make_call_reject, make_call_end, make_call_transfer, make_webrtc_signal
 from provisioner import auto_provision, clear_saved_credentials
 from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "3.8.5"
+ADDON_VERSION = "3.8.9"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -74,6 +74,7 @@ class LocalAPI:
         self.app.router.add_post("/api/answer", self.handle_answer)
         self.app.router.add_post("/api/reject", self.handle_reject)
         self.app.router.add_post("/api/hangup", self.handle_hangup)
+        self.app.router.add_post("/api/transfer", self.handle_transfer)
         self.app.router.add_get("/api/health", self.handle_health)
         self.app.router.add_get("/api/targets", self.handle_targets)
         self.app.router.add_post("/api/provision", self.handle_provision)
@@ -802,6 +803,55 @@ class LocalAPI:
 
         await self.call_mgr.end_call(call_id, "hangup")
         return web.json_response({"call_id": call_id, "status": "ended"})
+
+    async def handle_transfer(self, request: web.Request) -> web.Response:
+        """Transfer an active SIP/gateway bridge call to another node/user."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+
+        call_id = body.get("call_id", "")
+        target_node_id = str(body.get("target_node_id", "")).strip()
+        target_user_id = str(body.get("target_user_id", "")).strip()
+        target_user_name = str(body.get("target_user_name", "")).strip()
+
+        if not call_id:
+            active = self.call_mgr.active_call
+            if active:
+                call_id = active.call_id
+            else:
+                return web.json_response({"error": "no active call"}, status=404)
+        if not target_node_id:
+            return web.json_response({"error": "target_node_id is required"}, status=400)
+
+        call = self.call_mgr.get(call_id)
+        if not call or call.state != CallState.ACTIVE:
+            return web.json_response({"error": "call not found or not active"}, status=404)
+        if call.call_type != "sip" and not call.metadata.get("sip_bridge_id"):
+            return web.json_response(
+                {"error": "only active SIP/gateway calls can be transferred"},
+                status=400,
+            )
+
+        msg = make_call_transfer(
+            call_id,
+            self.cfg.node_id,
+            target_node_id,
+            target_user_id=target_user_id,
+            target_user_name=target_user_name,
+        )
+        try:
+            await self.send_fn(msg)
+        except Exception as e:
+            return web.json_response({"error": f"send failed: {e}"}, status=502)
+
+        return web.json_response({
+            "call_id": call_id,
+            "status": "transfer_requested",
+            "target_node_id": target_node_id,
+            "target_user_id": target_user_id,
+        })
 
     async def handle_targets(self, request: web.Request) -> web.Response:
         """Return available call targets from the target directory.

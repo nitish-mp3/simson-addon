@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 
 PROTOCOL_VERSION = "1.0.0"
-ADDON_VERSION = "3.8.5"
+ADDON_VERSION = "3.8.9"
 
 # Message types
 TYPE_HELLO = "hello"
@@ -21,6 +21,7 @@ TYPE_CALL_INVITE = "call.invite"
 TYPE_CALL_ACCEPT = "call.accept"
 TYPE_CALL_REJECT = "call.reject"
 TYPE_CALL_END = "call.end"
+TYPE_CALL_TRANSFER = "call.transfer"
 TYPE_CALL_STATUS = "call.status"
 TYPE_WEBRTC_SIGNAL = "webrtc.signal"
 TYPE_USERS_UPDATE = "users.update"
@@ -128,6 +129,22 @@ def make_call_end(call_id: str, node_id: str,
         "node_id": node_id,
         "reason": reason,
     })
+
+
+def make_call_transfer(call_id: str, from_node: str, target_node: str,
+                       target_user_id: str = "",
+                       target_user_name: str = "") -> dict:
+    """Create a call transfer request for active SIP/gateway bridge calls."""
+    payload = {
+        "call_id": call_id,
+        "from_node_id": from_node,
+        "target_node_id": target_node,
+    }
+    if target_user_id:
+        payload["target_user_id"] = target_user_id
+    if target_user_name:
+        payload["target_user_name"] = target_user_name
+    return make_envelope(TYPE_CALL_TRANSFER, payload)
 
 
 def make_webrtc_signal(call_id: str, from_node: str, to_node: str,

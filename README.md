@@ -87,6 +87,12 @@ Outbound HAOS-to-PSTN/GSM routing:
 - Put the gateway endpoint extension in **SIP/PSTN Trunk**, for example `7001` for landline, `7002`, or `7009` for GSM.
 - The VPS dials `PJSIP/<outside-number>@<gateway-endpoint>` and bridges the answered call back to the HAOS browser card.
 
+Transfer while a gateway call is active:
+
+- Use **Transfer Call** on the card, enter another HAOS node ID, and optionally choose a named user after pressing **Users**.
+- The VPS invites the new node into the same SIP bridge and only dismisses the original browser leg after the target answers.
+- If the transfer target is busy or offline, the existing call remains active on the original card.
+
 ## Call from HAOS to a SIP Phone or Landline
 
 To call an internal SIP phone from the HA card, dial its extension or create a **Call Target**:
@@ -115,3 +121,4 @@ The addon exposes a local HTTP API for the HA integration:
 - `POST /api/answer` - Answer a call
 - `POST /api/reject` - Reject a call
 - `POST /api/hangup` - Hang up a call
+- `POST /api/transfer` - Transfer an active SIP/PSTN/GSM bridge call to another node or specific HA user
