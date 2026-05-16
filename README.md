@@ -1,5 +1,5 @@
 # Simson Call Relay - HAOS Addon
-
+..
 Connects Home Assistant to the Simson VPS for browser calls, SIP desk phones, ATA-backed landline phones, and routed call targets.
 
 ## Working Audio Baseline
