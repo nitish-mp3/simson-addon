@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 
 PROTOCOL_VERSION = "1.0.0"
-ADDON_VERSION = "3.9.0"
+ADDON_VERSION = "3.9.1"
 
 # Message types
 TYPE_HELLO = "hello"

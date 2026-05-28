@@ -186,7 +186,17 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,
 .mode-offline{background:#b71c1c33;color:#ef9a9a;border-color:#f4433633}
 .live-call{padding:10px 12px;background:#01579b18;border:1px solid #0288d133;
   border-radius:var(--radius-sm);font-size:12px;color:#90caf9;margin-top:10px}
+.quick-route{background:linear-gradient(135deg,#01579b20,#1b5e2018);
+  border:1px solid #29b6f633;border-radius:var(--radius);padding:14px;margin:14px 0}
+.quick-route-title{font-size:13px;font-weight:800;color:var(--text);margin-bottom:4px}
+.quick-route-sub{font-size:11px;color:var(--text3);line-height:1.45;margin-bottom:12px}
+.quick-route-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:12px;flex-wrap:wrap}
+.route-help{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+.route-help-card{padding:10px;background:var(--surface2);border:1px solid var(--border);
+  border-radius:var(--radius-sm);font-size:11px;color:var(--text3);line-height:1.45}
+.route-help-card b{display:block;color:var(--text2);font-size:12px;margin-bottom:3px}
 @media(max-width:560px){.routing-grid{grid-template-columns:1fr}.route-row{align-items:flex-start;flex-direction:column}.route-actions{width:100%;flex-wrap:wrap}}
+@media(max-width:560px){.route-help{grid-template-columns:1fr}}
 /* ── Save bar ───────────────────────────────────────────────────────── */
 .save-bar{background:var(--surface);border:1px solid var(--border);
           border-radius:var(--radius);padding:16px 18px;
@@ -388,17 +398,22 @@ p.muted{padding:4px 0}
       <div class="section">
         <div class="section-head" style="cursor:default">
           <div class="section-head-left">
-            <h3>🧭 Site Routing & Availability</h3>
+            <h3>🧭 Call Routing Control</h3>
             <span id="routing-mode-badge" class="section-badge section-badge-on">Available</span>
           </div>
           <button class="btn-sm" onclick="loadRoutingBoard()">Refresh</button>
         </div>
         <div class="section-body">
+          <div class="route-help">
+            <div class="route-help-card"><b>1. Pick who rings first</b>Add one or more targets below. For normal sites, use the quick builder.</div>
+            <div class="route-help-card"><b>2. Add fallbacks</b>Each target can try another target if busy, offline, rejected, or not answered.</div>
+            <div class="route-help-card"><b>3. Mark availability</b>Busy/offline targets are skipped when the skip option is enabled.</div>
+          </div>
           <div class="routing-grid">
             <div class="field">
-              <label>Routing Strategy</label>
+              <label>Routing Mode</label>
               <select id="routing-strategy" onchange="markSettingsDirty()">
-                <option value="priority">Priority order</option>
+                <option value="priority">Try targets in the fallback order</option>
               </select>
               <div class="field-hint">Calls follow each target's fallback list in order, skipping busy/offline targets when enabled.</div>
             </div>
@@ -446,15 +461,63 @@ p.muted{padding:4px 0}
       <div class="section">
         <div class="section-head" style="cursor:default">
           <div class="section-head-left">
-            <h3>📋 Call Targets</h3>
+            <h3>📋 Routing Targets</h3>
             <span id="targets-count-badge" class="section-badge section-badge-off">0</span>
           </div>
           <button class="btn-sm" onclick="addTarget()">+ Add Target</button>
         </div>
         <div class="section-body" id="targets-body" style="padding-bottom:4px">
+          <div class="quick-route">
+            <div class="quick-route-title">Quick Add Route</div>
+            <div class="quick-route-sub">
+              Use this for normal setup. It creates the advanced target underneath with safe defaults.
+            </div>
+            <div class="routing-grid">
+              <div class="field">
+                <label>What should this route call?</label>
+                <select id="quick-kind" onchange="applyQuickRoutePreset(this.value)">
+                  <option value="node">HAOS dashboard / addon user</option>
+                  <option value="sip">SIP desk phone extension</option>
+                  <option value="gateway">Outside number through gateway</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Friendly Name</label>
+                <input id="quick-label" type="text" placeholder="Front Desk">
+              </div>
+              <div class="field">
+                <label>Target ID <span class="hint-tag">auto if blank</span></label>
+                <input id="quick-id" type="text" placeholder="front_desk">
+              </div>
+              <div class="field" id="quick-node-wrap">
+                <label>HAOS Node ID</label>
+                <input id="quick-node" type="text" placeholder="office2">
+              </div>
+              <div class="field" id="quick-ext-wrap">
+                <label id="quick-ext-label">SIP Extension / Number</label>
+                <input id="quick-ext" type="text" placeholder="1025">
+              </div>
+              <div class="field" id="quick-trunk-wrap">
+                <label>Gateway / Trunk</label>
+                <input id="quick-trunk" type="text" placeholder="7009">
+              </div>
+              <div class="field">
+                <label>Fallback Target IDs <span class="hint-tag">optional</span></label>
+                <input id="quick-fallbacks" type="text" placeholder="office2, security_phone">
+              </div>
+              <div class="field">
+                <label>Ring Time</label>
+                <input id="quick-timeout" type="number" min="5" max="300" value="25">
+              </div>
+            </div>
+            <div class="quick-route-actions">
+              <button class="btn-secondary btn" style="font-size:12px;padding:8px 14px" onclick="clearQuickRoute()">Clear</button>
+              <button class="btn btn-primary" style="font-size:12px;padding:8px 14px" onclick="createQuickRoute()">Create Route</button>
+            </div>
+          </div>
           <div id="targets-list"></div>
           <div id="targets-empty" class="targets-empty">
-            No targets configured. Click <b>+ Add Target</b> to add one.
+            No routing targets yet. Use <b>Quick Add Route</b> above for the first one.
           </div>
         </div>
       </div>
@@ -610,6 +673,7 @@ function applySettingsToForm(s) {
   setCheck('routing-skip-unavailable', _routing.skip_unavailable !== false);
   setVal('site-availability-mode', _availability.mode || 'available');
   setVal('site-availability-reason', _availability.reason || '');
+  applyQuickRoutePreset(getVal('quick-kind') || 'node');
   renderRoutingBoard();
   renderTargets();
   _settingsDirty = false;
@@ -753,7 +817,7 @@ function renderRoutingBoard() {
     const av = t.availability || _routeOverrides[id] || {mode:'available', reason:''};
     const mode = av.mode || 'available';
     const detail = [
-      t.type || 'node',
+      targetTypeLabel(t.type || 'node'),
       t.node_id || t.extension || '',
       av.reason || '',
     ].filter(Boolean).join(' · ');
@@ -806,6 +870,98 @@ async function setTargetAvailability(targetId, mode) {
 function markSettingsDirty() {
   _settingsDirty = true;
   setSaveStatus('Unsaved changes', '');
+}
+
+function applyQuickRoutePreset(kind) {
+  const isNode = kind === 'node';
+  const isGateway = kind === 'gateway';
+  const nodeWrap = document.getElementById('quick-node-wrap');
+  const extWrap = document.getElementById('quick-ext-wrap');
+  const trunkWrap = document.getElementById('quick-trunk-wrap');
+  if (nodeWrap) nodeWrap.style.display = isNode ? '' : 'none';
+  if (extWrap) extWrap.style.display = isNode ? 'none' : '';
+  if (trunkWrap) trunkWrap.style.display = isGateway ? '' : 'none';
+  setText('quick-ext-label', isGateway ? 'Outside Number' : 'SIP Extension');
+  const ext = document.getElementById('quick-ext');
+  if (ext) ext.placeholder = isGateway ? '+919123208334' : '1025';
+  const trunk = document.getElementById('quick-trunk');
+  if (trunk && isGateway && !trunk.value) trunk.value = '7009';
+  const timeout = document.getElementById('quick-timeout');
+  if (timeout && !timeout.value) timeout.value = getVal('routing-ring-seconds') || '25';
+}
+
+function targetTypeLabel(type) {
+  return ({
+    node: 'HAOS node',
+    device: 'Device',
+    asterisk: 'SIP / gateway',
+    queue: 'Queue',
+  })[type] || type || 'Target';
+}
+
+function createQuickRoute() {
+  const kind = getVal('quick-kind') || 'node';
+  const label = getVal('quick-label').trim();
+  const id = (getVal('quick-id').trim() || slugify(label || getVal('quick-node') || getVal('quick-ext'))).slice(0, 64);
+  const nodeId = getVal('quick-node').trim();
+  const ext = getVal('quick-ext').trim();
+  const trunk = getVal('quick-trunk').trim();
+  const timeout = parseInt(getVal('quick-timeout')) || parseInt(getVal('routing-ring-seconds')) || 25;
+  const fallbacks = splitTargetList(getVal('quick-fallbacks'));
+  if (!id || !label) {
+    setSaveStatus('Quick route needs a friendly name', 'err');
+    return;
+  }
+  if (_targets.some(t => t.id === id)) {
+    setSaveStatus('Target ID already exists: ' + id, 'err');
+    return;
+  }
+  if (kind === 'node' && !nodeId) {
+    setSaveStatus('HAOS Node ID is required for dashboard/addon routes', 'err');
+    return;
+  }
+  if (kind !== 'node' && !ext) {
+    setSaveStatus('Extension or number is required for SIP/gateway routes', 'err');
+    return;
+  }
+  if (kind === 'gateway' && !trunk) {
+    setSaveStatus('Gateway/trunk is required for outside-number routes', 'err');
+    return;
+  }
+
+  _targets.push({
+    type: kind === 'node' ? 'node' : 'asterisk',
+    id,
+    label,
+    node_id: kind === 'node' ? nodeId : '',
+    extension: kind === 'node' ? '' : ext,
+    context: 'from-simson',
+    trunk: kind === 'gateway' ? trunk : '',
+    caller_id: '',
+    timeout,
+    fallback_targets: fallbacks,
+    icon: kind === 'node' ? '🏠' : kind === 'gateway' ? '🌐' : '☎',
+    _open: false,
+  });
+  markSettingsDirty();
+  clearQuickRoute(false);
+  renderTargets();
+  renderRoutingBoard();
+  setSaveStatus('Route added. Press Save Settings to keep it.', 'ok');
+}
+
+function clearQuickRoute(resetKind = true) {
+  ['quick-label','quick-id','quick-node','quick-ext','quick-fallbacks'].forEach(id => setVal(id, ''));
+  setVal('quick-timeout', getVal('routing-ring-seconds') || '25');
+  if (resetKind) setVal('quick-kind', 'node');
+  applyQuickRoutePreset(getVal('quick-kind') || 'node');
+}
+
+function slugify(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'target_' + (_targets.length + 1);
 }
 
 // ─── SIP Endpoints management ────────────────────────────────────────────────
@@ -1135,7 +1291,7 @@ function renderTargets() {
       <div class="target-head" onclick="toggleTarget(${i})">
         <span class="target-emoji">${esc(emoji)}</span>
         <span class="target-name">${esc(t.label || t.id || 'Target ' + (i+1))}</span>
-        <span class="target-type-pill">${esc(t.type || 'node')}</span>
+        <span class="target-type-pill">${esc(targetTypeLabel(t.type || 'node'))}</span>
         <span class="mode-pill mode-${esc(mode)}">${esc(mode)}</span>
         <div class="target-actions" onclick="event.stopPropagation()">
           <button class="btn-icon del" onclick="removeTarget(${i})" title="Remove target">✕</button>
@@ -1154,14 +1310,20 @@ function toggleTarget(i) {
 }
 
 function targetForm(t, i) {
+  const typeLabels = {
+    node: 'HAOS node / dashboard',
+    device: 'Specific device',
+    asterisk: 'SIP phone or gateway',
+    queue: 'Queue / group',
+  };
   const types = ['node','device','asterisk','queue'];
   const typeOpts = types.map(v =>
-    `<option value="${v}"${t.type===v?' selected':''}>${v}</option>`).join('');
+    `<option value="${v}"${t.type===v?' selected':''}>${typeLabels[v]}</option>`).join('');
   const isAst = t.type === 'asterisk';
   return `<div class="target-form">
     <div class="field-row">
       <div class="field" style="max-width:140px">
-        <label>Type</label>
+        <label>Route Type</label>
         <select id="t${i}-type" onchange="onTargetTypeChange(${i},this.value)">${typeOpts}</select>
       </div>
       <div class="field">
@@ -1184,17 +1346,17 @@ function targetForm(t, i) {
     </div>
     <div class="field-row" id="t${i}-node-row"${isAst?' style="display:none"':''}>
       <div class="field" style="width:100%">
-        <label>Node ID <span class="hint-tag">for type=node/device</span></label>
+        <label>HAOS Node ID <span class="hint-tag">for dashboard/addon routes</span></label>
         <input type="text" id="t${i}-node" value="${esc(t.node_id||'')}"
                placeholder="ha_kitchen" oninput="targetField(${i},'node_id',this.value)">
       </div>
     </div>
     <div class="field-row" id="t${i}-ast-row"${!isAst?' style="display:none"':''}>
       <div class="field">
-        <label>Asterisk Extension / Number</label>
+        <label>SIP Extension / Outside Number</label>
         <input type="text" id="t${i}-ext" value="${esc(t.extension||'')}"
                placeholder="101 or 919876543210" oninput="targetField(${i},'extension',this.value)">
-        <div class="field-hint">Internal extension, or an external/landline number when a trunk is set.</div>
+        <div class="field-hint">Use a SIP extension like 1025, or an outside number when Gateway/Trunk is set.</div>
       </div>
       <div class="field">
         <label>Context</label>
@@ -1204,11 +1366,11 @@ function targetForm(t, i) {
     </div>
     <div class="field-row" id="t${i}-trunk-row"${!isAst?' style="display:none"':''}>
       <div class="field" style="width:100%">
-        <label>SIP/PSTN Trunk <span class="hint-tag">optional</span></label>
+        <label>Gateway / Trunk <span class="hint-tag">optional</span></label>
         <input type="text" id="t${i}-trunk" value="${esc(t.trunk||'')}"
                placeholder="provider-trunk"
                oninput="targetField(${i},'trunk',this.value)">
-        <div class="field-hint">Set this to the PJSIP trunk name for landline/PSTN routing. Leave empty for an internal SIP extension.</div>
+        <div class="field-hint">For outside calls use the gateway endpoint/trunk, e.g. 7009. Leave empty for an internal SIP phone.</div>
       </div>
     </div>
     <div class="field-row">
@@ -1225,11 +1387,11 @@ function targetForm(t, i) {
     </div>
     <div class="field-row" style="flex-direction:column">
       <div class="field" style="width:100%">
-        <label>Fallback Target IDs <span class="hint-tag">busy / no-answer</span></label>
+        <label>Try Next If Busy / No Answer <span class="hint-tag">target IDs</span></label>
         <input type="text" id="t${i}-fallbacks" value="${esc((t.fallback_targets||[]).join(', '))}"
                placeholder="front_desk, mobile_backup"
                oninput="targetField(${i},'fallback_targets',splitTargetList(this.value))">
-        <div class="field-hint">Comma-separated target IDs to try in order if this target is busy, declined, or times out.</div>
+        <div class="field-hint">Comma-separated target IDs. Example: office2, front_desk_phone, mobile_backup.</div>
       </div>
     </div>
     <div style="display:flex;justify-content:flex-end;margin-top:6px">
@@ -1251,7 +1413,7 @@ function onTargetTypeChange(i, value) {
   if (trunkRow) trunkRow.style.display = value === 'asterisk' ? '' : 'none';
   // Update pill without full re-render
   const pill = document.querySelector(`#tc-${i} .target-type-pill`);
-  if (pill) pill.textContent = value;
+  if (pill) pill.textContent = targetTypeLabel(value);
 }
 function targetField(i, key, value) {
   if (_targets[i]) _targets[i][key] = value;
