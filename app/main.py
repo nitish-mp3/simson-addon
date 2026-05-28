@@ -15,7 +15,7 @@ from protocol import (
     TYPE_CALL_INVITE, TYPE_CALL_STATUS, TYPE_ERROR, TYPE_WEBRTC_SIGNAL,
     TYPE_USERS_LIST,
     ERR_SIP_UNAVAILABLE,
-    make_call_request, make_call_end, make_users_update,
+    make_call_request, make_call_end, make_call_transfer, make_users_update,
 )
 from wss_client import WSSClient
 from call_manager import CallManager, CallInfo, CallState
