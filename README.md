@@ -108,14 +108,31 @@ To call an external PSTN/landline number through a provider trunk, create a **Ca
 - SIP/PSTN Trunk: the configured PJSIP trunk name on the VPS
 - Fallback Target IDs: optional comma-separated targets for busy/no-answer routing
 
+## Site Routing and Availability
+
+Each HAOS addon instance keeps its own site settings in `/data/settings.json`, so homes/sites do not share targets, gateways, busy state, or routing policy.
+
+In the addon panel, open **Settings -> Site Routing & Availability**:
+
+- **Ring Before Next Target** controls how long a routed call rings before trying the next fallback.
+- **Max Attempts** includes the primary target. For example, `4` means primary plus up to three fallback targets.
+- **Final Fallback Target** is an optional last target such as a desk phone, security desk, or gateway-backed outside number.
+- **Skip targets marked busy/offline** prevents routing to targets manually marked unavailable.
+- Use the live routing board to mark each target **Available**, **Busy**, or **Offline**.
+
+To route calls to other SIP phones, create a Call Target with **Type = asterisk**, set **Asterisk Extension / Number** to the phone extension, and leave **SIP/PSTN Trunk** empty. To route to an outside phone through a gateway, set the outside number as the extension and set **SIP/PSTN Trunk** to the gateway endpoint such as `7009`.
+
 ## Local API Endpoints
 
 The addon exposes a local HTTP API for the HA integration:
 
 - `GET /api/health` - Health check
 - `GET /api/status` - Connection status and node info
+- `GET /api/routing` - Live routing board, availability, active calls, and target status
 - `GET /api/settings` - Routing and endpoint settings
 - `POST /api/settings` - Save routing and endpoint settings
+- `POST /api/availability` - Mark this onsite addon available, busy, or offline
+- `POST /api/target-availability` - Mark a configured target available, busy, or offline
 - `GET /api/webrtc-config` - Browser WebRTC/SIP bridge config
 - `POST /api/call` - Make a call
 - `POST /api/answer` - Answer a call

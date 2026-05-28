@@ -15,7 +15,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "3.8.9"
+ADDON_VERSION = "3.9.0"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -71,6 +71,9 @@ class LocalAPI:
         self.app.router.add_get("/api/status", self.handle_status)
         self.app.router.add_get("/api/calls", self.handle_list_calls)
         self.app.router.add_post("/api/call", self.handle_make_call)
+        self.app.router.add_get("/api/routing", self.handle_routing)
+        self.app.router.add_post("/api/availability", self.handle_availability)
+        self.app.router.add_post("/api/target-availability", self.handle_target_availability)
         self.app.router.add_post("/api/answer", self.handle_answer)
         self.app.router.add_post("/api/reject", self.handle_reject)
         self.app.router.add_post("/api/hangup", self.handle_hangup)
@@ -178,6 +181,8 @@ class LocalAPI:
         }
         if self.asterisk:
             status["asterisk_connected"] = self.asterisk.connected
+        status["availability"] = self.cfg.availability
+        status["routing"] = self.cfg.routing_policy
         return web.json_response(status)
 
     async def handle_provision(self, request: web.Request) -> web.Response:
@@ -278,6 +283,20 @@ class LocalAPI:
         self.cfg.sip_domain = wrtc.get("sip_domain", "")
 
         self.cfg.call_targets = body.get("call_targets", [])
+        routing = body.get("routing", {})
+        self.cfg.routing_policy = {
+            "strategy": routing.get("strategy", "priority"),
+            "ring_seconds": int(routing.get("ring_seconds", 25)),
+            "max_attempts": int(routing.get("max_attempts", 4)),
+            "skip_unavailable": bool(routing.get("skip_unavailable", True)),
+            "final_fallback_target": routing.get("final_fallback_target", ""),
+        }
+        availability = body.get("availability", {})
+        self.cfg.availability = {
+            "mode": availability.get("mode", "available"),
+            "reason": availability.get("reason", ""),
+        }
+        self.cfg.route_overrides = body.get("route_overrides", {}) or {}
         if self.target_dir:
             self.target_dir.reload()
 
@@ -554,6 +573,68 @@ class LocalAPI:
             "total": len(calls),
         })
 
+    async def handle_routing(self, request: web.Request) -> web.Response:
+        """Return live routing board data for this onsite addon."""
+        targets = list(self.target_dir.all_targets()) if self.target_dir else []
+        calls = [_call_to_dict(c) for c in self.call_mgr.all_calls]
+        return web.json_response({
+            "node_id": self.cfg.node_id,
+            "availability": self.cfg.availability,
+            "routing": self.cfg.routing_policy,
+            "targets": [self._annotate_target(t) for t in targets],
+            "calls": calls,
+            "active_call": _call_to_dict(self.call_mgr.active_call) if self.call_mgr.active_call else None,
+        })
+
+    async def handle_availability(self, request: web.Request) -> web.Response:
+        """Set this onsite addon's manual availability state."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+
+        mode = str(body.get("mode", "available")).strip() or "available"
+        if mode not in ("available", "busy", "offline"):
+            return web.json_response({"error": "mode must be available, busy, or offline"}, status=400)
+
+        settings = load_settings()
+        settings["availability"] = {
+            "mode": mode,
+            "reason": str(body.get("reason", "")).strip(),
+        }
+        errors = validate_settings(settings)
+        if errors:
+            return web.json_response({"errors": errors}, status=422)
+        save_settings(settings)
+        self.cfg.availability = settings["availability"]
+        return web.json_response({"availability": self.cfg.availability})
+
+    async def handle_target_availability(self, request: web.Request) -> web.Response:
+        """Mark a configured target as available, busy, or offline."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+
+        target_id = str(body.get("target_id", "")).strip()
+        mode = str(body.get("mode", "available")).strip() or "available"
+        reason = str(body.get("reason", "")).strip()
+        if not target_id:
+            return web.json_response({"error": "target_id is required"}, status=400)
+        if mode not in ("available", "busy", "offline"):
+            return web.json_response({"error": "mode must be available, busy, or offline"}, status=400)
+
+        settings = load_settings()
+        overrides = settings.get("route_overrides") or {}
+        overrides[target_id] = {"mode": mode, "reason": reason}
+        settings["route_overrides"] = overrides
+        errors = validate_settings(settings)
+        if errors:
+            return web.json_response({"errors": errors}, status=422)
+        save_settings(settings)
+        self.cfg.route_overrides = overrides
+        return web.json_response({"target_id": target_id, "availability": overrides[target_id]})
+
     async def handle_make_call(self, request: web.Request) -> web.Response:
         """Initiate a call to another node or configured target."""
         try:
@@ -625,6 +706,27 @@ class LocalAPI:
                     )
                 else:
                     return web.json_response({"error": f"unknown target: {target_id}"}, status=404)
+
+            if self._target_blocked(target_id):
+                fallback_id = self._first_available_fallback(routing.fallback_targets)
+                if not fallback_id:
+                    availability = self._target_availability(target_id)
+                    return web.json_response({
+                        "error": "target unavailable",
+                        "target_id": target_id,
+                        "availability": availability,
+                    }, status=409)
+                fallback_routing = self.target_dir.resolve_routing(fallback_id)
+                if not fallback_routing:
+                    return web.json_response({
+                        "error": f"fallback target unavailable: {fallback_id}",
+                    }, status=409)
+                logger.info(
+                    "Target %s is unavailable; routing call to fallback %s",
+                    target_id, fallback_id,
+                )
+                target_id = fallback_id
+                routing = fallback_routing
 
             if routing.target_type == "asterisk":
                 call_type = "sip"
@@ -876,7 +978,48 @@ class LocalAPI:
             except Exception as e:
                 logger.warning("Asterisk device discovery error: %s", e)
 
-        return web.json_response({"targets": targets, "total": len(targets)})
+        annotated = [self._annotate_target(t) for t in targets]
+        return web.json_response({"targets": annotated, "total": len(annotated)})
+
+    def _target_availability(self, target: dict | str) -> dict:
+        """Return the effective manual availability for a target id/dict."""
+        target_id = target if isinstance(target, str) else target.get("id", "")
+        node_id = "" if isinstance(target, str) else target.get("node_id", "")
+        overrides = self.cfg.route_overrides or {}
+        state = overrides.get(target_id) or (overrides.get(node_id) if node_id else None) or {}
+        mode = str(state.get("mode", "available")).strip() or "available"
+        if mode not in ("available", "busy", "offline"):
+            mode = "available"
+        return {
+            "mode": mode,
+            "reason": str(state.get("reason", "")).strip(),
+        }
+
+    def _annotate_target(self, target: dict) -> dict:
+        """Attach availability and routing hints without mutating config."""
+        annotated = copy.deepcopy(target)
+        availability = self._target_availability(annotated)
+        annotated["availability"] = availability
+        annotated["routable"] = availability.get("mode") == "available"
+        return annotated
+
+    def _target_blocked(self, target_id: str) -> bool:
+        """True when policy says this target should not receive new routed calls."""
+        if not target_id or not (self.cfg.routing_policy or {}).get("skip_unavailable", True):
+            return False
+        return self._target_availability(target_id).get("mode") in ("busy", "offline")
+
+    def _first_available_fallback(self, target_ids: list) -> str:
+        """Return the first fallback target allowed by the current site policy."""
+        candidates = [str(t).strip() for t in (target_ids or []) if str(t).strip()]
+        final_target = str((self.cfg.routing_policy or {}).get("final_fallback_target", "")).strip()
+        if final_target and final_target not in candidates:
+            candidates.append(final_target)
+        for fallback_id in candidates:
+            fallback_id = str(fallback_id).strip()
+            if fallback_id and not self._target_blocked(fallback_id):
+                return fallback_id
+        return ""
 
     # --- User presence endpoints ---
 

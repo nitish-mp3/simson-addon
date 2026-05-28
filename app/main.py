@@ -638,14 +638,46 @@ class SimsonAddon:
         if call.direction == "outgoing":
             await self._attempt_fallback(call, "timeout")
 
+    def _target_route_blocked(self, target_id: str) -> bool:
+        """Return True when this site policy says not to route to target_id."""
+        policy = self.cfg.routing_policy or {}
+        if not target_id or not policy.get("skip_unavailable", True):
+            return False
+        state = (self.cfg.route_overrides or {}).get(target_id) or {}
+        return state.get("mode") in ("busy", "offline")
+
+    def _next_fallback_target(self, call: CallInfo) -> tuple[int, str]:
+        """Return (attempt_number, target_id) for the next allowed fallback."""
+        if not call.routing:
+            return 0, ""
+
+        candidates = [str(t).strip() for t in (call.routing.fallback_targets or []) if str(t).strip()]
+        final_target = str((self.cfg.routing_policy or {}).get("final_fallback_target", "")).strip()
+        if final_target and final_target not in candidates:
+            candidates.append(final_target)
+
+        max_attempts = int((self.cfg.routing_policy or {}).get("max_attempts", 4) or 4)
+        max_fallbacks = max(0, max_attempts - 1)  # primary attempt counts as #1
+        next_idx = call.fallback_attempt + 1
+        while next_idx <= len(candidates) and next_idx <= max_fallbacks:
+            target_id = candidates[next_idx - 1]
+            if not self._target_route_blocked(target_id):
+                return next_idx, target_id
+            logging.getLogger("simson.fallback").info(
+                "Skipping unavailable fallback target %s for call %s",
+                target_id, call.call_id,
+            )
+            next_idx += 1
+        return 0, ""
+
     async def _attempt_fallback(self, call: CallInfo, reason: str):
         """Try the next fallback target if available."""
         logger = logging.getLogger("simson.fallback")
-        if not call.routing or not call.routing.fallback_targets:
+        if not call.routing:
             return
 
-        next_idx = call.fallback_attempt + 1
-        if next_idx > len(call.routing.fallback_targets):
+        next_idx, fallback_id = self._next_fallback_target(call)
+        if not fallback_id:
             logger.info("No more fallback targets for call %s", call.call_id)
             await self.ha.fire_event("simson_call_status", {
                 "call_id": call.call_id,
@@ -656,7 +688,6 @@ class SimsonAddon:
             })
             return
 
-        fallback_id = call.routing.fallback_targets[next_idx - 1]
         logger.info(
             "Call %s fallback attempt %d → target %s (reason: %s)",
             call.call_id, next_idx, fallback_id, reason,
@@ -713,6 +744,7 @@ class SimsonAddon:
             fallback_node,
             call_type,
             routing=new_routing,
+            caller_user_id=call.caller_user_id,
             remote_label=fallback_routing.target_label if fallback_routing else fallback_id,
         )
         new_call.fallback_attempt = next_idx

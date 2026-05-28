@@ -129,6 +129,22 @@ class Config:
         self.sip_password: str = wrtc.get("sip_password", os.environ.get("SIMSON_SIP_PASSWORD", ""))
         self.sip_domain: str = wrtc.get("sip_domain", os.environ.get("SIMSON_SIP_DOMAIN", ""))
 
+        # Per-site routing policy and manual availability controls.
+        routing = s.get("routing", {})
+        self.routing_policy: dict = {
+            "strategy": routing.get("strategy", "priority"),
+            "ring_seconds": int(routing.get("ring_seconds", 25)),
+            "max_attempts": int(routing.get("max_attempts", 4)),
+            "skip_unavailable": bool(routing.get("skip_unavailable", True)),
+            "final_fallback_target": routing.get("final_fallback_target", ""),
+        }
+        availability = s.get("availability", {})
+        self.availability: dict = {
+            "mode": availability.get("mode", "available"),
+            "reason": availability.get("reason", ""),
+        }
+        self.route_overrides: dict = s.get("route_overrides", {}) or {}
+
         # Call targets — normalised list stored in settings.json
         self.call_targets: list[dict] = []
         for t in s.get("call_targets", []):
@@ -141,7 +157,7 @@ class Config:
                 "context": t.get("context", self.asterisk_context),
                 "trunk": t.get("trunk", ""),
                 "caller_id": t.get("caller_id", ""),
-                "timeout": int(t.get("timeout", 30)),
+                "timeout": int(t.get("timeout", self.routing_policy["ring_seconds"])),
                 "fallback_targets": t.get("fallback_targets", []),
                 "icon": t.get("icon", ""),
             })

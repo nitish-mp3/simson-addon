@@ -167,6 +167,26 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,
 .target-actions{display:flex;gap:6px;flex-shrink:0}
 .target-form{padding:14px 14px 16px;border-top:1px solid var(--border)}
 .targets-empty{padding:18px;text-align:center;color:var(--text3);font-size:13px}
+/* ── Routing board ─────────────────────────────────────────────────── */
+.routing-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}
+.route-board{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+.route-row{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:11px 12px;background:var(--surface2);border:1px solid var(--border2);
+  border-radius:var(--radius-sm)}
+.route-row-main{min-width:0}
+.route-row-title{font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.route-row-sub{font-size:11px;color:var(--text3);margin-top:3px;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.route-actions{display:flex;gap:5px;flex-shrink:0}
+.mode-pill{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.35px;
+  padding:3px 8px;border-radius:999px;border:1px solid var(--border2)}
+.mode-available{background:#1b5e2033;color:#a5d6a7;border-color:#2e7d3244}
+.mode-busy{background:#e6510022;color:#ffcc80;border-color:#ff980044}
+.mode-offline{background:#b71c1c33;color:#ef9a9a;border-color:#f4433633}
+.live-call{padding:10px 12px;background:#01579b18;border:1px solid #0288d133;
+  border-radius:var(--radius-sm);font-size:12px;color:#90caf9;margin-top:10px}
+@media(max-width:560px){.routing-grid{grid-template-columns:1fr}.route-row{align-items:flex-start;flex-direction:column}.route-actions{width:100%;flex-wrap:wrap}}
 /* ── Save bar ───────────────────────────────────────────────────────── */
 .save-bar{background:var(--surface);border:1px solid var(--border);
           border-radius:var(--radius);padding:16px 18px;
@@ -364,6 +384,64 @@ p.muted{padding:4px 0}
         </div>
       </div>
 
+      <!-- Routing Policy ------------------------------------------ -->
+      <div class="section">
+        <div class="section-head" style="cursor:default">
+          <div class="section-head-left">
+            <h3>🧭 Site Routing & Availability</h3>
+            <span id="routing-mode-badge" class="section-badge section-badge-on">Available</span>
+          </div>
+          <button class="btn-sm" onclick="loadRoutingBoard()">Refresh</button>
+        </div>
+        <div class="section-body">
+          <div class="routing-grid">
+            <div class="field">
+              <label>Routing Strategy</label>
+              <select id="routing-strategy" onchange="markSettingsDirty()">
+                <option value="priority">Priority order</option>
+              </select>
+              <div class="field-hint">Calls follow each target's fallback list in order, skipping busy/offline targets when enabled.</div>
+            </div>
+            <div class="field">
+              <label>Ring Before Next Target <span class="hint-tag">seconds</span></label>
+              <input id="routing-ring-seconds" type="number" min="5" max="300" value="25" onchange="markSettingsDirty()">
+            </div>
+            <div class="field">
+              <label>Max Attempts <span class="hint-tag">primary included</span></label>
+              <input id="routing-max-attempts" type="number" min="1" max="20" value="4" onchange="markSettingsDirty()">
+            </div>
+            <div class="field">
+              <label>Final Fallback Target <span class="hint-tag">optional</span></label>
+              <input id="routing-final-fallback" type="text" placeholder="security_desk or sip_backup" oninput="markSettingsDirty()">
+            </div>
+          </div>
+          <label class="checkbox-row">
+            <input id="routing-skip-unavailable" type="checkbox" checked onchange="markSettingsDirty()">
+            <span>Skip targets marked busy/offline during routing</span>
+          </label>
+          <div class="routing-grid">
+            <div class="field">
+              <label>This Site Availability</label>
+              <select id="site-availability-mode" onchange="setSiteAvailability(this.value)">
+                <option value="available">Available</option>
+                <option value="busy">Busy</option>
+                <option value="offline">Offline</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Reason <span class="hint-tag">optional</span></label>
+              <input id="site-availability-reason" type="text" placeholder="maintenance, lunch, after-hours"
+                     oninput="markSettingsDirty()">
+            </div>
+          </div>
+          <div id="live-call-board" class="live-call hidden"></div>
+          <div class="route-board" id="route-board"></div>
+          <p class="field-hint" style="margin-top:10px">
+            These controls are per onsite addon. They do not affect another home/site unless that site admin saves the same settings there.
+          </p>
+        </div>
+      </div>
+
       <!-- Call Targets -------------------------------------------- -->
       <div class="section">
         <div class="section-head" style="cursor:default">
@@ -423,6 +501,10 @@ let _currentTab = 'overview';
 let _settingsDirty = false;   // warn if navigate away with unsaved changes
 let _pollingTimer = null;
 let _loadedSettings = {};     // preserves hidden infrastructure defaults
+let _routing = {};
+let _availability = {};
+let _routeOverrides = {};
+let _liveRouting = {};
 
 // ─── Bootstrap ──────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', init);
@@ -447,7 +529,7 @@ async function init() {
 }
 
 async function refreshAll() {
-  await Promise.all([pollStatus(), loadSettings(), loadSIPEndpoints()]);
+  await Promise.all([pollStatus(), loadSettings(), loadSIPEndpoints(), loadRoutingBoard()]);
 }
 
 // ─── Status polling ──────────────────────────────────────────────────────────
@@ -518,6 +600,17 @@ async function loadSettings() {
 function applySettingsToForm(s) {
   _loadedSettings = JSON.parse(JSON.stringify(s || {}));
   _targets = JSON.parse(JSON.stringify(s.call_targets || []));
+  _routing = JSON.parse(JSON.stringify(s.routing || {}));
+  _availability = JSON.parse(JSON.stringify(s.availability || {}));
+  _routeOverrides = JSON.parse(JSON.stringify(s.route_overrides || {}));
+  setVal('routing-strategy', _routing.strategy || 'priority');
+  setVal('routing-ring-seconds', _routing.ring_seconds || 25);
+  setVal('routing-max-attempts', _routing.max_attempts || 4);
+  setVal('routing-final-fallback', _routing.final_fallback_target || '');
+  setCheck('routing-skip-unavailable', _routing.skip_unavailable !== false);
+  setVal('site-availability-mode', _availability.mode || 'available');
+  setVal('site-availability-reason', _availability.reason || '');
+  renderRoutingBoard();
   renderTargets();
   _settingsDirty = false;
   setSaveStatus('', '');
@@ -548,6 +641,12 @@ function collectSettings() {
       sip_password: '',
       sip_domain: '',
     },
+    routing: collectRouting(),
+    availability: {
+      mode: getVal('site-availability-mode') || 'available',
+      reason: getVal('site-availability-reason').trim(),
+    },
+    route_overrides: _routeOverrides || {},
     call_targets: collectTargets(),
   };
 }
@@ -591,6 +690,122 @@ async function saveSettings() {
   }
   btn.disabled = false;
   btn.textContent = 'Save Settings';
+}
+
+// ─── Routing policy / live board ─────────────────────────────────────────────
+function collectRouting() {
+  return {
+    strategy: getVal('routing-strategy') || 'priority',
+    ring_seconds: parseInt(getVal('routing-ring-seconds')) || 25,
+    max_attempts: parseInt(getVal('routing-max-attempts')) || 4,
+    skip_unavailable: getCheck('routing-skip-unavailable'),
+    final_fallback_target: getVal('routing-final-fallback').trim(),
+  };
+}
+
+async function loadRoutingBoard() {
+  try {
+    const r = await fetch('api/routing');
+    if (!r.ok) return;
+    _liveRouting = await r.json();
+    if (_liveRouting.routing) _routing = _liveRouting.routing;
+    if (_liveRouting.availability) _availability = _liveRouting.availability;
+    renderRoutingBoard();
+  } catch (_) {}
+}
+
+function renderRoutingBoard() {
+  const board = document.getElementById('route-board');
+  const badge = document.getElementById('routing-mode-badge');
+  const liveCall = document.getElementById('live-call-board');
+  const siteMode = (_availability.mode || getVal('site-availability-mode') || 'available');
+
+  if (badge) {
+    badge.textContent = siteMode;
+    badge.className = 'section-badge ' +
+      (siteMode === 'available' ? 'section-badge-on' : 'section-badge-off');
+  }
+
+  if (liveCall) {
+    const call = _liveRouting.active_call;
+    if (call) {
+      liveCall.classList.remove('hidden');
+      liveCall.innerHTML = '<b>Live call:</b> ' + esc(call.state) + ' · ' +
+        esc(call.remote_label || call.remote_node_id || call.call_id);
+    } else {
+      liveCall.classList.add('hidden');
+      liveCall.innerHTML = '';
+    }
+  }
+
+  if (!board) return;
+  const liveTargets = Array.isArray(_liveRouting.targets) ? _liveRouting.targets : [];
+  const byId = Object.fromEntries(liveTargets.map(t => [t.id, t]));
+  const targets = (_targets || []).map(t => byId[t.id] || t);
+
+  if (!targets.length) {
+    board.innerHTML = '<div class="targets-empty">Add call targets below to build your routing board.</div>';
+    return;
+  }
+
+  board.innerHTML = targets.map(t => {
+    const id = t.id || '';
+    const av = t.availability || _routeOverrides[id] || {mode:'available', reason:''};
+    const mode = av.mode || 'available';
+    const detail = [
+      t.type || 'node',
+      t.node_id || t.extension || '',
+      av.reason || '',
+    ].filter(Boolean).join(' · ');
+    return `<div class="route-row">
+      <div class="route-row-main">
+        <div class="route-row-title">${esc(t.label || id || 'Unnamed target')}</div>
+        <div class="route-row-sub">${esc(detail || id)}</div>
+      </div>
+      <span class="mode-pill mode-${esc(mode)}">${esc(mode)}</span>
+      <div class="route-actions">
+        <button class="btn-sm-ghost" onclick="setTargetAvailability(${jsString(id)},'available')">Available</button>
+        <button class="btn-sm-ghost" onclick="setTargetAvailability(${jsString(id)},'busy')">Busy</button>
+        <button class="btn-sm-ghost" onclick="setTargetAvailability(${jsString(id)},'offline')">Offline</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function setSiteAvailability(mode) {
+  _availability = {
+    mode,
+    reason: getVal('site-availability-reason').trim(),
+  };
+  markSettingsDirty();
+  renderRoutingBoard();
+  try {
+    await fetch('api/availability', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(_availability),
+    });
+  } catch (_) {}
+}
+
+async function setTargetAvailability(targetId, mode) {
+  if (!targetId) return;
+  _routeOverrides[targetId] = {mode, reason: ''};
+  markSettingsDirty();
+  renderRoutingBoard();
+  try {
+    const r = await fetch('api/target-availability', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({target_id: targetId, mode, reason: ''}),
+    });
+    if (r.ok) loadRoutingBoard();
+  } catch (_) {}
+}
+
+function markSettingsDirty() {
+  _settingsDirty = true;
+  setSaveStatus('Unsaved changes', '');
 }
 
 // ─── SIP Endpoints management ────────────────────────────────────────────────
@@ -915,11 +1130,13 @@ function renderTargets() {
   list.innerHTML = _targets.map((t, i) => {
     const emoji = t.icon || {node:'🏠',device:'📱',asterisk:'☎',queue:'📋'}[t.type] || '📞';
     const isOpen = !!t._open;
+    const mode = (_routeOverrides[t.id || ''] || {}).mode || 'available';
     return `<div class="target-card" id="tc-${i}">
       <div class="target-head" onclick="toggleTarget(${i})">
         <span class="target-emoji">${esc(emoji)}</span>
         <span class="target-name">${esc(t.label || t.id || 'Target ' + (i+1))}</span>
         <span class="target-type-pill">${esc(t.type || 'node')}</span>
+        <span class="mode-pill mode-${esc(mode)}">${esc(mode)}</span>
         <div class="target-actions" onclick="event.stopPropagation()">
           <button class="btn-icon del" onclick="removeTarget(${i})" title="Remove target">✕</button>
         </div>
@@ -1025,6 +1242,7 @@ function targetForm(t, i) {
 
 function onTargetTypeChange(i, value) {
   _targets[i].type = value;
+  markSettingsDirty();
   const nodeRow = document.getElementById(`t${i}-node-row`);
   const astRow = document.getElementById(`t${i}-ast-row`);
   const trunkRow = document.getElementById(`t${i}-trunk-row`);
@@ -1035,7 +1253,10 @@ function onTargetTypeChange(i, value) {
   const pill = document.querySelector(`#tc-${i} .target-type-pill`);
   if (pill) pill.textContent = value;
 }
-function targetField(i, key, value) { if (_targets[i]) _targets[i][key] = value; }
+function targetField(i, key, value) {
+  if (_targets[i]) _targets[i][key] = value;
+  markSettingsDirty();
+}
 function splitTargetList(value) {
   return String(value || '')
     .split(',')
@@ -1076,18 +1297,24 @@ function collectTargets() {
 function addTarget() {
   _targets.push({
     type: 'node', id: '', label: '', node_id: '', extension: '',
-    context: '', trunk: '', caller_id: '', timeout: 30,
+    context: '', trunk: '', caller_id: '', timeout: parseInt(getVal('routing-ring-seconds')) || 25,
     fallback_targets: [], icon: '', _open: true,
   });
+  markSettingsDirty();
   renderTargets();
+  renderRoutingBoard();
   // Scroll to new target
   const last = document.getElementById('targets-list')?.lastElementChild;
   if (last) last.scrollIntoView({behavior: 'smooth', block: 'nearest'});
 }
 
 function removeTarget(i) {
+  const removed = _targets[i];
   _targets.splice(i, 1);
+  if (removed?.id && _routeOverrides[removed.id]) delete _routeOverrides[removed.id];
+  markSettingsDirty();
   renderTargets();
+  renderRoutingBoard();
 }
 
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
@@ -1239,6 +1466,9 @@ function esc(s) {
   return String(s ?? '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;')
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function jsString(s) {
+  return JSON.stringify(String(s ?? ''));
 }
 </script>
 </body>

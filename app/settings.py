@@ -42,6 +42,18 @@ DEFAULT_SETTINGS: dict = {
         "sip_password": "",
         "sip_domain": "",
     },
+    "routing": {
+        "strategy": "priority",
+        "ring_seconds": 25,
+        "max_attempts": 4,
+        "skip_unavailable": True,
+        "final_fallback_target": "",
+    },
+    "availability": {
+        "mode": "available",
+        "reason": "",
+    },
+    "route_overrides": {},
     "call_targets": [],
 }
 
@@ -150,6 +162,43 @@ def validate_settings(data: dict) -> list[str]:
             errors.append("SIP: password is required when SIP-over-WebSocket is enabled")
         if not str(wrtc.get("sip_domain", "")).strip():
             errors.append("SIP: domain is required when SIP-over-WebSocket is enabled")
+
+    # ── Routing policy / availability ─────────────────────────────────────
+    routing = data.get("routing") or {}
+    strategy = str(routing.get("strategy", "priority")).strip() or "priority"
+    if strategy not in ("priority", "round_robin"):
+        errors.append("Routing: strategy must be priority or round_robin")
+    try:
+        ring_seconds = int(routing.get("ring_seconds", 25))
+        if not 5 <= ring_seconds <= 300:
+            errors.append("Routing: ring seconds must be between 5 and 300")
+    except (TypeError, ValueError):
+        errors.append("Routing: ring seconds must be a valid integer")
+    try:
+        max_attempts = int(routing.get("max_attempts", 4))
+        if not 1 <= max_attempts <= 20:
+            errors.append("Routing: max attempts must be between 1 and 20")
+    except (TypeError, ValueError):
+        errors.append("Routing: max attempts must be a valid integer")
+
+    availability = data.get("availability") or {}
+    if str(availability.get("mode", "available")).strip() not in ("available", "busy", "offline"):
+        errors.append("Availability: this site must be available, busy, or offline")
+
+    overrides = data.get("route_overrides") or {}
+    if not isinstance(overrides, dict):
+        errors.append("Routing: route overrides must be an object")
+    else:
+        for key, value in overrides.items():
+            if not str(key).strip():
+                errors.append("Routing: route override ids cannot be empty")
+                break
+            if not isinstance(value, dict):
+                errors.append(f"Routing: override '{key}' must be an object")
+                break
+            if str(value.get("mode", "available")).strip() not in ("available", "busy", "offline"):
+                errors.append(f"Routing: override '{key}' must be available, busy, or offline")
+                break
 
     # ── Call targets ────────────────────────────────────────────────────────
     seen_ids: set[str] = set()
