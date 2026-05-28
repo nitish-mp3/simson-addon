@@ -65,6 +65,7 @@ class SimsonAddon:
         )
         self._background_tasks: list[asyncio.Task] = []
         self._ring_timers: dict[str, asyncio.Task] = {}  # call_id -> timeout task
+        self._sip_route_timers: dict[str, asyncio.Task] = {}  # call_id -> delayed SIP fallback task
         self._incoming_invite_timeout_sec = 45
         # Per-user presence tracking (v3.1.0)
         self._online_users: dict[str, dict] = {}  # user_id -> {user_name, last_seen}
@@ -394,7 +395,7 @@ class SimsonAddon:
         })
 
         self._start_ring_timer(call)
-        await self._route_incoming_sip_to_configured_target(call)
+        self._schedule_incoming_sip_route(call)
 
         # If Asterisk is enabled and call type is voice/sip, trigger it.
         if self.asterisk and self.asterisk.connected and call_type in ("voice", "sip"):
@@ -414,6 +415,10 @@ class SimsonAddon:
         creating a separate outbound call.
         """
         logger = logging.getLogger("simson.routing")
+        current = self.call_mgr.get(call.call_id)
+        if not current or current.state not in (CallState.INCOMING, CallState.RINGING, CallState.REQUESTING):
+            logger.info("Skipping SIP route for call %s because it is no longer ringing", call.call_id)
+            return
         if call.call_type != "sip" or not call.metadata.get("sip_bridge_id"):
             return
 
@@ -451,6 +456,42 @@ class SimsonAddon:
                 )
             return
 
+    def _schedule_incoming_sip_route(self, call: CallInfo):
+        """Schedule configured SIP fallback only after the site ring delay."""
+        if call.call_type != "sip" or not call.metadata.get("sip_bridge_id"):
+            return
+
+        delay = int((self.cfg.routing_policy or {}).get("ring_seconds", 25) or 25)
+        delay = max(1, delay)
+        self._cancel_sip_route_timer(call.call_id)
+        self._sip_route_timers[call.call_id] = asyncio.create_task(
+            self._delayed_incoming_sip_route(call.call_id, delay)
+        )
+        logging.getLogger("simson.routing").info(
+            "Scheduled SIP fallback route for call %s after %ds",
+            call.call_id,
+            delay,
+        )
+
+    def _cancel_sip_route_timer(self, call_id: str):
+        """Cancel a delayed incoming SIP fallback task."""
+        task = self._sip_route_timers.pop(call_id, None)
+        if task and not task.done():
+            task.cancel()
+
+    async def _delayed_incoming_sip_route(self, call_id: str, delay: int):
+        """Wait for the configured ring delay, then add the SIP fallback leg."""
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+
+        self._sip_route_timers.pop(call_id, None)
+        call = self.call_mgr.get(call_id)
+        if not call or call.state not in (CallState.INCOMING, CallState.RINGING, CallState.REQUESTING):
+            return
+        await self._route_incoming_sip_to_configured_target(call)
+
     async def _handle_call_status(self, payload: dict):
         """Handle a call status update."""
         call_id = payload.get("call_id", "")
@@ -472,6 +513,7 @@ class SimsonAddon:
         # Cancel ring timer if call is no longer ringing.
         if status not in ("ringing", "requesting"):
             self._cancel_ring_timer(call_id)
+            self._cancel_sip_route_timer(call_id)
 
         # Fire HA event.
         await self.ha.fire_event("simson_call_status", {
@@ -631,6 +673,7 @@ class SimsonAddon:
         task = self._ring_timers.pop(call_id, None)
         if task and not task.done():
             task.cancel()
+        self._cancel_sip_route_timer(call_id)
 
     async def _ring_timeout_task(self, call_id: str, timeout: int):
         """Wait for timeout, then end the call and attempt fallback."""
