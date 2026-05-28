@@ -43,8 +43,11 @@ class TargetDirectory:
         t = self._targets.get(target_id)
         if not t:
             return None
+        target_type = t.get("type", "node")
+        if target_type in ("sip", "gateway"):
+            target_type = "asterisk"
         return RoutingIntent(
-            target_type=t.get("type", "node"),
+            target_type=target_type,
             target_id=t.get("id", ""),
             target_label=t.get("label", ""),
             extension=t.get("extension", ""),
@@ -67,5 +70,5 @@ class TargetDirectory:
         ttype = t.get("type", "node")
         if ttype in ("node", "device"):
             return t.get("node_id", "") or target_id
-        # asterisk/queue targets route to local Asterisk on this node
+        # asterisk/sip/gateway/queue targets route through this node's SIP bridge.
         return self.cfg.node_id

@@ -394,6 +394,7 @@ class SimsonAddon:
         })
 
         self._start_ring_timer(call)
+        await self._route_incoming_sip_to_configured_target(call)
 
         # If Asterisk is enabled and call type is voice/sip, trigger it.
         if self.asterisk and self.asterisk.connected and call_type in ("voice", "sip"):
@@ -403,6 +404,52 @@ class SimsonAddon:
                 caller_id=from_label or from_node,
                 variables={"SIMSON_CALL_ID": call_id},
             )
+
+    async def _route_incoming_sip_to_configured_target(self, call: CallInfo):
+        """Ask VPS to add the first available local SIP target to an incoming SIP bridge.
+
+        The settings UI stores SIP phones as call_targets. Incoming GSM/PSTN
+        gateway calls already arrive with a central Asterisk bridge; this method
+        invites a configured SIP extension into that existing bridge instead of
+        creating a separate outbound call.
+        """
+        logger = logging.getLogger("simson.routing")
+        if call.call_type != "sip" or not call.metadata.get("sip_bridge_id"):
+            return
+
+        source_ext = str(call.metadata.get("sip_extension", "")).strip()
+        for target in self.cfg.call_targets:
+            target_type = str(target.get("type", "node")).strip()
+            if target_type not in ("asterisk", "sip"):
+                continue
+            if str(target.get("trunk", "")).strip():
+                # Do not auto-dial external gateway targets on incoming calls.
+                continue
+
+            target_id = str(target.get("id", "")).strip()
+            ext = str(target.get("extension", "")).strip()
+            if not target_id or not ext:
+                continue
+            if ext == source_ext:
+                logger.info("Skipping SIP route %s because it matches caller extension", ext)
+                continue
+            if self._target_route_blocked(target_id):
+                logger.info("Skipping unavailable SIP route target %s", target_id)
+                continue
+
+            msg = make_call_transfer(call.call_id, self.cfg.node_id, f"sip:{ext}")
+            try:
+                await self.wss.send(msg)
+                logger.info(
+                    "Incoming SIP call %s routed to SIP target %s (%s)",
+                    call.call_id, target_id, ext,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to route incoming SIP call %s to %s (%s): %s",
+                    call.call_id, target_id, ext, exc,
+                )
+            return
 
     async def _handle_call_status(self, payload: dict):
         """Handle a call status update."""
@@ -696,7 +743,7 @@ class SimsonAddon:
         # Resolve the fallback target.
         fallback_routing = self.target_dir.resolve_routing(fallback_id)
         fallback_node = self.target_dir.resolve_node_id(fallback_id)
-        if fallback_routing and fallback_routing.target_type == "asterisk":
+        if fallback_routing and fallback_routing.target_type in ("asterisk", "sip", "gateway"):
             fallback_node = f"sip:{fallback_routing.extension}"
 
         if not fallback_node:
@@ -706,7 +753,7 @@ class SimsonAddon:
         # Build metadata.
         metadata = {}
         if fallback_routing:
-            if fallback_routing.target_type == "asterisk" and str(fallback_node).startswith("sip:"):
+            if fallback_routing.target_type in ("asterisk", "sip", "gateway") and str(fallback_node).startswith("sip:"):
                 metadata.update({
                     "extension": fallback_routing.extension,
                     "context": fallback_routing.context,
@@ -727,7 +774,7 @@ class SimsonAddon:
                 }
             metadata["fallback_from"] = call.call_id
 
-        call_type = "sip" if fallback_routing and fallback_routing.target_type == "asterisk" else "voice"
+        call_type = "sip" if fallback_routing and fallback_routing.target_type in ("asterisk", "sip", "gateway") else "voice"
         msg = make_call_request(self.cfg.node_id, fallback_node, call_type, metadata=metadata or None)
         new_call_id = msg["payload"]["call_id"]
 

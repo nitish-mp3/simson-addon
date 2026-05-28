@@ -15,7 +15,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "3.9.1"
+ADDON_VERSION = "3.9.2"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -728,7 +728,7 @@ class LocalAPI:
                 target_id = fallback_id
                 routing = fallback_routing
 
-            if routing.target_type == "asterisk":
+            if routing.target_type in ("asterisk", "sip", "gateway"):
                 call_type = "sip"
                 ext = (routing.extension or "").strip()
                 if routing.trunk:
@@ -756,7 +756,7 @@ class LocalAPI:
             remote_label = routing.target_label or routing.extension or routing.target_id
             # Central SIP path (to_node_id = sip:EXT) needs conservative,
             # flat metadata for compatibility with older VPS payload decoders.
-            if routing.target_type == "asterisk" and str(to_node).startswith("sip:"):
+            if routing.target_type in ("asterisk", "sip", "gateway") and str(to_node).startswith("sip:"):
                 # Always send a caller_id so the SIP phone shows a useful callback number.
                 metadata["caller_id"] = (
                     routing.caller_id
