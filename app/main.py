@@ -449,12 +449,40 @@ class SimsonAddon:
                     "Incoming SIP call %s routed to SIP target %s (%s)",
                     call.call_id, target_id, ext,
                 )
+                await self._mark_incoming_sip_forwarded(call, target_id, ext)
             except Exception as exc:
                 logger.warning(
                     "Failed to route incoming SIP call %s to %s (%s): %s",
                     call.call_id, target_id, ext, exc,
                 )
             return
+
+    async def _mark_incoming_sip_forwarded(self, call: CallInfo, target_id: str, ext: str):
+        """Clear this HAOS ringing UI after the call has been handed to SIP fallback.
+
+        This is intentionally local-only: we do not send call.end to VPS because
+        the outside caller is now waiting for the SIP phone leg in the central
+        Asterisk bridge.
+        """
+        self._cancel_ring_timer(call.call_id)
+        reason = f"forwarded_to_sip:{target_id or ext}"
+        updated = await self.call_mgr.update_status(call.call_id, "ended", reason)
+        call = updated or call
+        await self.ha.dismiss_notification(f"simson_call_{call.call_id[:12]}")
+        event = {
+            "call_id": call.call_id,
+            "status": "ended",
+            "reason": reason,
+            "direction": call.direction,
+            "remote_node_id": call.remote_node_id,
+            "call_type": call.call_type,
+            "sip_bridge_id": call.metadata.get("sip_bridge_id", ""),
+            "forwarded_to": target_id or ext,
+            "forwarded_extension": ext,
+            "type": "call_status",
+        }
+        await self.ha.fire_event("simson_call_status", event)
+        self.api.push_sse_event(event)
 
     def _schedule_incoming_sip_route(self, call: CallInfo):
         """Schedule configured SIP fallback only after the site ring delay."""
