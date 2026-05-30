@@ -4,6 +4,7 @@ import asyncio
 import copy
 import json
 import logging
+import time
 from urllib.parse import urlsplit, urlunsplit
 from aiohttp import ClientSession, ClientTimeout, web
 
@@ -15,7 +16,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "3.9.3"
+ADDON_VERSION = "3.9.5"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -890,6 +891,28 @@ class LocalAPI:
         call = self.call_mgr.get(call_id)
         if not call:
             return web.json_response({"error": "call not found"}, status=404)
+
+        # Some browser SIP bridge failures can produce an automatic /api/hangup
+        # immediately after answer. Do not let that helper-leg failure kill the
+        # real PSTN/GSM bridge; the explicit Hang Up button can be pressed again
+        # after the call is established, and VPS/Asterisk still ends the call
+        # when the outside caller really disconnects.
+        if (
+            call.call_type == "sip"
+            and call.state == CallState.ACTIVE
+            and call.answered_at
+            and (time.time() - call.answered_at) < 4
+        ):
+            logger.warning(
+                "Ignoring immediate SIP hangup for %s %.2fs after answer; likely browser bridge transition",
+                call_id,
+                time.time() - call.answered_at,
+            )
+            return web.json_response({
+                "call_id": call_id,
+                "status": "ignored",
+                "reason": "sip_bridge_grace_period",
+            })
 
         # Direct Asterisk calls don't go through VPS — hang up via AMI instead.
         if call.remote_node_id.startswith("asterisk:") and self.asterisk and self.asterisk.connected:
