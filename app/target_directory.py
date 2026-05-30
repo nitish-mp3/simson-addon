@@ -44,8 +44,6 @@ class TargetDirectory:
         if not t:
             return None
         target_type = t.get("type", "node")
-        if target_type in ("sip", "gateway"):
-            target_type = "asterisk"
         return RoutingIntent(
             target_type=target_type,
             target_id=t.get("id", ""),

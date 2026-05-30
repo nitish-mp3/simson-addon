@@ -213,8 +213,16 @@ def validate_settings(data: dict) -> list[str]:
         if not str(target.get("label", "")).strip():
             errors.append(f"Call target #{idx}: label is required")
         target_type = str(target.get("type", "node")).strip()
-        if target_type == "asterisk" and not str(target.get("extension", "")).strip():
-            errors.append(f"Call target #{idx}: Asterisk extension/number is required")
+        if target_type not in ("node", "device", "asterisk", "sip", "gateway", "queue"):
+            errors.append(
+                f"Call target #{idx}: type must be node, sip, gateway, device, queue, or asterisk"
+            )
+        if target_type in ("asterisk", "sip", "gateway") and not str(target.get("extension", "")).strip():
+            errors.append(f"Call target #{idx}: SIP extension/number is required")
+        if target_type == "gateway" and not str(target.get("trunk", "")).strip():
+            errors.append(f"Call target #{idx}: gateway/trunk is required for outside-number routes")
+        if target_type in ("node", "device") and not str(target.get("node_id", "")).strip():
+            errors.append(f"Call target #{idx}: HAOS node ID is required")
         trunk = str(target.get("trunk", "")).strip()
         if trunk and not ASTERISK_NAME_RE.match(trunk):
             errors.append(

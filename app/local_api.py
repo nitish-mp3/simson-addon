@@ -16,7 +16,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "3.9.6"
+ADDON_VERSION = "3.9.8"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -1283,6 +1283,11 @@ class LocalAPI:
 
 def _call_to_dict(call) -> dict:
     """Serialise a CallInfo to a JSON-safe dict."""
+    now = time.time()
+    active_for = 0
+    if call.state.value in ("requesting", "ringing", "incoming", "active"):
+        base = call.answered_at or call.started_at or now
+        active_for = max(0, int(now - base))
     d = {
         "call_id": call.call_id,
         "remote_node_id": call.remote_node_id,
@@ -1293,12 +1298,18 @@ def _call_to_dict(call) -> dict:
         "started_at": call.started_at,
         "answered_at": call.answered_at,
         "ended_at": call.ended_at,
+        "active_for": active_for,
         "end_reason": call.end_reason,
         "fallback_attempt": call.fallback_attempt,
         "sip_bridge_id": call.metadata.get("sip_bridge_id", ""),
         "target_user_id": call.metadata.get("target_user_id", ""),
         "target_user_name": call.metadata.get("target_user_name", ""),
         "caller_user_id": call.caller_user_id,
+        "caller_user_name": call.metadata.get("caller_user_name", ""),
+        "answered_by_user_id": call.metadata.get("answered_by_user_id", ""),
+        "answered_by_user_name": call.metadata.get("answered_by_user_name", ""),
+        "forwarded_to": call.metadata.get("forwarded_to", ""),
+        "forwarded_extension": call.metadata.get("forwarded_extension", ""),
     }
     if call.routing:
         d["routing"] = {

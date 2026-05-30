@@ -425,35 +425,47 @@ class SimsonAddon:
         source_ext = str(call.metadata.get("sip_extension", "")).strip()
         for target in self.cfg.call_targets:
             target_type = str(target.get("type", "node")).strip()
-            if target_type not in ("asterisk", "sip"):
+            if target_type not in ("node", "device", "asterisk", "sip"):
                 continue
-            if str(target.get("trunk", "")).strip():
+            if target_type in ("asterisk", "sip") and str(target.get("trunk", "")).strip():
                 # Do not auto-dial external gateway targets on incoming calls.
                 continue
 
             target_id = str(target.get("id", "")).strip()
-            ext = str(target.get("extension", "")).strip()
-            if not target_id or not ext:
-                continue
-            if ext == source_ext:
-                logger.info("Skipping SIP route %s because it matches caller extension", ext)
+            if not target_id:
                 continue
             if self._target_route_blocked(target_id):
-                logger.info("Skipping unavailable SIP route target %s", target_id)
+                logger.info("Skipping unavailable route target %s", target_id)
                 continue
 
-            msg = make_call_transfer(call.call_id, self.cfg.node_id, f"sip:{ext}")
+            if target_type in ("asterisk", "sip"):
+                ext = str(target.get("extension", "")).strip()
+                if not ext:
+                    continue
+                if ext == source_ext:
+                    logger.info("Skipping SIP route %s because it matches caller extension", ext)
+                    continue
+                transfer_target = f"sip:{ext}"
+                forwarded_ref = ext
+            else:
+                node_id = str(target.get("node_id", "")).strip() or target_id
+                if not node_id or node_id == self.cfg.node_id:
+                    continue
+                transfer_target = node_id
+                forwarded_ref = node_id
+
+            msg = make_call_transfer(call.call_id, self.cfg.node_id, transfer_target)
             try:
                 await self.wss.send(msg)
                 logger.info(
-                    "Incoming SIP call %s routed to SIP target %s (%s)",
-                    call.call_id, target_id, ext,
+                    "Incoming SIP call %s routed to target %s (%s)",
+                    call.call_id, target_id, transfer_target,
                 )
-                await self._mark_incoming_sip_forwarded(call, target_id, ext)
+                await self._mark_incoming_sip_forwarded(call, target_id, forwarded_ref)
             except Exception as exc:
                 logger.warning(
                     "Failed to route incoming SIP call %s to %s (%s): %s",
-                    call.call_id, target_id, ext, exc,
+                    call.call_id, target_id, transfer_target, exc,
                 )
             return
 
@@ -551,6 +563,8 @@ class SimsonAddon:
 
         if sip_bridge_id:
             call.metadata["sip_bridge_id"] = sip_bridge_id
+        if answered_by_user_id:
+            call.metadata["answered_by_user_id"] = answered_by_user_id
 
         # Cancel ring timer if call is no longer ringing.
         if status not in ("ringing", "requesting"):

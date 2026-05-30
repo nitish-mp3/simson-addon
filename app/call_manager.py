@@ -30,7 +30,7 @@ class CallState(str, Enum):
 @dataclass
 class RoutingIntent:
     """Describes where a call should be routed."""
-    target_type: str = "node"       # node | device | asterisk | queue
+    target_type: str = "node"       # node | device | sip | gateway | asterisk | queue
     target_id: str = ""             # node_id, device extension, or queue id
     target_label: str = ""          # human-readable name
     extension: str = ""             # Asterisk extension (asterisk/queue types)

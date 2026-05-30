@@ -793,9 +793,16 @@ function renderRoutingBoard() {
   if (liveCall) {
     const call = _liveRouting.active_call;
     if (call) {
+      const elapsed = formatDuration(call.active_for || 0);
+      const owner = call.answered_by_user_name || call.answered_by_user_id ||
+        call.target_user_name || call.target_user_id || call.caller_user_id || 'site';
+      const route = call.forwarded_to
+        ? ` · forwarded to ${call.forwarded_extension || call.forwarded_to}`
+        : '';
       liveCall.classList.remove('hidden');
       liveCall.innerHTML = '<b>Live call:</b> ' + esc(call.state) + ' · ' +
-        esc(call.remote_label || call.remote_node_id || call.call_id);
+        esc(call.remote_label || call.remote_node_id || call.call_id) +
+        ' · ' + esc(owner) + ' · ' + esc(elapsed) + esc(route);
     } else {
       liveCall.classList.add('hidden');
       liveCall.innerHTML = '';
@@ -894,6 +901,8 @@ function targetTypeLabel(type) {
   return ({
     node: 'HAOS node',
     device: 'Device',
+    sip: 'SIP phone',
+    gateway: 'Gateway / outside line',
     asterisk: 'SIP / gateway',
     queue: 'Queue',
   })[type] || type || 'Target';
@@ -930,7 +939,7 @@ function createQuickRoute() {
   }
 
   _targets.push({
-    type: kind === 'node' ? 'node' : 'asterisk',
+    type: kind,
     id,
     label,
     node_id: kind === 'node' ? nodeId : '',
@@ -1312,14 +1321,17 @@ function toggleTarget(i) {
 function targetForm(t, i) {
   const typeLabels = {
     node: 'HAOS node / dashboard',
+    sip: 'SIP phone / desk extension',
+    gateway: 'Gateway / outside phone',
     device: 'Specific device',
     asterisk: 'SIP phone or gateway',
     queue: 'Queue / group',
   };
-  const types = ['node','device','asterisk','queue'];
+  const types = ['node','sip','gateway','device','queue','asterisk'];
   const typeOpts = types.map(v =>
     `<option value="${v}"${t.type===v?' selected':''}>${typeLabels[v]}</option>`).join('');
-  const isAst = t.type === 'asterisk';
+  const isAst = ['asterisk','sip','gateway'].includes(t.type);
+  const isGateway = t.type === 'gateway';
   return `<div class="target-form">
     <div class="field-row">
       <div class="field" style="max-width:140px">
@@ -1353,7 +1365,7 @@ function targetForm(t, i) {
     </div>
     <div class="field-row" id="t${i}-ast-row"${!isAst?' style="display:none"':''}>
       <div class="field">
-        <label>SIP Extension / Outside Number</label>
+        <label>${isGateway ? 'Outside Number' : 'SIP Extension'}</label>
         <input type="text" id="t${i}-ext" value="${esc(t.extension||'')}"
                placeholder="101 or 919876543210" oninput="targetField(${i},'extension',this.value)">
         <div class="field-hint">Use a SIP extension like 1025, or an outside number when Gateway/Trunk is set.</div>
@@ -1408,9 +1420,10 @@ function onTargetTypeChange(i, value) {
   const nodeRow = document.getElementById(`t${i}-node-row`);
   const astRow = document.getElementById(`t${i}-ast-row`);
   const trunkRow = document.getElementById(`t${i}-trunk-row`);
-  if (nodeRow) nodeRow.style.display = value === 'asterisk' ? 'none' : '';
-  if (astRow) astRow.style.display = value === 'asterisk' ? '' : 'none';
-  if (trunkRow) trunkRow.style.display = value === 'asterisk' ? '' : 'none';
+  const isAst = ['asterisk','sip','gateway'].includes(value);
+  if (nodeRow) nodeRow.style.display = isAst ? 'none' : '';
+  if (astRow) astRow.style.display = isAst ? '' : 'none';
+  if (trunkRow) trunkRow.style.display = isAst ? '' : 'none';
   // Update pill without full re-render
   const pill = document.querySelector(`#tc-${i} .target-type-pill`);
   if (pill) pill.textContent = targetTypeLabel(value);
@@ -1468,6 +1481,13 @@ function addTarget() {
   // Scroll to new target
   const last = document.getElementById('targets-list')?.lastElementChild;
   if (last) last.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+}
+
+function formatDuration(seconds) {
+  seconds = Math.max(0, parseInt(seconds || 0));
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 function removeTarget(i) {

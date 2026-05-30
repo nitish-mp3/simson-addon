@@ -120,7 +120,7 @@ In the addon panel, open **Settings -> Site Routing & Availability**:
 - **Skip targets marked busy/offline** prevents routing to targets manually marked unavailable.
 - Use the live routing board to mark each target **Available**, **Busy**, or **Offline**.
 
-To route calls to other SIP phones, create a Call Target with **Type = asterisk**, set **Asterisk Extension / Number** to the phone extension, and leave **SIP/PSTN Trunk** empty. To route to an outside phone through a gateway, set the outside number as the extension and set **SIP/PSTN Trunk** to the gateway endpoint such as `7009`.
+To route calls to other SIP phones, create a Call Target with **Type = SIP phone**, set **SIP Extension** to the phone extension, and leave the gateway trunk empty. To route to an outside phone through a gateway, create **Type = Gateway / outside line**, set the outside number as the extension, and set **SIP/PSTN Trunk** to the gateway endpoint such as `7009`.
 
 ## Local API Endpoints
 
