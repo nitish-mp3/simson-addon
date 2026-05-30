@@ -468,6 +468,9 @@ class SimsonAddon:
         reason = f"forwarded_to_sip:{target_id or ext}"
         updated = await self.call_mgr.update_status(call.call_id, "ended", reason)
         call = updated or call
+        call.metadata["forwarded_to_sip"] = True
+        call.metadata["forwarded_to"] = target_id or ext
+        call.metadata["forwarded_extension"] = ext
         await self.ha.dismiss_notification(f"simson_call_{call.call_id[:12]}")
         event = {
             "call_id": call.call_id,
@@ -530,6 +533,17 @@ class SimsonAddon:
 
         # We have a definitive status from VPS for this call request.
         self.clear_outgoing_request_for_call(call_id)
+
+        existing_call = self.call_mgr.get(call_id)
+        if (
+            existing_call
+            and existing_call.metadata.get("forwarded_to_sip")
+            and status in ("ringing", "active")
+        ):
+            logging.getLogger("simson.routing").debug(
+                "Ignoring post-forward status %s for %s", status, call_id
+            )
+            return
 
         call = await self.call_mgr.update_status(call_id, status, reason)
         if not call:
