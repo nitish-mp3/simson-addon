@@ -546,7 +546,8 @@ p.muted{padding:4px 0}
           <div class="automation-card">
             <p class="field-hint" style="margin-bottom:12px">
               Create safe call presets for Home Assistant automations or external webhooks.
-              Each preset can dial only a saved routing target, including a SIP desk phone.
+              Each preset can dial only a saved routing target. Door camera presets can bridge
+              an auto-answer outdoor SIP station directly to an indoor SIP phone with native media.
             </p>
             <label class="checkbox-row">
               <input id="automation-webhook-enabled" type="checkbox" onchange="markSettingsDirty();renderAutomationPreview()">
@@ -1058,6 +1059,7 @@ function normalizeSIPEndpoint(ep) {
     password: ep.password ?? ep.Password ?? '',
     description: ep.description ?? ep.Description ?? '',
     route_to: ep.route_to ?? ep.RouteTo ?? '',
+    video_enabled: ep.video_enabled ?? ep.VideoEnabled ?? false,
     enabled: ep.enabled ?? ep.Enabled ?? true,
     created_at: ep.created_at ?? ep.CreatedAt ?? '',
     updated_at: ep.updated_at ?? ep.UpdatedAt ?? '',
@@ -1155,6 +1157,10 @@ function renderSIPEndpoints() {
           <input type="checkbox" id="sip-enabled" checked>
           <label for="sip-enabled">Endpoint enabled</label>
         </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="sip-video-enabled">
+          <label for="sip-video-enabled">Video capable device <span class="hint-tag">H.264 camera / monitor only</span></label>
+        </div>
         <div style="display:flex;gap:10px;margin-top:10px">
           <button class="btn btn-primary btn-sm" style="padding:8px 16px"
                   onclick="createSIPEndpoint(event)">Create</button>
@@ -1179,6 +1185,7 @@ function renderSIPEndpoints() {
                 <div style="color:var(--text3);font-size:12px;margin-top:4px;line-height:1.5">
                   Username: <code style="background:var(--surface3);padding:2px 6px;border-radius:3px;font-family:monospace">${esc(ep.username)}</code>
                   · Status: <b style="color:${ep.enabled ? 'var(--green-light)' : 'var(--red-light)'}">${ep.enabled ? 'Enabled' : 'Disabled'}</b>
+                  · Media: <b>${ep.video_enabled ? 'Audio + H.264 video' : 'Audio only'}</b>
                   · Route: <b>${esc(ep.route_to || 'Any available node')}</b>
                 </div>
               </div>
@@ -1205,6 +1212,10 @@ function renderSIPEndpoints() {
                 <label class="checkbox-row" style="padding:0">
                   <input type="checkbox" id="ep-enabled-${i}" ${ep.enabled ? 'checked' : ''}>
                   <span>Enabled</span>
+                </label>
+                <label class="checkbox-row" style="padding:0;margin-top:8px">
+                  <input type="checkbox" id="ep-video-${i}" ${ep.video_enabled ? 'checked' : ''}>
+                  <span>Video capable</span>
                 </label>
               </div>
             </div>
@@ -1234,6 +1245,7 @@ function hideSIPForm() {
     if (el) el.value = '';
   });
   setCheck('sip-enabled', true);
+  setCheck('sip-video-enabled', false);
   const resultDiv = document.getElementById('sip-create-result');
   if (resultDiv) resultDiv.innerHTML = '';
 }
@@ -1245,6 +1257,7 @@ async function createSIPEndpoint(event) {
   const desc = getVal('sip-desc').trim();
   const routeTo = getVal('sip-route').trim();
   const enabled = getCheck('sip-enabled');
+  const videoEnabled = getCheck('sip-video-enabled');
   const resultDiv = document.getElementById('sip-create-result');
 
   if (!ext || !user || !pass) {
@@ -1267,6 +1280,7 @@ async function createSIPEndpoint(event) {
         password: pass,
         description: desc,
         route_to: routeTo,
+        video_enabled: videoEnabled,
         enabled,
       }),
     });
@@ -1303,6 +1317,7 @@ async function updateSIPEndpoint(id, idx, event) {
   const route_to = getVal(`ep-route-${idx}`).trim();
   const password = getVal(`ep-pass-${idx}`).trim();
   const enabled = getCheck(`ep-enabled-${idx}`);
+  const video_enabled = getCheck(`ep-video-${idx}`);
 
   if (btn) {
     btn.disabled = true;
@@ -1313,7 +1328,7 @@ async function updateSIPEndpoint(id, idx, event) {
     const r = await fetch(`api/sip-endpoints/${id}`, {
       method: 'PUT',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({description, route_to, password, enabled}),
+      body: JSON.stringify({description, route_to, password, video_enabled, enabled}),
     });
     const data = await r.json();
     if (!r.ok) {
@@ -1586,6 +1601,9 @@ function collectAutomation() {
       label: String(t.label || '').trim(),
       target_id: String(t.target_id || '').trim(),
       caller_id: String(t.caller_id || '').trim(),
+      mode: String(t.mode || 'standard').trim(),
+      source_extension: String(t.source_extension || '').trim(),
+      timeout: parseInt(t.timeout) || 30,
       enabled: t.enabled !== false,
     })),
   };
@@ -1608,7 +1626,9 @@ function renderAutomationTriggers() {
   }
   empty.style.display = 'none';
   list.innerHTML = _automationTriggers.map((t, i) => {
-    const options = automationTargetOptions(t.target_id || '');
+    const mode = String(t.mode || 'standard');
+    const options = automationTargetOptions(t.target_id || '', mode);
+    const doorOnly = mode === 'door_station' ? '' : 'display:none';
     return `<div class="automation-row">
       <div class="automation-row-head">
         <span>⚡</span>
@@ -1632,6 +1652,14 @@ function renderAutomationTriggers() {
                  oninput="automationTriggerField(${i},'label',this.value)">
         </div>
         <div class="field">
+          <label>Preset Mode</label>
+          <select onchange="automationTriggerField(${i},'mode',this.value)">
+            <option value="standard"${mode === 'standard' ? ' selected' : ''}>Standard call preset</option>
+            <option value="door_station"${mode === 'door_station' ? ' selected' : ''}>Door camera SIP bridge</option>
+          </select>
+          <div class="field-hint">Door mode calls the outdoor station first, then bridges its live SIP media to the indoor phone.</div>
+        </div>
+        <div class="field">
           <label>Call Target <span class="hint-tag">saved route</span></label>
           <select onchange="automationTriggerField(${i},'target_id',this.value)">
             <option value="">Select a saved target…</option>
@@ -1644,13 +1672,26 @@ function renderAutomationTriggers() {
           <input value="${esc(t.caller_id || '')}" placeholder='"Doorbell" &lt;100&gt;'
                  oninput="automationTriggerField(${i},'caller_id',this.value)">
         </div>
+        <div class="field" style="${doorOnly}">
+          <label>Outdoor SIP Extension <span class="hint-tag">camera station</span></label>
+          <input value="${esc(t.source_extension || '')}" placeholder="1101"
+                 oninput="automationTriggerField(${i},'source_extension',this.value)">
+          <div class="field-hint">The door station must be registered on this site and configured to auto-answer SIP callback calls.</div>
+        </div>
+        <div class="field" style="${doorOnly}">
+          <label>Door Ring Time <span class="hint-tag">seconds</span></label>
+          <input type="number" min="5" max="120" value="${esc(t.timeout || 30)}"
+                 onchange="automationTriggerField(${i},'timeout',this.value)">
+        </div>
       </div>
     </div>`;
   }).join('');
 }
 
-function automationTargetOptions(selected) {
-  return (_targets || []).map(t => {
+function automationTargetOptions(selected, mode = 'standard') {
+  return (_targets || []).filter(t => {
+    return mode !== 'door_station' || ['sip', 'asterisk'].includes(String(t.type || ''));
+  }).map(t => {
     const id = String(t.id || '');
     const detail = [targetTypeLabel(t.type || 'node'), t.extension || t.node_id || '']
       .filter(Boolean).join(' · ');
@@ -1665,6 +1706,9 @@ function addAutomationTrigger() {
     label: '',
     target_id: '',
     caller_id: '',
+    mode: 'standard',
+    source_extension: '',
+    timeout: 30,
     enabled: true,
   });
   markSettingsDirty();
@@ -1684,7 +1728,8 @@ function automationTriggerField(i, key, value) {
   if (!_automationTriggers[i]) return;
   _automationTriggers[i][key] = value;
   markSettingsDirty();
-  if (key === 'id' || key === 'label') renderAutomationPreview();
+  if (key === 'mode') renderAutomationTriggers();
+  if (key === 'id' || key === 'label' || key === 'mode') renderAutomationPreview();
 }
 
 function randomHex(bytes = 24) {

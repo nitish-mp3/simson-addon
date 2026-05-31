@@ -162,6 +162,20 @@ Open the addon panel, select **Settings**, and use **Automation & Webhook Calls*
 Webhooks cannot dial arbitrary numbers supplied by the caller. They can invoke only enabled presets saved by the onsite admin. Each trigger also has repeat protection to prevent accidental call storms.
 
 Keep the addon port private. If an external service needs webhook access, expose only the webhook path through a trusted HTTPS reverse proxy or a private VPN. Do not publish the raw addon HTTP port directly to the internet.
+
+### Door Camera Face-Mismatch Calls
+
+For an outdoor SIP door station with a camera and face recognition:
+
+1. Create SIP endpoints for the outdoor station and the indoor video phone. Enable **Video capable device** for both endpoints. Both devices must register to the same Simson VPS account.
+2. Create a **Routing Target** for the indoor extension using **SIP desk phone**.
+3. Under **Automation & Webhook Calls**, create a preset and choose **Door camera SIP bridge**.
+4. Enter the outdoor station SIP extension, select the indoor SIP target, generate webhook credentials, and save.
+5. Configure the station's face-recognition mismatch action to `POST` the displayed webhook URL with the secret header and `{"trigger_id":"your_trigger_id"}`.
+
+The callback workflow calls the outdoor station first and then bridges its native SIP media to the indoor phone. The outdoor station must support auto-answer for SIP callbacks. H.264 video is negotiated only between compatible SIP endpoints; existing HAOS browser audio, gateway, and landline routes remain audio-only.
+
+If the door-station firmware can place a SIP call directly when recognition fails, use that device-native mode only after adding an approved PBX direct-dial rule for the station. The supported default in Simson is the protected webhook callback flow above.
 - `POST /api/answer` - Answer a call
 - `POST /api/reject` - Reject a call
 - `POST /api/hangup` - Hang up a call

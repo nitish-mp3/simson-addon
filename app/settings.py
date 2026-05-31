@@ -309,5 +309,33 @@ def validate_settings(data: dict) -> list[str]:
             errors.append(f"Automation trigger #{idx}: target is required")
         elif target_id not in valid_target_ids:
             errors.append(f"Automation trigger #{idx}: unknown target '{target_id}'")
+        trigger_mode = str(trigger.get("mode", "standard")).strip() or "standard"
+        if trigger_mode not in ("standard", "door_station"):
+            errors.append(f"Automation trigger #{idx}: mode must be standard or door_station")
+        if trigger_mode == "door_station":
+            source_extension = str(trigger.get("source_extension", "")).strip()
+            if not source_extension.isdigit() or not 2 <= len(source_extension) <= 12:
+                errors.append(
+                    f"Automation trigger #{idx}: door station source extension must contain 2-12 digits"
+                )
+            target = next(
+                (
+                    item for item in (data.get("call_targets") or [])
+                    if str(item.get("id", "")).strip() == target_id
+                ),
+                None,
+            )
+            if not target or str(target.get("type", "")).strip() not in ("sip", "asterisk"):
+                errors.append(
+                    f"Automation trigger #{idx}: door station target must be a saved SIP desk phone"
+                )
+            try:
+                timeout = int(trigger.get("timeout", 30))
+                if not 5 <= timeout <= 120:
+                    errors.append(
+                        f"Automation trigger #{idx}: door station timeout must be between 5 and 120 seconds"
+                    )
+            except (TypeError, ValueError):
+                errors.append(f"Automation trigger #{idx}: door station timeout must be a valid integer")
 
     return errors
