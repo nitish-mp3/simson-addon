@@ -26,7 +26,7 @@ Only these addon Configuration-tab options are required for normal use:
 
 | Option | Description |
 |--------|-------------|
-| `server_url` | WebSocket URL of your Simson VPS, for example `wss://simson-vps.niti.life/ws`. |
+| `server_url` | WebSocket URL of your Simson VPS, for example `wss://simson-vps.vipsy.in/ws`. |
 | `admin_token` | Optional VPS admin token. Helps the addon provision accounts/nodes and fetch central config. |
 | `log_level` | Logging level: `debug`, `info`, `warning`, or `error`. |
 
@@ -44,7 +44,7 @@ Use this when a desk phone, SIP phone, or analog landline phone through an ATA s
 6. Set **Route To Node ID** to the HAOS Node ID from Overview if this phone should ring this addon directly.
 7. Save the endpoint.
 8. Configure the SIP phone or ATA:
-   - SIP server/domain: your VPS hostname, for example `simson-vps.niti.life`.
+   - SIP server/domain: your VPS hostname, for example `simson-vps.vipsy.in`.
    - Port: `5060`.
    - Transport: TCP or UDP.
    - Username/Auth username: the endpoint username.
@@ -67,7 +67,7 @@ Recommended endpoint layout:
 
 Gateway SIP registration:
 
-- SIP server/domain: `simson-vps.niti.life`
+- SIP server/domain: `simson-vps.vipsy.in`
 - Port: `5060`
 - Transport: TCP or UDP
 - SIP/Auth user: the gateway endpoint username, for example `7001`

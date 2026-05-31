@@ -131,7 +131,7 @@ def load_config(config_path: str | None = None) -> tuple[StandaloneConfig, Path]
 def generate_sample_config(dest: Path):
     """Write a sample simson-agent.json to dest."""
     sample = {
-        "server_url": "wss://simson-vps.niti.life/ws",
+        "server_url": "wss://simson-vps.vipsy.in/ws",
         "account_id": "",
         "node_id": "my-pi",
         "node_label": "My Pi",

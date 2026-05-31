@@ -1,6 +1,6 @@
 {
   "name": "Simson Call Relay",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "slug": "simson",
   "description": "Call relay addon — connects your Home Assistant to the Simson control plane for voice/intercom calls between HA instances and Asterisk endpoints.",
   "url": "https://github.com/nitish-mp3/simson-addon",
@@ -13,7 +13,7 @@
   "panel_title": "Simson",
   "homeassistant_api": true,
   "options": {
-    "server_url": "wss://simson-vps.niti.life/ws",
+    "server_url": "wss://simson-vps.vipsy.in/ws",
     "admin_token": "",
     "log_level": "info"
   },
