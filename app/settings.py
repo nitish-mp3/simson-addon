@@ -16,6 +16,7 @@ logger = logging.getLogger("simson.settings")
 
 SETTINGS_FILE = "/data/settings.json"
 ASTERISK_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+AUTOMATION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 # Canonical defaults — every key that the UI and Config class expect must
 # appear here so a missing or partial settings.json always yields a safe result.
@@ -55,6 +56,13 @@ DEFAULT_SETTINGS: dict = {
     },
     "route_overrides": {},
     "call_targets": [],
+    "automation": {
+        "webhook_enabled": False,
+        "webhook_id": "",
+        "webhook_secret": "",
+        "cooldown_seconds": 10,
+        "triggers": [],
+    },
 }
 
 
@@ -245,5 +253,61 @@ def validate_settings(data: dict) -> list[str]:
                 errors.append(f"Call target #{idx}: timeout must be 5–300 seconds")
         except (TypeError, ValueError):
             errors.append(f"Call target #{idx}: timeout must be a valid integer")
+
+    # ── Automation presets / webhook ───────────────────────────────────────
+    automation = data.get("automation") or {}
+    if not isinstance(automation, dict):
+        errors.append("Automation: settings must be an object")
+        automation = {}
+    try:
+        cooldown = int(automation.get("cooldown_seconds", 10))
+        if not 1 <= cooldown <= 3600:
+            errors.append("Automation: cooldown must be between 1 and 3600 seconds")
+    except (TypeError, ValueError):
+        errors.append("Automation: cooldown must be a valid integer")
+
+    webhook_id = str(automation.get("webhook_id", "")).strip()
+    webhook_secret = str(automation.get("webhook_secret", "")).strip()
+    if webhook_id and not AUTOMATION_ID_RE.match(webhook_id):
+        errors.append("Automation: webhook ID may only contain letters, numbers, dash, and underscore")
+    if automation.get("webhook_enabled"):
+        if not webhook_id:
+            errors.append("Automation: webhook ID is required when webhooks are enabled")
+        if len(webhook_secret) < 24:
+            errors.append("Automation: webhook secret must contain at least 24 characters")
+
+    valid_target_ids = {
+        str(target.get("id", "")).strip()
+        for target in (data.get("call_targets") or [])
+        if str(target.get("id", "")).strip()
+    }
+    seen_trigger_ids: set[str] = set()
+    triggers = automation.get("triggers") or []
+    if not isinstance(triggers, list):
+        errors.append("Automation: triggers must be a list")
+        triggers = []
+    for idx, trigger in enumerate(triggers, start=1):
+        if not isinstance(trigger, dict):
+            errors.append(f"Automation trigger #{idx}: must be an object")
+            continue
+        trigger_id = str(trigger.get("id", "")).strip()
+        if not trigger_id:
+            errors.append(f"Automation trigger #{idx}: ID is required")
+        elif not AUTOMATION_ID_RE.match(trigger_id):
+            errors.append(
+                f"Automation trigger #{idx}: ID may only contain letters, numbers, dash, and underscore"
+            )
+        elif trigger_id in seen_trigger_ids:
+            errors.append(f"Automation trigger #{idx}: duplicate ID '{trigger_id}'")
+        else:
+            seen_trigger_ids.add(trigger_id)
+
+        if not str(trigger.get("label", "")).strip():
+            errors.append(f"Automation trigger #{idx}: label is required")
+        target_id = str(trigger.get("target_id", "")).strip()
+        if not target_id:
+            errors.append(f"Automation trigger #{idx}: target is required")
+        elif target_id not in valid_target_ids:
+            errors.append(f"Automation trigger #{idx}: unknown target '{target_id}'")
 
     return errors

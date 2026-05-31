@@ -122,6 +122,17 @@ In the addon panel, open **Settings -> Site Routing & Availability**:
 
 To route calls to other SIP phones, create a Call Target with **Type = SIP phone**, set **SIP Extension** to the phone extension, and leave the gateway trunk empty. To route to an outside phone through a gateway, create **Type = Gateway / outside line**, set the outside number as the extension, and set **SIP/PSTN Trunk** to the gateway endpoint such as `7009`.
 
+## FXO Channel Event Troubleshooting
+
+Raw Home Assistant notifications such as `New channel: PJSIP/fxo1-...` and `Channel hung up: PJSIP/fxo1-...` are not created by the Simson addon. They come from a separate onsite Asterisk AMI automation or integration that is publishing every channel lifecycle event.
+
+If these notifications repeat:
+
+- Check the FXO gateway call log first. A matching incoming PSTN caller ID means the physical landline is receiving real calls.
+- If no PSTN call exists, inspect the FXO gateway's inbound route and retry settings. A local FXO retry loop should be fixed on the gateway instead of filtered inside Simson.
+- In Home Assistant automations, search for `persistent_notification.create`, `Call Event`, `Call Ended`, or `New channel`. Disable or rate-limit that raw AMI monitor if user-facing notifications are not needed.
+- Keep the Simson addon notification path enabled. Simson creates only the higher-level `Incoming Call` and `Call Failed` notifications used by the card.
+
 ## Local API Endpoints
 
 The addon exposes a local HTTP API for the HA integration:
@@ -135,6 +146,22 @@ The addon exposes a local HTTP API for the HA integration:
 - `POST /api/target-availability` - Mark a configured target available, busy, or offline
 - `GET /api/webrtc-config` - Browser WebRTC/SIP bridge config
 - `POST /api/call` - Make a call
+- `GET /api/automation` - Read the configured onsite automation presets
+- `POST /api/automation/trigger/{trigger_id}` - Run a configured preset from the local HA integration
+- `POST /api/automation/webhook/{webhook_id}` - Run a configured preset from an external webhook with `X-Simson-Webhook-Secret`
+
+## Automation And Webhook Calls
+
+Open the addon panel, select **Settings**, and use **Automation & Webhook Calls**:
+
+1. Create a normal **Routing Target** first. For a desk phone, choose **SIP desk phone extension** and enter its SIP extension.
+2. Add an automation trigger, give it a stable ID such as `doorbell_call`, and select the saved target.
+3. For Home Assistant automations, call `simson.run_trigger` with the configured `trigger_id`.
+4. For external systems, generate webhook credentials and use the displayed URL plus the private `X-Simson-Webhook-Secret` header.
+
+Webhooks cannot dial arbitrary numbers supplied by the caller. They can invoke only enabled presets saved by the onsite admin. Each trigger also has repeat protection to prevent accidental call storms.
+
+Keep the addon port private. If an external service needs webhook access, expose only the webhook path through a trusted HTTPS reverse proxy or a private VPN. Do not publish the raw addon HTTP port directly to the internet.
 - `POST /api/answer` - Answer a call
 - `POST /api/reject` - Reject a call
 - `POST /api/hangup` - Hang up a call

@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import hmac
 import json
 import logging
 import time
@@ -16,7 +17,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "3.9.8"
+ADDON_VERSION = "4.0.0"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -65,6 +66,7 @@ class LocalAPI:
         self.app = web.Application()
         self._runner = None
         self._sse_subscribers: list[asyncio.Queue] = []
+        self._automation_last_run: dict[str, float] = {}
         self._setup_routes()
 
     def _setup_routes(self):
@@ -93,6 +95,9 @@ class LocalAPI:
         self.app.router.add_get("/api/webrtc-config", self.handle_webrtc_config)
         self.app.router.add_get("/api/settings", self.handle_get_settings)
         self.app.router.add_post("/api/settings", self.handle_post_settings)
+        self.app.router.add_get("/api/automation", self.handle_get_automation)
+        self.app.router.add_post("/api/automation/trigger/{trigger_id}", self.handle_run_automation_trigger)
+        self.app.router.add_post("/api/automation/webhook/{webhook_id}", self.handle_automation_webhook)
         self.app.router.add_get("/api/sip-endpoints", self.handle_list_sip_endpoints)
         self.app.router.add_post("/api/sip-endpoints", self.handle_create_sip_endpoint)
         self.app.router.add_put("/api/sip-endpoints/{id}", self.handle_update_sip_endpoint)
@@ -245,6 +250,8 @@ class LocalAPI:
             body = await request.json()
         except Exception:
             return web.json_response({"error": "invalid json"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"error": "json body must be an object"}, status=400)
 
         errors = validate_settings(body)
         if errors:
@@ -298,6 +305,7 @@ class LocalAPI:
             "reason": availability.get("reason", ""),
         }
         self.cfg.route_overrides = body.get("route_overrides", {}) or {}
+        self.cfg.automation = copy.deepcopy(body.get("automation", {}) or {})
         if self.target_dir:
             self.target_dir.reload()
 
@@ -642,7 +650,13 @@ class LocalAPI:
             body = await request.json()
         except Exception:
             return web.json_response({"error": "invalid json"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"error": "json body must be an object"}, status=400)
 
+        return await self._initiate_call(body)
+
+    async def _initiate_call(self, body: dict, source: str = "api") -> web.Response:
+        """Initiate a call through the existing validated outbound path."""
         target_id = body.get("target_id", "")
         phone_number = body.get("phone_number", "")
         trunk = body.get("trunk", "")
@@ -760,7 +774,8 @@ class LocalAPI:
             if routing.target_type in ("asterisk", "sip", "gateway") and str(to_node).startswith("sip:"):
                 # Always send a caller_id so the SIP phone shows a useful callback number.
                 metadata["caller_id"] = (
-                    routing.caller_id
+                    str(body.get("caller_id", "")).strip()
+                    or routing.caller_id
                     or f'"{self.cfg.node_label or self.cfg.node_id}" <100>'
                 )
                 metadata["extension"] = routing.extension
@@ -784,6 +799,8 @@ class LocalAPI:
             metadata["target_user_name"] = target_user_name
         if caller_user_id:
             metadata["caller_user_id"] = caller_user_id
+        if source != "api":
+            metadata["automation_source"] = source
 
         # Build and send call.request.
         msg = make_call_request(self.cfg.node_id, to_node, call_type, metadata=metadata or None)
@@ -811,6 +828,110 @@ class LocalAPI:
             "status": "requesting",
             "target_id": target_id or to_node,
         }, status=201)
+
+    async def handle_get_automation(self, request: web.Request) -> web.Response:
+        """Return a safe automation summary for the onsite admin UI."""
+        automation = self.cfg.automation or {}
+        webhook_id = str(automation.get("webhook_id", "")).strip()
+        return web.json_response({
+            "webhook_enabled": bool(automation.get("webhook_enabled", False)),
+            "webhook_id": webhook_id,
+            "webhook_path": f"api/automation/webhook/{webhook_id}" if webhook_id else "",
+            "cooldown_seconds": int(automation.get("cooldown_seconds", 10)),
+            "triggers": automation.get("triggers", []) or [],
+        })
+
+    async def handle_run_automation_trigger(self, request: web.Request) -> web.Response:
+        """Run a configured preset from a local HA service or trusted caller."""
+        return await self._execute_automation_trigger(
+            request.match_info.get("trigger_id", ""),
+            source="ha_service",
+        )
+
+    async def handle_automation_webhook(self, request: web.Request) -> web.Response:
+        """Run an admin-approved preset through a secret-bearing webhook."""
+        automation = self.cfg.automation or {}
+        if not automation.get("webhook_enabled"):
+            return web.json_response({"error": "webhooks are disabled"}, status=404)
+
+        webhook_id = request.match_info.get("webhook_id", "")
+        expected_id = str(automation.get("webhook_id", "")).strip()
+        if not expected_id or not hmac.compare_digest(webhook_id, expected_id):
+            return web.json_response({"error": "webhook not found"}, status=404)
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            return web.json_response({"error": "json body must be an object"}, status=400)
+
+        supplied_secret = request.headers.get("X-Simson-Webhook-Secret", "")
+        if not supplied_secret:
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.lower().startswith("bearer "):
+                supplied_secret = auth_header[7:].strip()
+        if not supplied_secret:
+            supplied_secret = str(body.get("secret", "")).strip()
+
+        expected_secret = str(automation.get("webhook_secret", "")).strip()
+        if not expected_secret or not hmac.compare_digest(supplied_secret, expected_secret):
+            logger.warning("Rejected automation webhook with invalid secret")
+            return web.json_response({"error": "unauthorized"}, status=401)
+
+        trigger_id = str(body.get("trigger_id", "")).strip()
+        if not trigger_id:
+            return web.json_response({"error": "trigger_id is required"}, status=400)
+        return await self._execute_automation_trigger(trigger_id, source="webhook")
+
+    async def _execute_automation_trigger(self, trigger_id: str, source: str) -> web.Response:
+        """Resolve a configured preset and invoke the normal call handler."""
+        automation = self.cfg.automation or {}
+        trigger = next(
+            (
+                item for item in (automation.get("triggers", []) or [])
+                if isinstance(item, dict)
+                if str(item.get("id", "")).strip() == str(trigger_id).strip()
+            ),
+            None,
+        )
+        if not trigger or not trigger.get("enabled", True):
+            return web.json_response({"error": "automation trigger not found or disabled"}, status=404)
+
+        cooldown = max(1, int(automation.get("cooldown_seconds", 10)))
+        now = time.time()
+        last_run = self._automation_last_run.get(trigger_id, 0)
+        if now - last_run < cooldown:
+            retry_after = max(1, int(cooldown - (now - last_run)))
+            return web.json_response({
+                "error": "automation trigger rate limited",
+                "retry_after": retry_after,
+            }, status=429)
+
+        target_id = str(trigger.get("target_id", "")).strip()
+        if not target_id:
+            return web.json_response({"error": "automation trigger has no target"}, status=422)
+
+        self._automation_last_run[trigger_id] = now
+        logger.info("Running automation trigger %s from %s to target %s", trigger_id, source, target_id)
+        response = await self._initiate_call({
+            "target_id": target_id,
+            "caller_id": str(trigger.get("caller_id", "")).strip(),
+            "caller_user_id": f"automation:{trigger_id}",
+        }, source=f"{source}:{trigger_id}")
+
+        if response.status >= 400:
+            self._automation_last_run.pop(trigger_id, None)
+            return response
+
+        if self.addon and getattr(self.addon, "ha", None):
+            await self.addon.ha.fire_event("simson_automation_triggered", {
+                "trigger_id": trigger_id,
+                "label": trigger.get("label", trigger_id),
+                "target_id": target_id,
+                "source": source,
+            })
+        return response
 
     async def handle_answer(self, request: web.Request) -> web.Response:
         """Answer an incoming call."""

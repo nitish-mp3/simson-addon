@@ -197,6 +197,17 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,
 .route-help-card b{display:block;color:var(--text2);font-size:12px;margin-bottom:3px}
 @media(max-width:560px){.routing-grid{grid-template-columns:1fr}.route-row{align-items:flex-start;flex-direction:column}.route-actions{width:100%;flex-wrap:wrap}}
 @media(max-width:560px){.route-help{grid-template-columns:1fr}}
+/* ── Automation triggers ───────────────────────────────────────────── */
+.automation-card{background:linear-gradient(135deg,#1b5e2018,#01579b20);
+  border:1px solid #66bb6a33;border-radius:var(--radius);padding:14px;margin-top:14px}
+.automation-list{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+.automation-row{padding:12px;background:var(--surface2);border:1px solid var(--border2);
+  border-radius:var(--radius-sm)}
+.automation-row-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.automation-row-title{font-size:13px;font-weight:700;flex:1}
+.code-box{background:#111;border:1px solid var(--border2);border-radius:var(--radius-xs);
+  color:#a5d6a7;font:11px/1.5 monospace;padding:9px 10px;word-break:break-all;
+  white-space:pre-wrap;margin-top:8px}
 /* ── Save bar ───────────────────────────────────────────────────────── */
 .save-bar{background:var(--surface);border:1px solid var(--border);
           border-radius:var(--radius);padding:16px 18px;
@@ -522,6 +533,56 @@ p.muted{padding:4px 0}
         </div>
       </div>
 
+      <!-- Automation Triggers ------------------------------------- -->
+      <div class="section">
+        <div class="section-head" style="cursor:default">
+          <div class="section-head-left">
+            <h3>⚡ Automation &amp; Webhook Calls</h3>
+            <span id="automation-count-badge" class="section-badge section-badge-off">0</span>
+          </div>
+          <button class="btn-sm" onclick="addAutomationTrigger()">+ Add Trigger</button>
+        </div>
+        <div class="section-body">
+          <div class="automation-card">
+            <p class="field-hint" style="margin-bottom:12px">
+              Create safe call presets for Home Assistant automations or external webhooks.
+              Each preset can dial only a saved routing target, including a SIP desk phone.
+            </p>
+            <label class="checkbox-row">
+              <input id="automation-webhook-enabled" type="checkbox" onchange="markSettingsDirty();renderAutomationPreview()">
+              <span>Enable secret-protected external webhook</span>
+            </label>
+            <div class="routing-grid">
+              <div class="field">
+                <label>Webhook ID</label>
+                <input id="automation-webhook-id" type="text" placeholder="site_alarm_calls"
+                       oninput="markSettingsDirty();renderAutomationPreview()">
+              </div>
+              <div class="field">
+                <label>Webhook Secret <span class="hint-tag">keep private</span></label>
+                <input id="automation-webhook-secret" type="password" autocomplete="new-password"
+                       placeholder="Generate a secure secret"
+                       oninput="markSettingsDirty();renderAutomationPreview()">
+              </div>
+              <div class="field">
+                <label>Repeat Protection <span class="hint-tag">seconds</span></label>
+                <input id="automation-cooldown" type="number" min="1" max="3600" value="10"
+                       onchange="markSettingsDirty()">
+              </div>
+            </div>
+            <div class="quick-route-actions">
+              <button class="btn-secondary btn" style="font-size:12px;padding:8px 14px"
+                      onclick="generateWebhookCredentials()">Generate Credentials</button>
+            </div>
+            <div id="automation-webhook-preview"></div>
+          </div>
+          <div id="automation-list" class="automation-list"></div>
+          <div id="automation-empty" class="targets-empty">
+            No automation presets yet. Add one and select a saved SIP phone or node route.
+          </div>
+        </div>
+      </div>
+
       <!-- Errors + Save bar --------------------------------------- -->
       <div id="save-errors-box" class="save-errors hidden"></div>
       <div id="save-restart-note" class="save-restart-note hidden">
@@ -568,6 +629,8 @@ let _routing = {};
 let _availability = {};
 let _routeOverrides = {};
 let _liveRouting = {};
+let _automation = {};
+let _automationTriggers = [];
 
 // ─── Bootstrap ──────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', init);
@@ -666,6 +729,8 @@ function applySettingsToForm(s) {
   _routing = JSON.parse(JSON.stringify(s.routing || {}));
   _availability = JSON.parse(JSON.stringify(s.availability || {}));
   _routeOverrides = JSON.parse(JSON.stringify(s.route_overrides || {}));
+  _automation = JSON.parse(JSON.stringify(s.automation || {}));
+  _automationTriggers = JSON.parse(JSON.stringify(_automation.triggers || []));
   setVal('routing-strategy', _routing.strategy || 'priority');
   setVal('routing-ring-seconds', _routing.ring_seconds || 25);
   setVal('routing-max-attempts', _routing.max_attempts || 4);
@@ -673,9 +738,15 @@ function applySettingsToForm(s) {
   setCheck('routing-skip-unavailable', _routing.skip_unavailable !== false);
   setVal('site-availability-mode', _availability.mode || 'available');
   setVal('site-availability-reason', _availability.reason || '');
+  setCheck('automation-webhook-enabled', !!_automation.webhook_enabled);
+  setVal('automation-webhook-id', _automation.webhook_id || '');
+  setVal('automation-webhook-secret', _automation.webhook_secret || '');
+  setVal('automation-cooldown', _automation.cooldown_seconds || 10);
   applyQuickRoutePreset(getVal('quick-kind') || 'node');
   renderRoutingBoard();
   renderTargets();
+  renderAutomationTriggers();
+  renderAutomationPreview();
   _settingsDirty = false;
   setSaveStatus('', '');
 }
@@ -712,6 +783,7 @@ function collectSettings() {
     },
     route_overrides: _routeOverrides || {},
     call_targets: collectTargets(),
+    automation: collectAutomation(),
   };
 }
 
@@ -956,6 +1028,7 @@ function createQuickRoute() {
   clearQuickRoute(false);
   renderTargets();
   renderRoutingBoard();
+  renderAutomationTriggers();
   setSaveStatus('Route added. Press Save Settings to keep it.', 'ok');
 }
 
@@ -1478,6 +1551,7 @@ function addTarget() {
   markSettingsDirty();
   renderTargets();
   renderRoutingBoard();
+  renderAutomationTriggers();
   // Scroll to new target
   const last = document.getElementById('targets-list')?.lastElementChild;
   if (last) last.scrollIntoView({behavior: 'smooth', block: 'nearest'});
@@ -1497,6 +1571,163 @@ function removeTarget(i) {
   markSettingsDirty();
   renderTargets();
   renderRoutingBoard();
+  renderAutomationTriggers();
+}
+
+// ─── Automation presets / webhooks ──────────────────────────────────────────
+function collectAutomation() {
+  return {
+    webhook_enabled: getCheck('automation-webhook-enabled'),
+    webhook_id: getVal('automation-webhook-id').trim(),
+    webhook_secret: getVal('automation-webhook-secret').trim(),
+    cooldown_seconds: parseInt(getVal('automation-cooldown')) || 10,
+    triggers: _automationTriggers.map(t => ({
+      id: String(t.id || '').trim(),
+      label: String(t.label || '').trim(),
+      target_id: String(t.target_id || '').trim(),
+      caller_id: String(t.caller_id || '').trim(),
+      enabled: t.enabled !== false,
+    })),
+  };
+}
+
+function renderAutomationTriggers() {
+  const list = document.getElementById('automation-list');
+  const empty = document.getElementById('automation-empty');
+  const badge = document.getElementById('automation-count-badge');
+  if (!list || !empty) return;
+  if (badge) {
+    badge.textContent = _automationTriggers.length;
+    badge.className = 'section-badge ' +
+      (_automationTriggers.length ? 'section-badge-on' : 'section-badge-off');
+  }
+  if (!_automationTriggers.length) {
+    list.innerHTML = '';
+    empty.style.display = '';
+    return;
+  }
+  empty.style.display = 'none';
+  list.innerHTML = _automationTriggers.map((t, i) => {
+    const options = automationTargetOptions(t.target_id || '');
+    return `<div class="automation-row">
+      <div class="automation-row-head">
+        <span>⚡</span>
+        <span class="automation-row-title">${esc(t.label || t.id || 'New automation trigger')}</span>
+        <label class="checkbox-row" style="padding:0">
+          <input type="checkbox"${t.enabled !== false ? ' checked' : ''}
+                 onchange="automationTriggerField(${i},'enabled',this.checked)">
+          <span>Enabled</span>
+        </label>
+        <button class="btn-icon del" onclick="removeAutomationTrigger(${i})" title="Remove trigger">✕</button>
+      </div>
+      <div class="routing-grid" style="margin-top:0">
+        <div class="field">
+          <label>Trigger ID <span class="hint-tag">used by HA automation</span></label>
+          <input value="${esc(t.id || '')}" placeholder="doorbell_call"
+                 oninput="automationTriggerField(${i},'id',this.value)">
+        </div>
+        <div class="field">
+          <label>Friendly Name</label>
+          <input value="${esc(t.label || '')}" placeholder="Doorbell to Dining Phone"
+                 oninput="automationTriggerField(${i},'label',this.value)">
+        </div>
+        <div class="field">
+          <label>Call Target <span class="hint-tag">saved route</span></label>
+          <select onchange="automationTriggerField(${i},'target_id',this.value)">
+            <option value="">Select a saved target…</option>
+            ${options}
+          </select>
+          <div class="field-hint">To call a desk phone, create a Routing Target with type SIP desk phone first.</div>
+        </div>
+        <div class="field">
+          <label>Caller ID <span class="hint-tag">optional</span></label>
+          <input value="${esc(t.caller_id || '')}" placeholder='"Doorbell" &lt;100&gt;'
+                 oninput="automationTriggerField(${i},'caller_id',this.value)">
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function automationTargetOptions(selected) {
+  return (_targets || []).map(t => {
+    const id = String(t.id || '');
+    const detail = [targetTypeLabel(t.type || 'node'), t.extension || t.node_id || '']
+      .filter(Boolean).join(' · ');
+    return `<option value="${esc(id)}"${id === selected ? ' selected' : ''}>` +
+      `${esc(t.label || id)}${detail ? ' — ' + esc(detail) : ''}</option>`;
+  }).join('');
+}
+
+function addAutomationTrigger() {
+  _automationTriggers.push({
+    id: '',
+    label: '',
+    target_id: '',
+    caller_id: '',
+    enabled: true,
+  });
+  markSettingsDirty();
+  renderAutomationTriggers();
+  document.getElementById('automation-list')?.lastElementChild?.scrollIntoView({
+    behavior: 'smooth', block: 'nearest',
+  });
+}
+
+function removeAutomationTrigger(i) {
+  _automationTriggers.splice(i, 1);
+  markSettingsDirty();
+  renderAutomationTriggers();
+}
+
+function automationTriggerField(i, key, value) {
+  if (!_automationTriggers[i]) return;
+  _automationTriggers[i][key] = value;
+  markSettingsDirty();
+  if (key === 'id' || key === 'label') renderAutomationPreview();
+}
+
+function randomHex(bytes = 24) {
+  const values = new Uint8Array(bytes);
+  crypto.getRandomValues(values);
+  return Array.from(values, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function generateWebhookCredentials() {
+  const id = `site_${randomHex(8)}`;
+  setVal('automation-webhook-id', id);
+  setVal('automation-webhook-secret', randomHex(24));
+  setCheck('automation-webhook-enabled', true);
+  markSettingsDirty();
+  renderAutomationPreview();
+}
+
+function renderAutomationPreview() {
+  const preview = document.getElementById('automation-webhook-preview');
+  if (!preview) return;
+  const id = getVal('automation-webhook-id').trim();
+  const secret = getVal('automation-webhook-secret').trim();
+  const trigger = _automationTriggers.find(t => String(t.id || '').trim());
+  if (!getCheck('automation-webhook-enabled') || !id) {
+    preview.innerHTML = '<div class="field-hint" style="margin-top:10px">Generate credentials to enable an external webhook.</div>';
+    return;
+  }
+  const port = parseInt(_loadedSettings.local_api_port) || 8799;
+  const path = `http://${location.hostname}:${port}/api/automation/webhook/${encodeURIComponent(id)}`;
+  const triggerId = String(trigger?.id || 'doorbell_call').trim();
+  preview.innerHTML = `
+    <div class="field-hint" style="margin-top:12px">Direct addon webhook URL. Use the HAOS LAN hostname or IP if this browser is connected through a proxy.</div>
+    <div class="code-box">${esc(path)}</div>
+    <div class="field-hint" style="margin-top:10px">POST JSON with the private secret header</div>
+    <div class="code-box">curl -X POST '${esc(path)}' \\
+  -H 'Content-Type: application/json' \\
+  -H 'X-Simson-Webhook-Secret: ${esc(secret || 'YOUR_SECRET')}' \\
+  -d '{"trigger_id":"${esc(triggerId)}"}'</div>
+    <div class="field-hint" style="margin-top:10px">Home Assistant automation action</div>
+    <div class="code-box">action:
+  - service: simson.run_trigger
+    data:
+      trigger_id: ${esc(triggerId)}</div>`;
 }
 
 // ─── Tabs ─────────────────────────────────────────────────────────────────────

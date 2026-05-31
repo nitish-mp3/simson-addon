@@ -341,6 +341,9 @@ class SimsonAddon:
         target_user_name = metadata.get("target_user_name", "")
 
         existing = self.call_mgr.get(call_id)
+        if existing and existing.metadata.get("forwarded_to_sip"):
+            logger.warning("Ignoring duplicate invite for already forwarded SIP call %s", call_id)
+            return
         if existing and existing.state in (CallState.INCOMING, CallState.RINGING, CallState.ACTIVE):
             logger.info("Ignoring duplicate invite for existing call %s", call_id)
             return
@@ -419,7 +422,12 @@ class SimsonAddon:
         if not current or current.state not in (CallState.INCOMING, CallState.RINGING, CallState.REQUESTING):
             logger.info("Skipping SIP route for call %s because it is no longer ringing", call.call_id)
             return
+        if current.metadata.get("forwarded_to_sip"):
+            logger.info("Skipping SIP route for call %s because it was already forwarded", call.call_id)
+            return
         if call.call_type != "sip" or not call.metadata.get("sip_bridge_id"):
+            return
+        if call.metadata.get("forwarded_to_sip"):
             return
 
         source_ext = str(call.metadata.get("sip_extension", "")).strip()
