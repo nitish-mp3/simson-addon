@@ -205,6 +205,26 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,
   border-radius:var(--radius-sm)}
 .automation-row-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
 .automation-row-title{font-size:13px;font-weight:700;flex:1}
+.door-guide{background:linear-gradient(135deg,#004d4029,#e6510018);
+  border:1px solid #26a69a55;border-radius:var(--radius);padding:16px;margin-top:14px}
+.door-guide-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;
+  margin-bottom:14px;flex-wrap:wrap}
+.door-guide-title{font-size:15px;font-weight:800;color:var(--text)}
+.door-guide-sub{font-size:11px;color:var(--text3);line-height:1.55;margin-top:4px;max-width:690px}
+.door-flow{display:grid;grid-template-columns:minmax(0,1fr) 44px minmax(0,1fr);
+  gap:10px;align-items:stretch;margin-top:12px}
+.door-device{background:#071b1dcc;border:1px solid #26a69a44;border-radius:var(--radius-sm);padding:12px}
+.door-device-target{background:#211407cc;border-color:#ff980044}
+.door-device-role{font-size:10px;text-transform:uppercase;letter-spacing:.65px;font-weight:800;
+  color:#80cbc4;margin-bottom:5px}
+.door-device-target .door-device-role{color:#ffcc80}
+.door-device-title{font-size:13px;color:var(--text);font-weight:800;margin-bottom:9px}
+.door-arrow{display:flex;align-items:center;justify-content:center;color:#80cbc4;font-size:22px;font-weight:800}
+.door-guide-result{margin-top:12px;padding:10px 12px;border-radius:var(--radius-xs);
+  background:#0c1818;border:1px solid var(--border);font-size:12px;color:var(--text2);line-height:1.55}
+.door-flow-summary{margin-top:9px;padding:9px 10px;border:1px solid #26a69a33;
+  border-radius:var(--radius-xs);background:#004d4018;color:#b2dfdb;font-size:11px;line-height:1.55}
+@media(max-width:650px){.door-flow{grid-template-columns:1fr}.door-arrow{transform:rotate(90deg);min-height:24px}}
 .code-box{background:#111;border:1px solid var(--border2);border-radius:var(--radius-xs);
   color:#a5d6a7;font:11px/1.5 monospace;padding:9px 10px;word-break:break-all;
   white-space:pre-wrap;margin-top:8px}
@@ -392,7 +412,7 @@ p.muted{padding:4px 0}
       </div>
 
       <!-- SIP Phone Endpoints ------------------------------------- -->
-      <div class="section">
+      <div class="section" id="section-sip-endpoints">
         <div class="section-head"><h3 class="section-head-left">☎ SIP Phone Endpoints</h3></div>
         <div class="section-body" id="sip-endpoints-body">
           <div style="height:14px"></div>
@@ -540,14 +560,65 @@ p.muted{padding:4px 0}
             <h3>⚡ Automation &amp; Webhook Calls</h3>
             <span id="automation-count-badge" class="section-badge section-badge-off">0</span>
           </div>
-          <button class="btn-sm" onclick="addAutomationTrigger()">+ Add Trigger</button>
+          <button class="btn-sm" onclick="addAutomationTrigger()">+ Advanced Trigger</button>
         </div>
         <div class="section-body">
+          <div class="door-guide">
+            <div class="door-guide-head">
+              <div>
+                <div class="door-guide-title">📹 Door Camera Call Setup</div>
+                <div class="door-guide-sub">
+                  Configure the real door flow here. When face recognition reports an unknown visitor,
+                  Simson calls the outdoor camera station first and then bridges its live SIP audio and
+                  H.264 video to the indoor phone you choose.
+                </div>
+              </div>
+              <button class="btn-secondary btn" style="font-size:12px;padding:8px 12px"
+                      onclick="scrollToSIPPhones()">Manage SIP Phones</button>
+            </div>
+            <div class="door-flow">
+              <div class="door-device">
+                <div class="door-device-role">1 · Video source</div>
+                <div class="door-device-title">Outdoor door station with camera</div>
+                <div class="field">
+                  <label>Call video from this SIP phone</label>
+                  <select id="door-guide-source" onchange="renderDoorCameraGuideStatus()"></select>
+                  <div class="field-hint">The station must auto-answer callback calls and publish its camera media.</div>
+                </div>
+              </div>
+              <div class="door-arrow">→</div>
+              <div class="door-device door-device-target">
+                <div class="door-device-role">2 · Video destination</div>
+                <div class="door-device-title">Indoor monitor or SIP phone</div>
+                <div class="field">
+                  <label>Redirect live audio + video to this SIP phone</label>
+                  <select id="door-guide-target" onchange="renderDoorCameraGuideStatus()"></select>
+                  <div class="field-hint">Choose the indoor video-capable phone that should ring for unknown visitors.</div>
+                </div>
+              </div>
+            </div>
+            <div class="routing-grid" style="margin-top:12px">
+              <div class="field">
+                <label>Flow Name</label>
+                <input id="door-guide-label" value="Unknown visitor at front door"
+                       placeholder="Unknown visitor at front door">
+              </div>
+              <div class="field">
+                <label>Indoor Phone Ring Time <span class="hint-tag">seconds</span></label>
+                <input id="door-guide-timeout" type="number" min="5" max="120" value="30">
+              </div>
+            </div>
+            <div id="door-guide-status" class="door-guide-result"></div>
+            <div class="quick-route-actions">
+              <button class="btn btn-primary" style="font-size:12px;padding:9px 15px"
+                      onclick="createDoorCameraFlow()">Create Door Camera Flow</button>
+            </div>
+          </div>
           <div class="automation-card">
             <p class="field-hint" style="margin-bottom:12px">
-              Create safe call presets for Home Assistant automations or external webhooks.
-              Each preset can dial only a saved routing target. Door camera presets can bridge
-              an auto-answer outdoor SIP station directly to an indoor SIP phone with native media.
+              Webhook credentials are shared by this site's safe automation presets. Generate them
+              once, then configure your door station or face-recognition controller to send the
+              displayed request when an unknown visitor is detected.
             </p>
             <label class="checkbox-row">
               <input id="automation-webhook-enabled" type="checkbox" onchange="markSettingsDirty();renderAutomationPreview()">
@@ -579,7 +650,7 @@ p.muted{padding:4px 0}
           </div>
           <div id="automation-list" class="automation-list"></div>
           <div id="automation-empty" class="targets-empty">
-            No automation presets yet. Add one and select a saved SIP phone or node route.
+            No automation presets yet. Use <b>Door Camera Call Setup</b> above, or add an advanced trigger.
           </div>
         </div>
       </div>
@@ -1230,6 +1301,7 @@ function renderSIPEndpoints() {
     </div>
   `;
   body.innerHTML = html;
+  renderDoorCameraGuideOptions();
 }
 
 function showCreateSIPForm() {
@@ -1590,6 +1662,181 @@ function removeTarget(i) {
 }
 
 // ─── Automation presets / webhooks ──────────────────────────────────────────
+function scrollToSIPPhones() {
+  document.getElementById('section-sip-endpoints')?.scrollIntoView({
+    behavior: 'smooth', block: 'start',
+  });
+}
+
+function doorEndpointLabel(ep) {
+  if (!ep) return '';
+  const flags = [
+    ep.video_enabled ? 'H.264 video' : 'audio only',
+    ep.enabled ? 'enabled' : 'disabled',
+  ].join(' · ');
+  return `${ep.description || ep.username || ep.extension} · ext ${ep.extension} · ${flags}`;
+}
+
+function renderDoorCameraGuideOptions() {
+  const source = document.getElementById('door-guide-source');
+  const target = document.getElementById('door-guide-target');
+  if (!source || !target) return;
+
+  const previousSource = source.value;
+  const previousTarget = target.value;
+  const endpoints = Array.isArray(_sipEndpoints) ? _sipEndpoints : [];
+  const options = endpoints.map(ep =>
+    `<option value="${esc(ep.extension)}">${esc(doorEndpointLabel(ep))}</option>`
+  ).join('');
+  const empty = '<option value="">No SIP phones configured yet</option>';
+  source.innerHTML = '<option value="">Select outdoor camera station…</option>' + (options || empty);
+  target.innerHTML = '<option value="">Select indoor video phone…</option>' + (options || empty);
+
+  const hasExtension = value => endpoints.some(ep => String(ep.extension) === String(value));
+  if (hasExtension(previousSource)) source.value = previousSource;
+  if (hasExtension(previousTarget)) target.value = previousTarget;
+
+  const videoEndpoints = endpoints.filter(ep => ep.enabled && ep.video_enabled);
+  if (!source.value && videoEndpoints.length) source.value = String(videoEndpoints[0].extension);
+  if (!target.value) {
+    const next = videoEndpoints.find(ep => String(ep.extension) !== String(source.value));
+    if (next) target.value = String(next.extension);
+  }
+  renderDoorCameraGuideStatus();
+}
+
+function findDoorTargetByExtension(extension) {
+  return (_targets || []).find(t =>
+    ['sip', 'asterisk'].includes(String(t.type || '')) &&
+    String(t.extension || '').trim() === String(extension || '').trim()
+  );
+}
+
+function findDoorTriggerTarget(trigger) {
+  return (_targets || []).find(t => String(t.id || '') === String(trigger?.target_id || ''));
+}
+
+function renderDoorCameraGuideStatus(message = '') {
+  const box = document.getElementById('door-guide-status');
+  if (!box) return;
+  const sourceExt = getVal('door-guide-source').trim();
+  const targetExt = getVal('door-guide-target').trim();
+  const source = (_sipEndpoints || []).find(ep => String(ep.extension) === sourceExt);
+  const target = (_sipEndpoints || []).find(ep => String(ep.extension) === targetExt);
+  const existing = (_automationTriggers || []).filter(t => String(t.mode || '') === 'door_station');
+
+  let html = message ? `<div style="margin-bottom:7px"><b>${esc(message)}</b></div>` : '';
+  if (!(_sipEndpoints || []).length) {
+    html += 'Add the outdoor door station and indoor monitor under <b>SIP Phone Endpoints</b> first. Mark both as <b>Video capable</b>.';
+  } else if (!sourceExt || !targetExt) {
+    html += 'Choose the outdoor camera station and the indoor phone that should receive its live video.';
+  } else if (sourceExt === targetExt) {
+    html += '<span style="color:var(--red-light)">Choose two different SIP phones: one outdoor source and one indoor destination.</span>';
+  } else if (!source?.enabled || !target?.enabled) {
+    html += '<span style="color:var(--red-light)">Both selected SIP endpoints must be enabled.</span>';
+  } else if (!source?.video_enabled || !target?.video_enabled) {
+    html += '<span style="color:var(--yellow-light)">Enable <b>Video capable</b> on both selected SIP endpoints before creating this flow.</span>';
+  } else {
+    html += `<b>Ready:</b> unknown-face webhook → call outdoor station <b>${esc(sourceExt)}</b> → bridge live audio + H.264 video → ring indoor phone <b>${esc(targetExt)}</b>.`;
+  }
+
+  if (existing.length) {
+    html += '<div class="door-flow-summary"><b>Saved door flows</b><br>' +
+      existing.map(t => {
+        const destination = findDoorTriggerTarget(t);
+        return `${esc(t.label || t.id)}: outdoor ext ${esc(t.source_extension || '—')} → ` +
+          `indoor ${esc(destination?.label || destination?.extension || t.target_id || '—')} ` +
+          `(ext ${esc(destination?.extension || '—')})`;
+      }).join('<br>') + '</div>';
+  }
+  box.innerHTML = html;
+}
+
+function uniqueAutomationId(base) {
+  const existing = new Set((_automationTriggers || []).map(t => String(t.id || '')));
+  if (!existing.has(base)) return base;
+  let suffix = 2;
+  while (existing.has(`${base}_${suffix}`)) suffix += 1;
+  return `${base}_${suffix}`;
+}
+
+function ensureDoorPhoneTarget(ep) {
+  const existing = findDoorTargetByExtension(ep.extension);
+  if (existing) return existing;
+  const base = `door_phone_${slugify(ep.description || ep.username || ep.extension)}`;
+  const ids = new Set((_targets || []).map(t => String(t.id || '')));
+  let id = base;
+  let suffix = 2;
+  while (ids.has(id)) {
+    id = `${base}_${suffix}`;
+    suffix += 1;
+  }
+  const target = {
+    type: 'sip',
+    id,
+    label: ep.description || ep.username || `SIP ${ep.extension}`,
+    node_id: '',
+    extension: String(ep.extension),
+    context: '',
+    trunk: '',
+    caller_id: '',
+    timeout: parseInt(getVal('door-guide-timeout')) || 30,
+    fallback_targets: [],
+    icon: '📹',
+  };
+  _targets.push(target);
+  return target;
+}
+
+function createDoorCameraFlow() {
+  const sourceExt = getVal('door-guide-source').trim();
+  const targetExt = getVal('door-guide-target').trim();
+  const source = (_sipEndpoints || []).find(ep => String(ep.extension) === sourceExt);
+  const target = (_sipEndpoints || []).find(ep => String(ep.extension) === targetExt);
+  const timeout = parseInt(getVal('door-guide-timeout')) || 30;
+  const label = getVal('door-guide-label').trim() || 'Unknown visitor at front door';
+
+  if (!source || !target) {
+    renderDoorCameraGuideStatus('Select both SIP phones before creating the flow.');
+    return;
+  }
+  if (sourceExt === targetExt) {
+    renderDoorCameraGuideStatus('The outdoor station and indoor phone must be different devices.');
+    return;
+  }
+  if (!source.enabled || !target.enabled || !source.video_enabled || !target.video_enabled) {
+    renderDoorCameraGuideStatus('Both devices must be enabled and marked Video capable first.');
+    return;
+  }
+  if (timeout < 5 || timeout > 120) {
+    renderDoorCameraGuideStatus('Indoor phone ring time must be between 5 and 120 seconds.');
+    return;
+  }
+
+  const savedTarget = ensureDoorPhoneTarget(target);
+  _automationTriggers.push({
+    id: uniqueAutomationId(`unknown_face_${sourceExt}`),
+    label,
+    target_id: savedTarget.id,
+    caller_id: `"${label}" <${sourceExt}>`,
+    mode: 'door_station',
+    source_extension: sourceExt,
+    timeout,
+    enabled: true,
+  });
+  if (!getVal('automation-webhook-id').trim() || getVal('automation-webhook-secret').trim().length < 24) {
+    generateWebhookCredentials();
+  } else {
+    setCheck('automation-webhook-enabled', true);
+  }
+  markSettingsDirty();
+  renderTargets();
+  renderRoutingBoard();
+  renderAutomationTriggers();
+  renderAutomationPreview();
+  renderDoorCameraGuideStatus('Door camera flow created. Press Save Settings to activate it.');
+}
+
 function collectAutomation() {
   return {
     webhook_enabled: getCheck('automation-webhook-enabled'),
@@ -1622,6 +1869,7 @@ function renderAutomationTriggers() {
   if (!_automationTriggers.length) {
     list.innerHTML = '';
     empty.style.display = '';
+    renderDoorCameraGuideStatus();
     return;
   }
   empty.style.display = 'none';
@@ -1629,10 +1877,15 @@ function renderAutomationTriggers() {
     const mode = String(t.mode || 'standard');
     const options = automationTargetOptions(t.target_id || '', mode);
     const doorOnly = mode === 'door_station' ? '' : 'display:none';
+    const target = findDoorTriggerTarget(t);
+    const summary = mode === 'door_station'
+      ? `Unknown-face webhook → outdoor camera ext ${t.source_extension || '—'} → live audio + H.264 video → ${target?.label || t.target_id || 'select indoor phone'} (ext ${target?.extension || '—'})`
+      : `Automation preset → ${target?.label || t.target_id || 'select a saved route'}`;
     return `<div class="automation-row">
       <div class="automation-row-head">
-        <span>⚡</span>
+        <span>${mode === 'door_station' ? '📹' : '⚡'}</span>
         <span class="automation-row-title">${esc(t.label || t.id || 'New automation trigger')}</span>
+        <span class="section-badge ${mode === 'door_station' ? 'section-badge-on' : 'section-badge-off'}">${mode === 'door_station' ? 'door video' : 'standard'}</span>
         <label class="checkbox-row" style="padding:0">
           <input type="checkbox"${t.enabled !== false ? ' checked' : ''}
                  onchange="automationTriggerField(${i},'enabled',this.checked)">
@@ -1640,6 +1893,7 @@ function renderAutomationTriggers() {
         </label>
         <button class="btn-icon del" onclick="removeAutomationTrigger(${i})" title="Remove trigger">✕</button>
       </div>
+      <div class="door-flow-summary">${esc(summary)}</div>
       <div class="routing-grid" style="margin-top:0">
         <div class="field">
           <label>Trigger ID <span class="hint-tag">used by HA automation</span></label>
@@ -1686,6 +1940,7 @@ function renderAutomationTriggers() {
       </div>
     </div>`;
   }).join('');
+  renderDoorCameraGuideStatus();
 }
 
 function automationTargetOptions(selected, mode = 'standard') {
@@ -1722,6 +1977,7 @@ function removeAutomationTrigger(i) {
   _automationTriggers.splice(i, 1);
   markSettingsDirty();
   renderAutomationTriggers();
+  renderAutomationPreview();
 }
 
 function automationTriggerField(i, key, value) {
@@ -1729,7 +1985,10 @@ function automationTriggerField(i, key, value) {
   _automationTriggers[i][key] = value;
   markSettingsDirty();
   if (key === 'mode') renderAutomationTriggers();
-  if (key === 'id' || key === 'label' || key === 'mode') renderAutomationPreview();
+  if (key === 'id' || key === 'label' || key === 'mode' || key === 'target_id' || key === 'source_extension') {
+    renderAutomationPreview();
+    renderDoorCameraGuideStatus();
+  }
 }
 
 function randomHex(bytes = 24) {
@@ -1752,7 +2011,9 @@ function renderAutomationPreview() {
   if (!preview) return;
   const id = getVal('automation-webhook-id').trim();
   const secret = getVal('automation-webhook-secret').trim();
-  const trigger = _automationTriggers.find(t => String(t.id || '').trim());
+  const trigger = _automationTriggers.find(t =>
+    String(t.mode || '') === 'door_station' && String(t.id || '').trim()
+  ) || _automationTriggers.find(t => String(t.id || '').trim());
   if (!getCheck('automation-webhook-enabled') || !id) {
     preview.innerHTML = '<div class="field-hint" style="margin-top:10px">Generate credentials to enable an external webhook.</div>';
     return;
@@ -1763,7 +2024,7 @@ function renderAutomationPreview() {
   preview.innerHTML = `
     <div class="field-hint" style="margin-top:12px">Direct addon webhook URL. Use the HAOS LAN hostname or IP if this browser is connected through a proxy.</div>
     <div class="code-box">${esc(path)}</div>
-    <div class="field-hint" style="margin-top:10px">POST JSON with the private secret header</div>
+    <div class="field-hint" style="margin-top:10px">Face-recognition mismatch action: POST JSON with the private secret header</div>
     <div class="code-box">curl -X POST '${esc(path)}' \\
   -H 'Content-Type: application/json' \\
   -H 'X-Simson-Webhook-Secret: ${esc(secret || 'YOUR_SECRET')}' \\
