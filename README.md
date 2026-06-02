@@ -150,6 +150,7 @@ The addon exposes a local HTTP API for the HA integration:
 - `POST /api/automation/trigger/{trigger_id}` - Run a configured preset from the local HA integration
 - `POST /api/automation/webhook/{webhook_id}` - Run a configured preset from an external webhook with `X-Simson-Webhook-Secret`
 - `GET /api/automation/device/{webhook_id}/{trigger_id}` - Run a saved preset from GET-only onsite hardware using a private capability URL
+- `GET /api/automation/webhook/{webhook_id}` - Backward-compatible GET-only camera URL when exactly one enabled door preset exists
 
 ## Automation And Webhook Calls
 

@@ -17,7 +17,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.1.2"
+ADDON_VERSION = "4.1.3"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -98,6 +98,7 @@ class LocalAPI:
         self.app.router.add_get("/api/automation", self.handle_get_automation)
         self.app.router.add_post("/api/automation/trigger/{trigger_id}", self.handle_run_automation_trigger)
         self.app.router.add_post("/api/automation/webhook/{webhook_id}", self.handle_automation_webhook)
+        self.app.router.add_get("/api/automation/webhook/{webhook_id}", self.handle_automation_legacy_get)
         self.app.router.add_get(
             "/api/automation/device/{webhook_id}/{trigger_id}",
             self.handle_automation_device_webhook,
@@ -913,6 +914,49 @@ class LocalAPI:
             return web.json_response({"error": "trigger_id is required"}, status=400)
         logger.info("Running GET-only device webhook for saved trigger %s", trigger_id)
         return await self._execute_automation_trigger(trigger_id, source="device_webhook")
+
+    async def handle_automation_legacy_get(self, request: web.Request) -> web.Response:
+        """Run the only saved door flow for panels using the historic GET URL.
+
+        Early UI versions displayed /api/automation/webhook/{webhook_id} before
+        distinguishing POST controllers from GET-only camera panels. Preserve that
+        onsite URL safely: it can invoke only one enabled door preset, never an
+        arbitrary trigger or destination. Sites with multiple door presets must
+        use the explicit /api/automation/device/{webhook_id}/{trigger_id} URL.
+        """
+        automation = self.cfg.automation or {}
+        if not automation.get("webhook_enabled"):
+            return web.json_response({"error": "webhooks are disabled"}, status=404)
+
+        webhook_id = request.match_info.get("webhook_id", "")
+        expected_id = str(automation.get("webhook_id", "")).strip()
+        if not expected_id or not hmac.compare_digest(webhook_id, expected_id):
+            return web.json_response({"error": "webhook not found"}, status=404)
+
+        door_triggers = [
+            item
+            for item in (automation.get("triggers", []) or [])
+            if isinstance(item, dict)
+            if item.get("enabled", True)
+            if str(item.get("mode", "")).strip() == "door_station"
+            if str(item.get("id", "")).strip()
+        ]
+        if len(door_triggers) != 1:
+            return web.json_response(
+                {
+                    "error": "legacy GET callback requires exactly one enabled door station preset",
+                    "use": "/api/automation/device/{webhook_id}/{trigger_id}",
+                },
+                status=409,
+            )
+
+        trigger_id = str(door_triggers[0]["id"]).strip()
+        logger.warning(
+            "Running legacy GET-only camera webhook for saved trigger %s; "
+            "regenerate credentials and migrate to the explicit device callback URL",
+            trigger_id,
+        )
+        return await self._execute_automation_trigger(trigger_id, source="legacy_device_webhook")
 
     async def _execute_automation_trigger(self, trigger_id: str, source: str) -> web.Response:
         """Resolve a configured preset and invoke the normal call handler."""

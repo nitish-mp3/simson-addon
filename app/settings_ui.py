@@ -2030,6 +2030,7 @@ function renderAutomationPreview() {
       ? `<div class="code-box">${esc(devicePath)}</div>
          <div class="field-hint" style="margin-top:7px">Paste this complete private URL into the camera's unknown-face callback field. Method: <b>GET</b>. No Home Assistant automation is required.</div>`
       : `<div class="alert alert-warn" style="margin-top:8px">Click <b>Generate Credentials</b> again before using a camera GET callback. Your existing webhook ID predates the stronger private camera URL format.</div>`}
+    <div class="field-hint" style="margin-top:10px">Compatibility note: the historic <code>/api/automation/webhook/${esc(id)}</code> URL is also accepted for GET-only panels when this site has exactly one enabled door flow. Prefer the complete private camera URL above for new setups.</div>
     <div class="field-hint" style="margin-top:14px"><b>Controllers that support POST and private headers</b></div>
     <div class="code-box">${esc(postPath)}</div>
     <div class="field-hint" style="margin-top:7px">Use this stronger header-authenticated request when your controller supports it.</div>
