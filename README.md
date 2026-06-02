@@ -149,6 +149,7 @@ The addon exposes a local HTTP API for the HA integration:
 - `GET /api/automation` - Read the configured onsite automation presets
 - `POST /api/automation/trigger/{trigger_id}` - Run a configured preset from the local HA integration
 - `POST /api/automation/webhook/{webhook_id}` - Run a configured preset from an external webhook with `X-Simson-Webhook-Secret`
+- `GET /api/automation/device/{webhook_id}/{trigger_id}` - Run a saved preset from GET-only onsite hardware using a private capability URL
 
 ## Automation And Webhook Calls
 
@@ -157,7 +158,8 @@ Open the addon panel, select **Settings**, and use **Automation & Webhook Calls*
 1. Create a normal **Routing Target** first. For a desk phone, choose **SIP desk phone extension** and enter its SIP extension.
 2. Add an automation trigger, give it a stable ID such as `doorbell_call`, and select the saved target.
 3. For Home Assistant automations, call `simson.run_trigger` with the configured `trigger_id`.
-4. For external systems, generate webhook credentials and use the displayed URL plus the private `X-Simson-Webhook-Secret` header.
+4. For external systems that support POST headers, generate webhook credentials and use the displayed URL plus the private `X-Simson-Webhook-Secret` header.
+5. For onsite camera panels that support only a GET callback URL, use the displayed private camera URL. Treat the complete URL as a password and regenerate credentials if it is exposed.
 
 Webhooks cannot dial arbitrary numbers supplied by the caller. They can invoke only enabled presets saved by the onsite admin. Each trigger also has repeat protection to prevent accidental call storms.
 
@@ -171,7 +173,10 @@ For an outdoor SIP door station with a camera and face recognition:
 2. Create a **Routing Target** for the indoor extension using **SIP desk phone**.
 3. Under **Automation & Webhook Calls**, create a preset and choose **Door camera SIP bridge**.
 4. Enter the outdoor station SIP extension, select the indoor SIP target, generate webhook credentials, and save.
-5. Configure the station's face-recognition mismatch action to `POST` the displayed webhook URL with the secret header and `{"trigger_id":"your_trigger_id"}`.
+5. Configure the station's face-recognition mismatch action using one displayed recipe:
+   - For a GET-only camera panel, paste the complete private camera callback URL.
+   - For a controller that supports headers, `POST` the authenticated webhook URL with `X-Simson-Webhook-Secret` and `{"trigger_id":"your_trigger_id"}`.
+   - If Home Assistant conditions are required, use the displayed HA webhook relay automation and include `GET` in `allowed_methods`.
 
 The callback workflow calls the outdoor station first and then bridges its native SIP media to the indoor phone. The outdoor station must support auto-answer for SIP callbacks. H.264 video is negotiated only between compatible SIP endpoints; existing HAOS browser audio, gateway, and landline routes remain audio-only.
 

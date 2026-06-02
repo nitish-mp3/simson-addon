@@ -1998,7 +1998,7 @@ function randomHex(bytes = 24) {
 }
 
 function generateWebhookCredentials() {
-  const id = `site_${randomHex(8)}`;
+  const id = `site_${randomHex(24)}`;
   setVal('automation-webhook-id', id);
   setVal('automation-webhook-secret', randomHex(24));
   setCheck('automation-webhook-enabled', true);
@@ -2019,18 +2019,36 @@ function renderAutomationPreview() {
     return;
   }
   const port = parseInt(_loadedSettings.local_api_port) || 8799;
-  const path = `http://${location.hostname}:${port}/api/automation/webhook/${encodeURIComponent(id)}`;
+  const postPath = `http://${location.hostname}:${port}/api/automation/webhook/${encodeURIComponent(id)}`;
   const triggerId = String(trigger?.id || 'doorbell_call').trim();
+  const devicePath = `http://${location.hostname}:${port}/api/automation/device/${encodeURIComponent(id)}/${encodeURIComponent(triggerId)}`;
+  const haPath = `http://${location.hostname}:8123/api/webhook/${encodeURIComponent(id)}`;
+  const strongDeviceId = /^site_[a-f0-9]{48,}$/i.test(id);
   preview.innerHTML = `
-    <div class="field-hint" style="margin-top:12px">Direct addon webhook URL. Use the HAOS LAN hostname or IP if this browser is connected through a proxy.</div>
-    <div class="code-box">${esc(path)}</div>
-    <div class="field-hint" style="margin-top:10px">Face-recognition mismatch action: POST JSON with the private secret header</div>
-    <div class="code-box">curl -X POST '${esc(path)}' \\
+    <div class="field-hint" style="margin-top:12px"><b>Camera panels that can only call a URL using GET</b></div>
+    ${strongDeviceId
+      ? `<div class="code-box">${esc(devicePath)}</div>
+         <div class="field-hint" style="margin-top:7px">Paste this complete private URL into the camera's unknown-face callback field. Method: <b>GET</b>. No Home Assistant automation is required.</div>`
+      : `<div class="alert alert-warn" style="margin-top:8px">Click <b>Generate Credentials</b> again before using a camera GET callback. Your existing webhook ID predates the stronger private camera URL format.</div>`}
+    <div class="field-hint" style="margin-top:14px"><b>Controllers that support POST and private headers</b></div>
+    <div class="code-box">${esc(postPath)}</div>
+    <div class="field-hint" style="margin-top:7px">Use this stronger header-authenticated request when your controller supports it.</div>
+    <div class="code-box">curl -X POST '${esc(postPath)}' \\
   -H 'Content-Type: application/json' \\
   -H 'X-Simson-Webhook-Secret: ${esc(secret || 'YOUR_SECRET')}' \\
   -d '{"trigger_id":"${esc(triggerId)}"}'</div>
-    <div class="field-hint" style="margin-top:10px">Home Assistant automation action</div>
-    <div class="code-box">action:
+    <div class="field-hint" style="margin-top:14px"><b>Optional Home Assistant webhook relay</b></div>
+    <div class="field-hint" style="margin-top:7px">Use this only if you intentionally want HA automation conditions between the camera and Simson. Camera URL:</div>
+    <div class="code-box">${esc(haPath)}</div>
+    <div class="code-box">triggers:
+  - trigger: webhook
+    webhook_id: ${esc(id)}
+    allowed_methods:
+      - GET
+      - POST
+      - PUT
+    local_only: true
+actions:
   - service: simson.run_trigger
     data:
       trigger_id: ${esc(triggerId)}</div>`;

@@ -17,7 +17,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.1.1"
+ADDON_VERSION = "4.1.2"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -98,6 +98,10 @@ class LocalAPI:
         self.app.router.add_get("/api/automation", self.handle_get_automation)
         self.app.router.add_post("/api/automation/trigger/{trigger_id}", self.handle_run_automation_trigger)
         self.app.router.add_post("/api/automation/webhook/{webhook_id}", self.handle_automation_webhook)
+        self.app.router.add_get(
+            "/api/automation/device/{webhook_id}/{trigger_id}",
+            self.handle_automation_device_webhook,
+        )
         self.app.router.add_get("/api/sip-endpoints", self.handle_list_sip_endpoints)
         self.app.router.add_post("/api/sip-endpoints", self.handle_create_sip_endpoint)
         self.app.router.add_put("/api/sip-endpoints/{id}", self.handle_update_sip_endpoint)
@@ -886,6 +890,29 @@ class LocalAPI:
         if not trigger_id:
             return web.json_response({"error": "trigger_id is required"}, status=400)
         return await self._execute_automation_trigger(trigger_id, source="webhook")
+
+    async def handle_automation_device_webhook(self, request: web.Request) -> web.Response:
+        """Run a saved preset from GET-only onsite hardware through a capability URL.
+
+        Some camera panels cannot send POST bodies or custom headers. Their callback
+        URL therefore carries the random webhook ID and a pre-approved trigger ID.
+        The URL is a revocable bearer capability: keep it private and regenerate
+        webhook credentials if it is exposed.
+        """
+        automation = self.cfg.automation or {}
+        if not automation.get("webhook_enabled"):
+            return web.json_response({"error": "webhooks are disabled"}, status=404)
+
+        webhook_id = request.match_info.get("webhook_id", "")
+        expected_id = str(automation.get("webhook_id", "")).strip()
+        if not expected_id or not hmac.compare_digest(webhook_id, expected_id):
+            return web.json_response({"error": "webhook not found"}, status=404)
+
+        trigger_id = str(request.match_info.get("trigger_id", "")).strip()
+        if not trigger_id:
+            return web.json_response({"error": "trigger_id is required"}, status=400)
+        logger.info("Running GET-only device webhook for saved trigger %s", trigger_id)
+        return await self._execute_automation_trigger(trigger_id, source="device_webhook")
 
     async def _execute_automation_trigger(self, trigger_id: str, source: str) -> web.Response:
         """Resolve a configured preset and invoke the normal call handler."""
