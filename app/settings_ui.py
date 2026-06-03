@@ -1221,7 +1221,7 @@ function renderSIPEndpoints() {
           <div class="field" style="width:100%">
             <label>Route To Node ID <span class="hint-tag">— optional dedicated destination</span></label>
             <input type="text" id="sip-route" placeholder="living_room">
-            <div class="field-hint">Set this to the Node ID shown on Overview to make this SIP/landline device ring that HAOS addon.</div>
+            <div class="field-hint">Use only a HAOS Node ID from Overview. Leave blank for normal SIP phones and door stations; this is not the SIP extension.</div>
           </div>
         </div>
         <div class="checkbox-row">
@@ -1337,6 +1337,20 @@ async function createSIPEndpoint(event) {
       '<div class="alert alert-error" style="margin-top:10px">Extension, username, and password are required</div>';
     return;
   }
+  if (routeTo && (routeTo === ext || routeTo === user)) {
+    if (resultDiv) resultDiv.innerHTML =
+      '<div class="alert alert-error" style="margin-top:10px">Route To Node ID is not the SIP extension. Leave it blank unless your HAOS Overview node is actually named ' +
+      esc(routeTo) + '.</div>';
+    return;
+  }
+  const existingLocal = _sipEndpoints.find(ep => ep.extension === ext || ep.username === user);
+  if (existingLocal) {
+    if (resultDiv) resultDiv.innerHTML =
+      '<div class="alert alert-info" style="margin-top:10px">This SIP phone already exists: [' +
+      esc(existingLocal.extension) + '] ' + esc(existingLocal.description || existingLocal.username) +
+      '. Edit the existing card below instead of creating it again.</div>';
+    return;
+  }
 
   const btn = event.target;
   btn.disabled = true;
@@ -1369,6 +1383,13 @@ async function createSIPEndpoint(event) {
       }, 800);
     } else {
       const err = await r.json();
+      if (r.status === 409 && err.existing_endpoint) {
+        const existing = normalizeSIPEndpoint(err.existing_endpoint);
+        if (existing && !_sipEndpoints.some(ep => ep.id === existing.id)) {
+          _sipEndpoints.push(existing);
+          renderSIPEndpoints();
+        }
+      }
       if (resultDiv) resultDiv.innerHTML =
         '<div class="alert alert-error" style="margin-top:10px">✗ ' +
         esc(err.error || 'Failed to create phone') + '</div>';
@@ -1390,6 +1411,12 @@ async function updateSIPEndpoint(id, idx, event) {
   const password = getVal(`ep-pass-${idx}`).trim();
   const enabled = getCheck(`ep-enabled-${idx}`);
   const video_enabled = getCheck(`ep-video-${idx}`);
+  const current = _sipEndpoints[idx] || {};
+
+  if (route_to && (route_to === current.extension || route_to === current.username)) {
+    setSaveStatus('Route To Node ID is not the SIP extension. Leave it blank unless that exact value is a HAOS Node ID.', 'error');
+    return;
+  }
 
   if (btn) {
     btn.disabled = true;
