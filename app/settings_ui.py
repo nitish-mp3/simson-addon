@@ -1684,6 +1684,8 @@ function renderDoorCameraGuideOptions() {
 
   const previousSource = source.value;
   const previousTarget = target.value;
+  const savedDoor = getPrimaryDoorTrigger();
+  const savedDoorTarget = findDoorTriggerTarget(savedDoor);
   const endpoints = Array.isArray(_sipEndpoints) ? _sipEndpoints : [];
   const options = endpoints.map(ep =>
     `<option value="${esc(ep.extension)}">${esc(doorEndpointLabel(ep))}</option>`
@@ -1695,6 +1697,18 @@ function renderDoorCameraGuideOptions() {
   const hasExtension = value => endpoints.some(ep => String(ep.extension) === String(value));
   if (hasExtension(previousSource)) source.value = previousSource;
   if (hasExtension(previousTarget)) target.value = previousTarget;
+  if (!source.value && hasExtension(savedDoor?.source_extension)) {
+    source.value = String(savedDoor.source_extension);
+  }
+  if (!target.value && hasExtension(savedDoorTarget?.extension)) {
+    target.value = String(savedDoorTarget.extension);
+  }
+  if (savedDoor) {
+    if (!previousSource && !previousTarget) {
+      setVal('door-guide-label', savedDoor.label || 'Unknown visitor at front door');
+      setVal('door-guide-timeout', savedDoor.timeout || savedDoorTarget?.timeout || 30);
+    }
+  }
 
   const videoEndpoints = endpoints.filter(ep => ep.enabled && ep.video_enabled);
   if (!source.value && videoEndpoints.length) source.value = String(videoEndpoints[0].extension);
@@ -1703,6 +1717,14 @@ function renderDoorCameraGuideOptions() {
     if (next) target.value = String(next.extension);
   }
   renderDoorCameraGuideStatus();
+}
+
+function getDoorTriggers() {
+  return (_automationTriggers || []).filter(t => String(t.mode || '') === 'door_station');
+}
+
+function getPrimaryDoorTrigger() {
+  return getDoorTriggers()[0] || null;
 }
 
 function findDoorTargetByExtension(extension) {
@@ -1723,7 +1745,7 @@ function renderDoorCameraGuideStatus(message = '') {
   const targetExt = getVal('door-guide-target').trim();
   const source = (_sipEndpoints || []).find(ep => String(ep.extension) === sourceExt);
   const target = (_sipEndpoints || []).find(ep => String(ep.extension) === targetExt);
-  const existing = (_automationTriggers || []).filter(t => String(t.mode || '') === 'door_station');
+  const existing = getDoorTriggers();
 
   let html = message ? `<div style="margin-bottom:7px"><b>${esc(message)}</b></div>` : '';
   if (!(_sipEndpoints || []).length) {
@@ -1814,8 +1836,10 @@ function createDoorCameraFlow() {
   }
 
   const savedTarget = ensureDoorPhoneTarget(target);
-  _automationTriggers.push({
-    id: uniqueAutomationId(`unknown_face_${sourceExt}`),
+  const existingDoor = getPrimaryDoorTrigger();
+  const updatedDoor = {
+    ...(existingDoor || {}),
+    id: String(existingDoor?.id || '').trim() || uniqueAutomationId(`unknown_face_${sourceExt}`),
     label,
     target_id: savedTarget.id,
     caller_id: `"${label}" <${sourceExt}>`,
@@ -1823,7 +1847,19 @@ function createDoorCameraFlow() {
     source_extension: sourceExt,
     timeout,
     enabled: true,
-  });
+  };
+  const firstDoorIndex = (_automationTriggers || []).findIndex(t => String(t.mode || '') === 'door_station');
+  if (firstDoorIndex >= 0) {
+    _automationTriggers[firstDoorIndex] = updatedDoor;
+    // The quick setup is intentionally a single safe door flow. Remove stale
+    // door presets so legacy GET-only camera callbacks cannot keep hitting an
+    // old source/target pair after the admin updates the form.
+    _automationTriggers = _automationTriggers.filter((t, i) =>
+      i === firstDoorIndex || String(t.mode || '') !== 'door_station'
+    );
+  } else {
+    _automationTriggers.push(updatedDoor);
+  }
   if (!getVal('automation-webhook-id').trim() || getVal('automation-webhook-secret').trim().length < 24) {
     generateWebhookCredentials();
   } else {
@@ -1834,7 +1870,7 @@ function createDoorCameraFlow() {
   renderRoutingBoard();
   renderAutomationTriggers();
   renderAutomationPreview();
-  renderDoorCameraGuideStatus('Door camera flow created. Press Save Settings to activate it.');
+  renderDoorCameraGuideStatus('Door camera flow updated. Press Save Settings to activate it.');
 }
 
 function collectAutomation() {
