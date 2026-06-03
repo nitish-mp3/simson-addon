@@ -2028,7 +2028,16 @@ function renderAutomationPreview() {
     <div class="field-hint" style="margin-top:12px"><b>Camera panels that can only call a URL using GET</b></div>
     ${strongDeviceId
       ? `<div class="code-box">${esc(devicePath)}</div>
-         <div class="field-hint" style="margin-top:7px">Paste this complete private URL into the camera's unknown-face callback field. Method: <b>GET</b>. No Home Assistant automation is required.</div>`
+         <div class="field-hint" style="margin-top:7px">Paste this complete private URL into the camera's unknown-face callback field. Method: <b>GET</b>. This calls Simson directly, so do not also create an HA webhook relay that runs <code>simson.run_trigger</code>.</div>
+         <div class="field-hint" style="margin-top:7px">If you want extra Home Assistant actions after this direct callback starts the door call, listen for the <code>simson_door_station_call</code> event.</div>
+         <div class="code-box">triggers:
+  - trigger: event
+    event_type: simson_door_station_call
+actions:
+  - action: persistent_notification.create
+    data:
+      title: Door camera call started
+      message: "{{ trigger.event.data.label }}"</div>`
       : `<div class="alert alert-warn" style="margin-top:8px">Click <b>Generate Credentials</b> again before using a camera GET callback. Your existing webhook ID predates the stronger private camera URL format.</div>`}
     <div class="field-hint" style="margin-top:10px">Compatibility note: the historic <code>/api/automation/webhook/${esc(id)}</code> URL is also accepted for GET-only panels when this site has exactly one enabled door flow. Prefer the complete private camera URL above for new setups.</div>
     <div class="field-hint" style="margin-top:14px"><b>Controllers that support POST and private headers</b></div>

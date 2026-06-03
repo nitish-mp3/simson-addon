@@ -179,6 +179,8 @@ For an outdoor SIP door station with a camera and face recognition:
    - For a controller that supports headers, `POST` the authenticated webhook URL with `X-Simson-Webhook-Secret` and `{"trigger_id":"your_trigger_id"}`.
    - If Home Assistant conditions are required, use the displayed HA webhook relay automation and include `GET` in `allowed_methods`.
 
+Use exactly one callback path for each face-recognition action. The direct GET-only camera URL calls Simson without passing through an HA webhook automation. If you use that direct path and need companion HA actions, trigger them from the `simson_door_station_call` event instead of calling `simson.run_trigger` again.
+
 The callback workflow calls the outdoor station first and then bridges its native SIP media to the indoor phone. The outdoor station must support auto-answer for SIP callbacks. H.264 video is negotiated only between compatible SIP endpoints; existing HAOS browser audio, gateway, and landline routes remain audio-only.
 
 If the door-station firmware can place a SIP call directly when recognition fails, use that device-native mode only after adding an approved PBX direct-dial rule for the station. The supported default in Simson is the protected webhook callback flow above.
