@@ -23,6 +23,18 @@ OPTIONS_FILE = "/data/options.json"
 logger = logging.getLogger("simson.config")
 
 
+def _safe_int(value, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    if minimum is not None:
+        parsed = max(minimum, parsed)
+    if maximum is not None:
+        parsed = min(maximum, parsed)
+    return parsed
+
+
 def _load_options() -> dict:
     """Load addon options written by HA Supervisor before container start."""
     try:
@@ -79,8 +91,11 @@ class Config:
             os.environ.get("SIMSON_ASTERISK_ENABLED", "false").lower() in ("true", "1", "yes"),
         )
         self.asterisk_host: str = ast.get("host", os.environ.get("SIMSON_ASTERISK_HOST", "127.0.0.1"))
-        self.asterisk_ami_port: int = int(
-            ast.get("ami_port", os.environ.get("SIMSON_ASTERISK_AMI_PORT", 5038))
+        self.asterisk_ami_port: int = _safe_int(
+            ast.get("ami_port", os.environ.get("SIMSON_ASTERISK_AMI_PORT", 5038)),
+            5038,
+            1,
+            65535,
         )
         self.asterisk_ami_user: str = ast.get(
             "ami_user", os.environ.get("SIMSON_ASTERISK_AMI_USER", "simson")
@@ -100,8 +115,11 @@ class Config:
         )
 
         # Local API / ingress port
-        self.local_api_port: int = int(
-            s.get("local_api_port", os.environ.get("SIMSON_LOCAL_API_PORT", 8799))
+        self.local_api_port: int = _safe_int(
+            s.get("local_api_port", os.environ.get("SIMSON_LOCAL_API_PORT", 8799)),
+            8799,
+            1,
+            65535,
         )
 
         # WebRTC / ICE / TURN / SIP
@@ -133,8 +151,8 @@ class Config:
         routing = s.get("routing", {})
         self.routing_policy: dict = {
             "strategy": routing.get("strategy", "priority"),
-            "ring_seconds": int(routing.get("ring_seconds", 25)),
-            "max_attempts": int(routing.get("max_attempts", 4)),
+            "ring_seconds": _safe_int(routing.get("ring_seconds", 25), 25, 5, 300),
+            "max_attempts": _safe_int(routing.get("max_attempts", 4), 4, 1, 10),
             "skip_unavailable": bool(routing.get("skip_unavailable", True)),
             "final_fallback_target": routing.get("final_fallback_target", ""),
         }
@@ -149,7 +167,7 @@ class Config:
             "webhook_enabled": bool(automation.get("webhook_enabled", False)),
             "webhook_id": str(automation.get("webhook_id", "")).strip(),
             "webhook_secret": str(automation.get("webhook_secret", "")).strip(),
-            "cooldown_seconds": int(automation.get("cooldown_seconds", 10)),
+            "cooldown_seconds": _safe_int(automation.get("cooldown_seconds", 10), 10, 1, 3600),
             "triggers": automation.get("triggers", []) or [],
         }
 
@@ -165,7 +183,12 @@ class Config:
                 "context": t.get("context", self.asterisk_context),
                 "trunk": t.get("trunk", ""),
                 "caller_id": t.get("caller_id", ""),
-                "timeout": int(t.get("timeout", self.routing_policy["ring_seconds"])),
+                "timeout": _safe_int(
+                    t.get("timeout", self.routing_policy["ring_seconds"]),
+                    self.routing_policy["ring_seconds"],
+                    5,
+                    300,
+                ),
                 "fallback_targets": t.get("fallback_targets", []),
                 "icon": t.get("icon", ""),
             })

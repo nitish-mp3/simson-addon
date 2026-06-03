@@ -17,7 +17,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.1.4"
+ADDON_VERSION = "4.1.5"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -34,6 +34,18 @@ def _normalize_pstn_digits(digits: str, trunk: str) -> str:
     return digits
 
 logger = logging.getLogger("simson.api")
+
+
+def _safe_int(value, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    if minimum is not None:
+        parsed = max(minimum, parsed)
+    if maximum is not None:
+        parsed = min(maximum, parsed)
+    return parsed
 
 
 class LocalAPI:
@@ -845,7 +857,7 @@ class LocalAPI:
             "webhook_enabled": bool(automation.get("webhook_enabled", False)),
             "webhook_id": webhook_id,
             "webhook_path": f"api/automation/webhook/{webhook_id}" if webhook_id else "",
-            "cooldown_seconds": int(automation.get("cooldown_seconds", 10)),
+            "cooldown_seconds": _safe_int(automation.get("cooldown_seconds", 10), 10, 1, 3600),
             "triggers": automation.get("triggers", []) or [],
         })
 
@@ -972,7 +984,7 @@ class LocalAPI:
         if not trigger or not trigger.get("enabled", True):
             return web.json_response({"error": "automation trigger not found or disabled"}, status=404)
 
-        cooldown = max(1, int(automation.get("cooldown_seconds", 10)))
+        cooldown = _safe_int(automation.get("cooldown_seconds", 10), 10, 1, 3600)
         now = time.time()
         last_run = self._automation_last_run.get(trigger_id, 0)
         if now - last_run < cooldown:

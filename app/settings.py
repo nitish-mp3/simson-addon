@@ -329,6 +329,10 @@ def validate_settings(data: dict) -> list[str]:
                 errors.append(
                     f"Automation trigger #{idx}: door station target must be a saved SIP desk phone"
                 )
+            elif source_extension and source_extension == str(target.get("extension", "")).strip():
+                errors.append(
+                    f"Automation trigger #{idx}: door station source and indoor target must be different SIP extensions"
+                )
             try:
                 timeout = int(trigger.get("timeout", 30))
                 if not 5 <= timeout <= 120:
