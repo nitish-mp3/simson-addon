@@ -92,6 +92,29 @@ function toast(text) {
   toast._t = setTimeout(() => el.classList.remove("show"), 2600);
 }
 
+function externalBaseUrl() {
+  const settings = getSettings();
+  const port = String(settings.local_api_port || defaults.local_api_port || 8799);
+  const host = window.location.hostname || "homeassistant.local";
+  const direct = window.location.port === port;
+  const protocol = direct ? window.location.protocol : "http:";
+  return `${protocol}//${host}:${port}`;
+}
+
+function deviceCallbackPath(triggerId = "TRIGGER_ID") {
+  const auto = getSettings().automation;
+  return `/api/automation/device/${auto.webhook_id || "WEBHOOK_ID"}/${triggerId}`;
+}
+
+function deviceCallbackUrl(triggerId = "TRIGGER_ID") {
+  return `${externalBaseUrl()}${deviceCallbackPath(triggerId)}`;
+}
+
+function effectiveDoorCooldown(value) {
+  const parsed = Number(value);
+  return Math.max(20, Number.isFinite(parsed) && parsed > 0 ? parsed : 90);
+}
+
 async function api(path, options = {}) {
   const res = await fetch(path, {
     ...options,
@@ -258,7 +281,7 @@ function renderOverview() {
     <div class="grid cols-3">
       ${stat("VPS", s.vps_connected ? "Online" : "Offline", s.server_url || "not configured", s.vps_connected ? "ok" : "bad")}
       ${stat("Asterisk", s.asterisk_connected ? "Connected" : "Unknown", "AMI and SIP bridge state", s.asterisk_connected ? "ok" : "warn")}
-      ${stat("Automation guard", `${settings.automation.cooldown_seconds}s`, settings.automation.block_while_call_active ? "Blocks repeats while calls are active" : "Cooldown only", "ok")}
+      ${stat("Automation guard", `${effectiveDoorCooldown(settings.automation.cooldown_seconds)}s`, settings.automation.block_while_call_active ? "Blocks repeats while calls are active" : "Cooldown only", "ok")}
     </div>
     <div class="grid cols-2" style="margin-top:16px">
       <div class="card">
@@ -518,23 +541,24 @@ function sipRow(raw) {
 function renderAutomation() {
   const settings = getSettings();
   const auto = settings.automation;
+  const globalCooldown = effectiveDoorCooldown(auto.cooldown_seconds);
   const videoSip = state.sip.map(normalizeSipEndpoint).filter((ep) => ep && ep.enabled !== false && ep.video_enabled);
   const doorTargets = settings.call_targets.filter((t) => ["sip", "asterisk", "node", "device"].includes(t.type));
   $("content").innerHTML = `
-    <div class="grid cols-2">
+    <div class="automation-grid">
       <div class="card glow">
         <div class="card-head">
           <div>
             <div class="card-title">Anti-spam guard</div>
             <div class="card-sub">Stops unknown-face devices from immediately retriggering after a call ends.</div>
           </div>
-          <span class="pill ok">${esc(auto.cooldown_seconds)}s cooldown</span>
+          <span class="pill ok">${esc(globalCooldown)}s cooldown</span>
         </div>
         <div class="form-grid">
           <div class="field">
             <label>Default cooldown seconds</label>
-            <input type="number" min="1" max="3600" data-path="automation.cooldown_seconds" value="${esc(auto.cooldown_seconds)}">
-            <div class="hint">Recommended for face detection: 90-180 seconds.</div>
+            <input type="number" min="20" max="3600" data-path="automation.cooldown_seconds" value="${esc(globalCooldown)}">
+            <div class="hint">Minimum 20s. Recommended for face detection: 90-180 seconds.</div>
           </div>
           <div class="field">
             <label>Webhook ID</label>
@@ -591,7 +615,7 @@ function renderAutomation() {
           </div>
           <div class="field">
             <label>Trigger cooldown seconds</label>
-            <input id="door-cooldown" type="number" min="1" max="3600" value="${esc(auto.cooldown_seconds || 90)}">
+            <input id="door-cooldown" type="number" min="20" max="3600" value="${esc(globalCooldown)}">
           </div>
           <div class="field">
             <label>Caller ID</label>
@@ -613,7 +637,7 @@ function renderAutomation() {
       <div class="card-head">
         <div>
           <div class="card-title">Automation triggers</div>
-          <div class="card-sub">Each trigger is allowed to call only its saved target.</div>
+          <div class="card-sub">Each trigger can call one or more saved targets. Door triggers show the exact device callback URL.</div>
         </div>
       </div>
       <div class="list">
@@ -630,6 +654,14 @@ function targetDescriptor(target) {
   return `${target.type || "target"} ${target.extension || target.node_id || target.id}`;
 }
 
+function targetDisplayName(id) {
+  const target = getSettings().call_targets.find((item) => String(item.id) === String(id));
+  if (!target) return String(id || "");
+  const label = target.label || target.id;
+  const suffix = target.extension ? ` (${target.extension})` : target.node_id ? ` (${target.node_id})` : "";
+  return `${label}${suffix}`;
+}
+
 function webhookPreview(auto) {
   if (!auto.webhook_id) {
     return `<div class="empty" style="margin-top:14px">Generate credentials to get device callback URLs.</div>`;
@@ -637,28 +669,32 @@ function webhookPreview(auto) {
   return `
     <div class="row" style="margin-top:14px">
       <div class="row-title">Device callback URL</div>
-      <div class="row-sub">For GET-only panels, use /api/automation/device/&lt;webhook_id&gt;/&lt;trigger_id&gt;</div>
-      <input readonly value="/api/automation/device/${esc(auto.webhook_id)}/TRIGGER_ID">
+      <div class="row-sub">Paste this full URL into GET-only door panels. It uses addon port ${esc(getSettings().local_api_port || 8799)} on this HA host.</div>
+      <input class="mono" readonly value="${esc(deviceCallbackUrl())}">
+      <div class="row-sub">Ingress/API path: ${esc(deviceCallbackPath())}</div>
     </div>
   `;
 }
 
 function triggerRow(t) {
   const targetIds = Array.isArray(t.target_ids) && t.target_ids.length ? t.target_ids : [t.target_id].filter(Boolean);
-  const targetText = targetIds.join(", ");
+  const targetText = targetIds.map(targetDisplayName).join(", ");
+  const cooldown = t.mode === "door_station"
+    ? effectiveDoorCooldown(t.cooldown_seconds || getSettings().automation.cooldown_seconds)
+    : (t.cooldown_seconds || getSettings().automation.cooldown_seconds || 90);
   return `
     <div class="row">
       <div class="row-main">
         <div>
           <div class="row-title">${esc(t.label || t.id)}</div>
-          <div class="row-sub">${esc(t.mode || "standard")} · targets ${esc(targetText || "none")} · cooldown ${esc(t.cooldown_seconds || getSettings().automation.cooldown_seconds || 90)}s</div>
+          <div class="row-sub">${esc(t.mode || "standard")} · targets ${esc(targetText || "none")} · cooldown ${esc(cooldown)}s</div>
         </div>
         <div class="row-actions">
           <span class="pill ${t.enabled !== false ? "ok" : "bad"}">${t.enabled !== false ? "enabled" : "disabled"}</span>
           <button class="btn small red" data-action="delete-trigger" data-id="${esc(t.id)}">Delete</button>
         </div>
       </div>
-      ${t.mode === "door_station" && getSettings().automation.webhook_id ? `<input readonly value="/api/automation/device/${esc(getSettings().automation.webhook_id)}/${esc(t.id)}">` : ""}
+      ${t.mode === "door_station" && getSettings().automation.webhook_id ? `<input class="mono" readonly value="${esc(deviceCallbackUrl(t.id))}">` : ""}
     </div>
   `;
 }
@@ -692,7 +728,11 @@ function setByPath(path, value) {
 function onInput(event) {
   const el = event.target;
   if (el.matches("[data-path]")) {
-    const value = el.type === "checkbox" ? el.checked : el.type === "number" ? Number(el.value) : el.value;
+    let value = el.type === "checkbox" ? el.checked : el.type === "number" ? Number(el.value) : el.value;
+    if (el.dataset.path === "automation.cooldown_seconds") {
+      value = effectiveDoorCooldown(value);
+      if (el.type === "number" && Number(el.value) < value) el.value = value;
+    }
     setByPath(el.dataset.path, value);
     setDirty();
   }
@@ -816,7 +856,7 @@ function createDoorFlow() {
     source_extension: source,
     caller_id: $("door-caller").value.trim() || label,
     timeout: Number($("door-timeout").value) || 30,
-    cooldown_seconds: Number($("door-cooldown").value) || getSettings().automation.cooldown_seconds || 90,
+    cooldown_seconds: effectiveDoorCooldown(Number($("door-cooldown").value) || getSettings().automation.cooldown_seconds),
   };
   const triggers = getSettings().automation.triggers;
   const existing = triggers.findIndex((item) => item.id === trigger.id);
@@ -844,6 +884,17 @@ async function provision() {
 async function saveSettings() {
   setSaveState("Saving...");
   const payload = getSettings();
+  payload.automation.cooldown_seconds = effectiveDoorCooldown(payload.automation.cooldown_seconds);
+  payload.automation.triggers = (payload.automation.triggers || []).map((trigger) => {
+    if (trigger?.mode !== "door_station") return trigger;
+    return {
+      ...trigger,
+      cooldown_seconds: effectiveDoorCooldown(trigger.cooldown_seconds || payload.automation.cooldown_seconds),
+      target_ids: Array.isArray(trigger.target_ids) && trigger.target_ids.length
+        ? trigger.target_ids
+        : [trigger.target_id].filter(Boolean),
+    };
+  });
   await api("api/settings", { method: "POST", body: JSON.stringify(payload) });
   state.dirty = false;
   setSaveState("Saved", "ok");

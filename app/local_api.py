@@ -18,7 +18,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.2.1"
+ADDON_VERSION = "4.2.5"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -80,6 +80,7 @@ class LocalAPI:
         self._runner = None
         self._sse_subscribers: list[asyncio.Queue] = []
         self._automation_last_run: dict[str, float] = {}
+        self._automation_block_until: dict[str, float] = {}
         self._setup_routes()
 
     def _setup_routes(self):
@@ -1074,9 +1075,25 @@ class LocalAPI:
                 "retry_after": 10,
             }, status=429)
 
+        now = time.time()
+        blocked_until = self._automation_block_until.get(trigger_id, 0)
+        if now < blocked_until:
+            retry_after = max(1, int(blocked_until - now))
+            logger.info(
+                "Suppressed automation trigger %s from %s for %ss VPS retry window",
+                trigger_id,
+                source,
+                retry_after,
+            )
+            return web.json_response({
+                "error": "automation trigger waiting for upstream retry window",
+                "retry_after": retry_after,
+            }, status=429)
+
         global_cooldown = _safe_int(automation.get("cooldown_seconds", 90), 90, 1, 3600)
         cooldown = _safe_int(trigger.get("cooldown_seconds", global_cooldown), global_cooldown, 1, 3600)
-        now = time.time()
+        if str(trigger.get("mode", "standard")).strip() == "door_station":
+            cooldown = max(cooldown, 20)
         last_run = self._automation_last_run.get(trigger_id, 0)
         if now - last_run < cooldown:
             retry_after = max(1, int(cooldown - (now - last_run)))
@@ -1102,13 +1119,13 @@ class LocalAPI:
         logger.info("Running automation trigger %s from %s to target(s) %s", trigger_id, source, target_ids)
         if str(trigger.get("mode", "standard")).strip() == "door_station":
             response = await self._initiate_door_station_calls(trigger_id, trigger, source)
-            if response.status >= 400:
+            if response.status >= 400 and response.status != 429:
                 self._automation_last_run.pop(trigger_id, None)
             return response
 
         if len(target_ids) > 1:
             response = await self._initiate_standard_trigger_calls(trigger_id, trigger, source, target_ids)
-            if response.status >= 400:
+            if response.status >= 400 and response.status != 429:
                 self._automation_last_run.pop(trigger_id, None)
             return response
 
@@ -1118,7 +1135,7 @@ class LocalAPI:
             "caller_user_id": f"automation:{trigger_id}",
         }, source=f"{source}:{trigger_id}")
 
-        if response.status >= 400:
+        if response.status >= 400 and response.status != 429:
             self._automation_last_run.pop(trigger_id, None)
             return response
 
@@ -1259,6 +1276,15 @@ class LocalAPI:
             results.append(result)
 
         ok = [item for item in results if item.get("ok")]
+        retry_after = max(
+            [
+                _safe_int(item.get("retry_after", 0), 0, 0, 3600)
+                for item in results
+                if int(item.get("status", 0) or 0) == 429
+            ] or [0]
+        )
+        if retry_after:
+            self._automation_block_until[trigger_id] = time.time() + retry_after
         payload = {
             "trigger_id": trigger_id,
             "label": trigger.get("label", trigger_id),
@@ -1267,11 +1293,12 @@ class LocalAPI:
             "target_ids": target_ids,
             "mode": "door_station",
             "status": "started" if ok else "failed",
+            "retry_after": retry_after,
             "results": results,
         }
         if self.addon and getattr(self.addon, "ha", None):
             await self.addon.ha.publish_automation_event("simson_automation_triggered", payload)
-        return web.json_response(payload, status=202 if ok else 502)
+        return web.json_response(payload, status=202 if ok else (429 if retry_after else 502))
 
     async def _initiate_door_station_sip_target(
         self,
