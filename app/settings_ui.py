@@ -703,6 +703,7 @@ let _routeOverrides = {};
 let _liveRouting = {};
 let _automation = {};
 let _automationTriggers = [];
+let _nodes = [];
 
 // ─── Bootstrap ──────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', init);
@@ -727,7 +728,37 @@ async function init() {
 }
 
 async function refreshAll() {
+  await loadNodes();
   await Promise.all([pollStatus(), loadSettings(), loadSIPEndpoints(), loadRoutingBoard()]);
+}
+
+async function loadNodes() {
+  try {
+    const r = await fetch('api/nodes');
+    if (!r.ok) return;
+    const data = await r.json();
+    _nodes = Array.isArray(data.nodes) ? data.nodes : [];
+  } catch (_) {
+    _nodes = [];
+  }
+}
+
+function nodeOptionsHTML(selected = '') {
+  const opts = _nodes.map(n => {
+    const label = `${n.label || n.id}${n.is_current ? ' (this HAOS)' : ''}`;
+    return `<option value="${esc(n.id)}" label="${esc(label)}"></option>`;
+  }).join('');
+  return `<datalist id="node-options">${opts}</datalist>`;
+}
+
+function nodeRouteHint(nodeId) {
+  const id = String(nodeId || '').trim();
+  if (!id) return 'Any available node in this site/account can ring.';
+  const node = _nodes.find(n => n.id === id);
+  if (!node) {
+    return `Warning: ${id} is not in this site account's node list. It may be offline, stale, or from another site.`;
+  }
+  return `${node.label || node.id}${node.is_current ? ' (this HAOS addon)' : ''} · ${node.enabled ? 'enabled' : 'disabled'}`;
 }
 
 // ─── Status polling ──────────────────────────────────────────────────────────
@@ -1180,9 +1211,11 @@ function renderSIPEndpoints() {
   const body = document.getElementById('sip-endpoints-body');
   if (!body) return;
   const endpoints = Array.isArray(_sipEndpoints) ? _sipEndpoints : [];
+  const nodeOptions = nodeOptionsHTML();
 
   const html = `
     <div style="margin-bottom:14px">
+      ${nodeOptions}
       <div class="alert alert-info" style="margin-top:0;margin-bottom:12px">
         Phone/ATA setup: SIP server/domain is your VPS hostname, port 5060,
         transport TCP or UDP, username/auth username from the endpoint below,
@@ -1220,7 +1253,7 @@ function renderSIPEndpoints() {
         <div class="field-row" style="flex-direction:column">
           <div class="field" style="width:100%">
             <label>Route To Node ID <span class="hint-tag">— optional dedicated destination</span></label>
-            <input type="text" id="sip-route" placeholder="living_room">
+            <input type="text" id="sip-route" list="node-options" placeholder="${esc(_nodes.find(n => n.is_current)?.id || 'living_room')}">
             <div class="field-hint">Use only a HAOS Node ID from Overview. Leave blank for normal SIP phones and door stations; this is not the SIP extension.</div>
           </div>
         </div>
@@ -1245,7 +1278,10 @@ function renderSIPEndpoints() {
     <div id="sip-list">
       ${endpoints.length === 0
         ? '<p class="muted">no sip phones configured</p>'
-        : endpoints.map((ep, i) => `
+        : endpoints.map((ep, i) => {
+          const routeHint = nodeRouteHint(ep.route_to);
+          const routeWarn = ep.route_to && !_nodes.some(n => n.id === ep.route_to);
+          return `
           <div style="padding:12px;background:var(--surface2);border-radius:8px;
                       margin-bottom:10px;border:1px solid var(--border)">
             <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
@@ -1271,7 +1307,11 @@ function renderSIPEndpoints() {
               </div>
               <div class="field">
                 <label>Route To Node ID</label>
-                <input type="text" id="ep-route-${i}" value="${esc(ep.route_to)}" placeholder="living_room">
+                <input type="text" id="ep-route-${i}" value="${esc(ep.route_to)}" list="node-options"
+                       placeholder="${esc(_nodes.find(n => n.is_current)?.id || 'living_room')}">
+                <div class="field-hint" style="${routeWarn ? 'color:var(--yellow-light)' : ''}">
+                  ${esc(routeHint)}
+                </div>
               </div>
             </div>
             <div class="field-row" style="align-items:flex-end">
@@ -1296,7 +1336,8 @@ function renderSIPEndpoints() {
                       onclick="updateSIPEndpoint('${ep.id}', ${i}, event)">Save Changes</button>
             </div>
           </div>
-        `).join('')
+        `;
+        }).join('')
       }
     </div>
   `;
@@ -1547,7 +1588,9 @@ function targetForm(t, i) {
       <div class="field" style="width:100%">
         <label>HAOS Node ID <span class="hint-tag">for dashboard/addon routes</span></label>
         <input type="text" id="t${i}-node" value="${esc(t.node_id||'')}"
-               placeholder="ha_kitchen" oninput="targetField(${i},'node_id',this.value)">
+               list="node-options" placeholder="${esc(_nodes.find(n => n.is_current)?.id || 'ha_kitchen')}"
+               oninput="targetField(${i},'node_id',this.value)">
+        <div class="field-hint">${esc(nodeRouteHint(t.node_id || t.id || ''))}</div>
       </div>
     </div>
     <div class="field-row" id="t${i}-ast-row"${!isAst?' style="display:none"':''}>

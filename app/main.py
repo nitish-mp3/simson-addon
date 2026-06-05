@@ -76,6 +76,44 @@ class SimsonAddon:
         # Deduplicate repeated incoming invites from the same SIP source.
         self._recent_invite_sources: dict[str, float] = {}
 
+    def _call_event_payload(self, call: CallInfo, event: str, reason: str = "", **extra) -> dict:
+        """Build a normalized HA automation event for every call lifecycle change."""
+        metadata = call.metadata or {}
+        payload = {
+            "event": event,
+            "call_id": call.call_id,
+            "status": call.state.value,
+            "reason": reason or call.end_reason,
+            "direction": call.direction,
+            "call_type": call.call_type,
+            "node_id": self.cfg.node_id,
+            "node_label": self.cfg.node_label or self.cfg.node_id,
+            "account_id": self.cfg.account_id,
+            "remote_node_id": call.remote_node_id,
+            "remote_label": call.remote_label,
+            "caller_user_id": call.caller_user_id,
+            "target_user_id": metadata.get("target_user_id", ""),
+            "target_user_name": metadata.get("target_user_name", ""),
+            "sip_bridge_id": metadata.get("sip_bridge_id", ""),
+            "sip_extension": metadata.get("sip_extension", metadata.get("extension", "")),
+            "sip_channel": metadata.get("sip_channel", ""),
+            "sip_caller_id": metadata.get("sip_caller_id", ""),
+            "source_extension": metadata.get("source_extension", ""),
+            "target_extension": metadata.get("target_extension", ""),
+            "remote_number": metadata.get("sip_caller_id", "") or call.remote_label or call.remote_node_id,
+            "started_at": call.started_at,
+            "answered_at": call.answered_at,
+            "ended_at": call.ended_at,
+        }
+        payload.update({k: v for k, v in extra.items() if v is not None})
+        return payload
+
+    async def _emit_call_event(self, call: CallInfo, event: str, reason: str = "", **extra):
+        """Fire a single normalized HA event for automations and dashboards."""
+        payload = self._call_event_payload(call, event, reason, **extra)
+        await self.ha.fire_event("simson_call_event", payload)
+        return payload
+
     def track_outgoing_call_request(self, request_id: str, call_id: str):
         """Register a pending outgoing call.request envelope."""
         if not request_id or not call_id:
@@ -377,6 +415,7 @@ class SimsonAddon:
             "target_user_name": target_user_name,
             "metadata": metadata,
         })
+        await self._emit_call_event(call, "incoming")
 
         # Create a persistent notification so the user sees the call even
         # when the Lovelace card is not visible.
@@ -505,6 +544,7 @@ class SimsonAddon:
             "type": "call_status",
         }
         await self.ha.fire_event("simson_call_status", event)
+        await self._emit_call_event(call, "forwarded", reason, forwarded_to=target_id or ext, forwarded_extension=ext)
         self.api.push_sse_event(event)
 
     def _schedule_incoming_sip_route(self, call: CallInfo):
@@ -592,6 +632,12 @@ class SimsonAddon:
             "caller_user_id": call.caller_user_id,
             "answered_by_user_id": answered_by_user_id,
         })
+        await self._emit_call_event(
+            call,
+            "active" if status == "active" else status,
+            reason,
+            answered_by_user_id=answered_by_user_id,
+        )
 
         # Push to SSE so the Lovelace card reacts immediately.
         self.api.push_sse_event({
@@ -776,6 +822,7 @@ class SimsonAddon:
             "target_user_id": call.metadata.get("target_user_id", ""),
             "caller_user_id": call.caller_user_id,
         })
+        await self._emit_call_event(call, timeout_status, timeout_reason)
         self.api.push_sse_event({
             "type": "call_status",
             "call_id": call_id,
@@ -914,6 +961,14 @@ class SimsonAddon:
             "fallback_target": fallback_id,
             "fallback_attempt": next_idx,
         })
+        await self._emit_call_event(
+            new_call,
+            "fallback_redirected",
+            reason,
+            fallback_from=call.call_id,
+            fallback_target=fallback_id,
+            fallback_attempt=next_idx,
+        )
         self.api.push_sse_event({
             "type": "call_status",
             "call_id": new_call_id,

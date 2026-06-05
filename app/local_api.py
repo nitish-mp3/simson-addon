@@ -17,7 +17,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.1.7"
+ADDON_VERSION = "4.1.8"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -107,6 +107,7 @@ class LocalAPI:
         self.app.router.add_get("/api/webrtc-config", self.handle_webrtc_config)
         self.app.router.add_get("/api/settings", self.handle_get_settings)
         self.app.router.add_post("/api/settings", self.handle_post_settings)
+        self.app.router.add_get("/api/nodes", self.handle_list_nodes)
         self.app.router.add_get("/api/automation", self.handle_get_automation)
         self.app.router.add_post("/api/automation/trigger/{trigger_id}", self.handle_run_automation_trigger)
         self.app.router.add_post("/api/automation/webhook/{webhook_id}", self.handle_automation_webhook)
@@ -371,6 +372,58 @@ class LocalAPI:
             logger.error(f"SIP endpoint list error: {e}")
             return web.json_response({"error": str(e)}, status=500)
 
+    async def handle_list_nodes(self, request: web.Request) -> web.Response:
+        """List VPS nodes in this site/account so settings can use real route targets."""
+        if not self.cfg.account_id or not self.cfg.admin_token or not self.cfg.server_url:
+            return web.json_response({
+                "nodes": [],
+                "current_node_id": self.cfg.node_id,
+                "account_id": self.cfg.account_id,
+                "error": "Not yet provisioned — no account created on VPS",
+            }, status=400)
+
+        http_url = self._ws_to_http_url(self.cfg.server_url)
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                url = f"{http_url}/admin/accounts/{self.cfg.account_id}/nodes"
+                headers = {"Authorization": f"Bearer {self.cfg.admin_token}"}
+                async with session.get(url, headers=headers, ssl=False) as resp:
+                    if resp.status != 200:
+                        error = await resp.text()
+                        logger.error("VPS node list failed: %s %s", resp.status, error)
+                        return web.json_response(
+                            {"nodes": [], "error": f"VPS returned {resp.status}"},
+                            status=resp.status,
+                        )
+                    payload = await resp.json(content_type=None)
+        except Exception as e:
+            logger.error("Node list error: %s", e)
+            return web.json_response({"nodes": [], "error": str(e)}, status=500)
+
+        raw_nodes = payload if isinstance(payload, list) else payload.get("nodes", []) if isinstance(payload, dict) else []
+        nodes = []
+        for node in raw_nodes:
+            if not isinstance(node, dict):
+                continue
+            node_id = str(node.get("id") or node.get("ID") or "").strip()
+            if not node_id:
+                continue
+            nodes.append({
+                "id": node_id,
+                "label": str(node.get("label") or node.get("Label") or node_id),
+                "node_type": str(node.get("node_type") or node.get("NodeType") or "haos"),
+                "enabled": bool(node.get("enabled", node.get("Enabled", True))),
+                "is_current": node_id == self.cfg.node_id,
+                "account_id": str(node.get("account_id") or node.get("AccountID") or self.cfg.account_id),
+            })
+        return web.json_response({
+            "nodes": nodes,
+            "current_node_id": self.cfg.node_id,
+            "current_node_label": self.cfg.node_label or self.cfg.node_id,
+            "account_id": self.cfg.account_id,
+        })
+
     async def handle_create_sip_endpoint(self, request: web.Request) -> web.Response:
         """Create a new SIP endpoint by calling VPS admin API."""
         if not self.cfg.account_id or not self.cfg.admin_token or not self.cfg.server_url:
@@ -478,12 +531,16 @@ class LocalAPI:
                         logger.info("SIP endpoint updated: %s", endpoint_id)
                         return web.json_response(endpoint)
 
-                    error = await resp.text()
-                    logger.error("VPS SIP update failed: %s %s", resp.status, error)
-                    return web.json_response(
-                        {"error": f"VPS returned {resp.status}: {error}"},
-                        status=resp.status,
-                    )
+                    error_text = await resp.text()
+                    try:
+                        error_payload = json.loads(error_text) if error_text else {}
+                    except Exception:
+                        error_payload = {"error": error_text or f"VPS returned {resp.status}"}
+                    if not isinstance(error_payload, dict):
+                        error_payload = {"error": str(error_payload)}
+                    error_payload.setdefault("error", f"VPS returned {resp.status}")
+                    logger.error("VPS SIP update failed: %s %s", resp.status, error_text)
+                    return web.json_response(error_payload, status=resp.status)
         except Exception as e:
             logger.error("SIP endpoint update error: %s", e)
             return web.json_response({"error": str(e)}, status=500)
@@ -836,16 +893,20 @@ class LocalAPI:
 
         # Register locally before sending so immediate VPS error(ref=id)
         # can always map back to an existing call and transition state.
-        await self.call_mgr.outgoing_request(call_id, to_node, call_type, routing=routing,
-                                             caller_user_id=caller_user_id,
-                                             remote_label=remote_label or target_id or to_node)
+        call = await self.call_mgr.outgoing_request(call_id, to_node, call_type, routing=routing,
+                                                    caller_user_id=caller_user_id,
+                                                    remote_label=remote_label or target_id or to_node)
+        if self.addon and hasattr(self.addon, "_emit_call_event"):
+            await self.addon._emit_call_event(call, "outgoing")
 
         try:
             await self.send_fn(msg)
         except Exception as e:
             if self.addon and hasattr(self.addon, "forget_outgoing_call_request"):
                 self.addon.forget_outgoing_call_request(msg.get("id", ""))
-            await self.call_mgr.update_status(call_id, "failed", "send_failed")
+            failed_call = await self.call_mgr.update_status(call_id, "failed", "send_failed")
+            if self.addon and hasattr(self.addon, "_emit_call_event") and failed_call:
+                await self.addon._emit_call_event(failed_call, "failed", "send_failed")
             return web.json_response({"error": f"send failed: {e}"}, status=502)
 
         return web.json_response({
