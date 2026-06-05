@@ -2326,3 +2326,25 @@ function jsString(s) {
 </script>
 </body>
 </html>"""
+
+# Active dashboard shell.  The legacy monolithic HTML above is intentionally
+# kept as an emergency rollback, while the production UI lives in /app/ui.
+INGRESS_UI_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Simson · Site Control</title>
+<link rel="stylesheet" href="ui/styles.css?v=__VERSION__">
+</head>
+<body>
+<script>
+window.__SIMSON__ = {
+  provisioned: __PROVISIONED__,
+  hasAdminToken: __HAS_ADMIN_TOKEN__,
+  version: "__VERSION__"
+};
+</script>
+<script type="module" src="ui/app.js?v=__VERSION__"></script>
+</body>
+</html>"""

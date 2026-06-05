@@ -167,7 +167,8 @@ class Config:
             "webhook_enabled": bool(automation.get("webhook_enabled", False)),
             "webhook_id": str(automation.get("webhook_id", "")).strip(),
             "webhook_secret": str(automation.get("webhook_secret", "")).strip(),
-            "cooldown_seconds": _safe_int(automation.get("cooldown_seconds", 10), 10, 1, 3600),
+            "cooldown_seconds": _safe_int(automation.get("cooldown_seconds", 90), 90, 1, 3600),
+            "block_while_call_active": bool(automation.get("block_while_call_active", True)),
             "triggers": automation.get("triggers", []) or [],
         }
 

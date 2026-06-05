@@ -60,7 +60,8 @@ DEFAULT_SETTINGS: dict = {
         "webhook_enabled": False,
         "webhook_id": "",
         "webhook_secret": "",
-        "cooldown_seconds": 10,
+        "cooldown_seconds": 90,
+        "block_while_call_active": True,
         "triggers": [],
     },
 }
@@ -260,7 +261,7 @@ def validate_settings(data: dict) -> list[str]:
         errors.append("Automation: settings must be an object")
         automation = {}
     try:
-        cooldown = int(automation.get("cooldown_seconds", 10))
+        cooldown = int(automation.get("cooldown_seconds", 90))
         if not 1 <= cooldown <= 3600:
             errors.append("Automation: cooldown must be between 1 and 3600 seconds")
     except (TypeError, ValueError):
@@ -312,6 +313,14 @@ def validate_settings(data: dict) -> list[str]:
         trigger_mode = str(trigger.get("mode", "standard")).strip() or "standard"
         if trigger_mode not in ("standard", "door_station"):
             errors.append(f"Automation trigger #{idx}: mode must be standard or door_station")
+        try:
+            trigger_cooldown = int(trigger.get("cooldown_seconds", automation.get("cooldown_seconds", 90)))
+            if not 1 <= trigger_cooldown <= 3600:
+                errors.append(
+                    f"Automation trigger #{idx}: cooldown must be between 1 and 3600 seconds"
+                )
+        except (TypeError, ValueError):
+            errors.append(f"Automation trigger #{idx}: cooldown must be a valid integer")
         if trigger_mode == "door_station":
             source_extension = str(trigger.get("source_extension", "")).strip()
             if not source_extension.isdigit() or not 2 <= len(source_extension) <= 12:

@@ -5,6 +5,7 @@ import copy
 import hmac
 import json
 import logging
+import os
 import time
 from urllib.parse import urlsplit, urlunsplit
 from aiohttp import ClientSession, ClientTimeout, web
@@ -17,7 +18,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.1.8"
+ADDON_VERSION = "4.1.9"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -82,6 +83,9 @@ class LocalAPI:
         self._setup_routes()
 
     def _setup_routes(self):
+        ui_dir = os.path.join(os.path.dirname(__file__), "ui")
+        if os.path.isdir(ui_dir):
+            self.app.router.add_static("/ui", path=ui_dir, name="settings_ui")
         self.app.router.add_get("/", self.handle_ingress)
         self.app.router.add_get("/api/status", self.handle_status)
         self.app.router.add_get("/api/calls", self.handle_list_calls)
@@ -923,7 +927,8 @@ class LocalAPI:
             "webhook_enabled": bool(automation.get("webhook_enabled", False)),
             "webhook_id": webhook_id,
             "webhook_path": f"api/automation/webhook/{webhook_id}" if webhook_id else "",
-            "cooldown_seconds": _safe_int(automation.get("cooldown_seconds", 10), 10, 1, 3600),
+            "cooldown_seconds": _safe_int(automation.get("cooldown_seconds", 90), 90, 1, 3600),
+            "block_while_call_active": bool(automation.get("block_while_call_active", True)),
             "triggers": automation.get("triggers", []) or [],
         })
 
@@ -1050,14 +1055,39 @@ class LocalAPI:
         if not trigger or not trigger.get("enabled", True):
             return web.json_response({"error": "automation trigger not found or disabled"}, status=404)
 
-        cooldown = _safe_int(automation.get("cooldown_seconds", 10), 10, 1, 3600)
+        if automation.get("block_while_call_active", True) and self.call_mgr.active_call:
+            active = self.call_mgr.active_call
+            logger.info(
+                "Suppressed automation trigger %s from %s because call %s is %s",
+                trigger_id,
+                source,
+                active.call_id,
+                active.state.value,
+            )
+            return web.json_response({
+                "error": "automation trigger suppressed while a call is active",
+                "active_call_id": active.call_id,
+                "active_state": active.state.value,
+                "retry_after": 10,
+            }, status=429)
+
+        global_cooldown = _safe_int(automation.get("cooldown_seconds", 90), 90, 1, 3600)
+        cooldown = _safe_int(trigger.get("cooldown_seconds", global_cooldown), global_cooldown, 1, 3600)
         now = time.time()
         last_run = self._automation_last_run.get(trigger_id, 0)
         if now - last_run < cooldown:
             retry_after = max(1, int(cooldown - (now - last_run)))
+            logger.info(
+                "Suppressed automation trigger %s from %s for %ss cooldown",
+                trigger_id,
+                source,
+                retry_after,
+            )
             return web.json_response({
                 "error": "automation trigger rate limited",
                 "retry_after": retry_after,
+                "cooldown_seconds": cooldown,
+                "last_run_age_seconds": int(now - last_run),
             }, status=429)
 
         target_id = str(trigger.get("target_id", "")).strip()
