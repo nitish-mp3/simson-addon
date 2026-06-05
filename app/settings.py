@@ -323,6 +323,9 @@ def validate_settings(data: dict) -> list[str]:
         trigger_mode = str(trigger.get("mode", "standard")).strip() or "standard"
         if trigger_mode not in ("standard", "door_station"):
             errors.append(f"Automation trigger #{idx}: mode must be standard or door_station")
+        fanout_mode = str(trigger.get("fanout_mode", "parallel")).strip() or "parallel"
+        if fanout_mode not in ("parallel", "priority"):
+            errors.append(f"Automation trigger #{idx}: fan-out mode must be parallel or priority")
         try:
             trigger_cooldown = int(trigger.get("cooldown_seconds", automation.get("cooldown_seconds", 90)))
             if not 1 <= trigger_cooldown <= 3600:

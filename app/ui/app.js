@@ -110,6 +110,15 @@ function deviceCallbackUrl(triggerId = "TRIGGER_ID") {
   return `${externalBaseUrl()}${deviceCallbackPath(triggerId)}`;
 }
 
+function stableDoorCallbackPath() {
+  const auto = getSettings().automation;
+  return `/api/automation/webhook/${auto.webhook_id || "WEBHOOK_ID"}`;
+}
+
+function stableDoorCallbackUrl() {
+  return `${externalBaseUrl()}${stableDoorCallbackPath()}`;
+}
+
 function effectiveDoorCooldown(value) {
   const parsed = Number(value);
   return Math.max(20, Number.isFinite(parsed) && parsed > 0 ? parsed : 90);
@@ -131,7 +140,10 @@ async function api(path, options = {}) {
     data = { error: text || res.statusText };
   }
   if (!res.ok) {
-    const err = new Error(data.error || `Request failed: ${res.status}`);
+    const detail = Array.isArray(data.errors) && data.errors.length
+      ? data.errors.join("; ")
+      : data.error || data.message || `Request failed: ${res.status}`;
+    const err = new Error(detail);
     err.data = data;
     err.status = res.status;
     throw err;
@@ -668,10 +680,10 @@ function webhookPreview(auto) {
   }
   return `
     <div class="row" style="margin-top:14px">
-      <div class="row-title">Device callback URL</div>
-      <div class="row-sub">Paste this full URL into GET-only door panels. It uses addon port ${esc(getSettings().local_api_port || 8799)} on this HA host.</div>
-      <input class="mono" readonly value="${esc(deviceCallbackUrl())}">
-      <div class="row-sub">Ingress/API path: ${esc(deviceCallbackPath())}</div>
+      <div class="row-title">Door panel callback URL</div>
+      <div class="row-sub">Paste this single full URL into the outdoor device. Change destinations below without changing the device URL.</div>
+      <input class="mono" readonly value="${esc(stableDoorCallbackUrl())}">
+      <div class="row-sub">POST with secret also works: ${esc(stableDoorCallbackPath())}. Advanced per-trigger URL: ${esc(deviceCallbackPath("TRIGGER_ID"))}</div>
     </div>
   `;
 }
@@ -694,7 +706,7 @@ function triggerRow(t) {
           <button class="btn small red" data-action="delete-trigger" data-id="${esc(t.id)}">Delete</button>
         </div>
       </div>
-      ${t.mode === "door_station" && getSettings().automation.webhook_id ? `<input class="mono" readonly value="${esc(deviceCallbackUrl(t.id))}">` : ""}
+      ${t.mode === "door_station" && getSettings().automation.webhook_id ? `<input class="mono" readonly value="${esc(stableDoorCallbackUrl())}">` : ""}
     </div>
   `;
 }
@@ -771,8 +783,11 @@ async function onClick(event) {
     if (action === "create-door-flow") createDoorFlow();
     if (action === "delete-trigger") deleteTrigger(btn.dataset.id);
   } catch (err) {
-    toast(err.data?.error || err.message || "Action failed");
-    setSaveState(err.data?.error || err.message || "Action failed", "bad");
+    const detail = Array.isArray(err.data?.errors) && err.data.errors.length
+      ? err.data.errors.join("; ")
+      : err.data?.error || err.message || "Action failed";
+    toast(detail);
+    setSaveState(detail, "bad");
   }
 }
 
@@ -846,7 +861,7 @@ function createDoorFlow() {
     return;
   }
   const trigger = {
-    id: slug(`unknown_face_${source}_${targets.join("_")}`).slice(0, 64),
+    id: "unknown_face_door",
     label,
     enabled: true,
     mode: "door_station",
@@ -858,11 +873,17 @@ function createDoorFlow() {
     timeout: Number($("door-timeout").value) || 30,
     cooldown_seconds: effectiveDoorCooldown(Number($("door-cooldown").value) || getSettings().automation.cooldown_seconds),
   };
-  const triggers = getSettings().automation.triggers;
-  const existing = triggers.findIndex((item) => item.id === trigger.id);
-  if (existing >= 0) triggers.splice(existing, 1, trigger);
-  else triggers.push(trigger);
-  setDirty("Door flow created. Save to activate.");
+  const automation = getSettings().automation;
+  automation.triggers = (automation.triggers || []).filter((item) => item.mode !== "door_station");
+  automation.triggers.push(trigger);
+  if (!automation.webhook_id || !automation.webhook_secret || automation.webhook_secret.length < 24) {
+    automation.webhook_enabled = true;
+    automation.webhook_id = automation.webhook_id || `site_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
+    automation.webhook_secret = automation.webhook_secret && automation.webhook_secret.length >= 24
+      ? automation.webhook_secret
+      : crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "");
+  }
+  setDirty("Door flow updated. Save once; the outdoor device URL stays the same.");
   renderAutomation();
 }
 

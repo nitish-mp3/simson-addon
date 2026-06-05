@@ -18,7 +18,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.2.9"
+ADDON_VERSION = "4.3.2"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -1232,6 +1232,10 @@ class LocalAPI:
         if not target_ids:
             return web.json_response({"error": "door station trigger has no targets"}, status=422)
 
+        fanout_mode = str(trigger.get("fanout_mode", "parallel")).strip() or "parallel"
+        if fanout_mode not in ("parallel", "priority"):
+            fanout_mode = "parallel"
+
         results = []
         for target_id in target_ids:
             routing = self.target_dir.resolve_routing(target_id) if self.target_dir else None
@@ -1270,6 +1274,17 @@ class LocalAPI:
                     "error": "door station targets must be SIP phones or HAOS nodes",
                 }
             results.append(result)
+            if fanout_mode == "priority" and result.get("ok"):
+                skipped = [tid for tid in target_ids if tid not in {item.get("target_id") for item in results}]
+                for skipped_id in skipped:
+                    results.append({
+                        "target_id": skipped_id,
+                        "status": 204,
+                        "ok": True,
+                        "skipped": True,
+                        "reason": "priority mode stopped after first successful target",
+                    })
+                break
 
         ok = [item for item in results if item.get("ok")]
         retry_after = max(
@@ -1287,6 +1302,7 @@ class LocalAPI:
             "source": source,
             "source_extension": source_extension,
             "target_ids": target_ids,
+            "fanout_mode": fanout_mode,
             "mode": "door_station",
             "status": "started" if ok else "failed",
             "retry_after": retry_after,
