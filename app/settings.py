@@ -305,11 +305,21 @@ def validate_settings(data: dict) -> list[str]:
 
         if not str(trigger.get("label", "")).strip():
             errors.append(f"Automation trigger #{idx}: label is required")
-        target_id = str(trigger.get("target_id", "")).strip()
-        if not target_id:
+        raw_target_ids = trigger.get("target_ids")
+        if not isinstance(raw_target_ids, list):
+            raw_target_ids = []
+        target_ids = []
+        for item in raw_target_ids + [trigger.get("target_id", "")]:
+            target_id = str(item or "").strip()
+            if target_id and target_id not in target_ids:
+                target_ids.append(target_id)
+
+        if not target_ids:
             errors.append(f"Automation trigger #{idx}: target is required")
-        elif target_id not in valid_target_ids:
-            errors.append(f"Automation trigger #{idx}: unknown target '{target_id}'")
+        else:
+            for target_id in target_ids:
+                if target_id not in valid_target_ids:
+                    errors.append(f"Automation trigger #{idx}: unknown target '{target_id}'")
         trigger_mode = str(trigger.get("mode", "standard")).strip() or "standard"
         if trigger_mode not in ("standard", "door_station"):
             errors.append(f"Automation trigger #{idx}: mode must be standard or door_station")
@@ -327,21 +337,28 @@ def validate_settings(data: dict) -> list[str]:
                 errors.append(
                     f"Automation trigger #{idx}: door station source extension must contain 2-12 digits"
                 )
-            target = next(
-                (
-                    item for item in (data.get("call_targets") or [])
-                    if str(item.get("id", "")).strip() == target_id
-                ),
-                None,
-            )
-            if not target or str(target.get("type", "")).strip() not in ("sip", "asterisk"):
-                errors.append(
-                    f"Automation trigger #{idx}: door station target must be a saved SIP desk phone"
+            for target_id in target_ids:
+                target = next(
+                    (
+                        item for item in (data.get("call_targets") or [])
+                        if str(item.get("id", "")).strip() == target_id
+                    ),
+                    None,
                 )
-            elif source_extension and source_extension == str(target.get("extension", "")).strip():
-                errors.append(
-                    f"Automation trigger #{idx}: door station source and indoor target must be different SIP extensions"
-                )
+                target_type = str((target or {}).get("type", "")).strip()
+                if not target or target_type not in ("sip", "asterisk", "node", "device"):
+                    errors.append(
+                        f"Automation trigger #{idx}: door station targets must be saved SIP phones or HAOS nodes"
+                    )
+                    continue
+                if (
+                    target_type in ("sip", "asterisk")
+                    and source_extension
+                    and source_extension == str(target.get("extension", "")).strip()
+                ):
+                    errors.append(
+                        f"Automation trigger #{idx}: door station source and indoor target must be different SIP extensions"
+                    )
             try:
                 timeout = int(trigger.get("timeout", 30))
                 if not 5 <= timeout <= 120:

@@ -171,9 +171,9 @@ Keep the addon port private. If an external service needs webhook access, expose
 For an outdoor SIP door station with a camera and face recognition:
 
 1. Create SIP endpoints for the outdoor station and the indoor video phone. Enable **Video capable device** for both endpoints. Both devices must register to the same Simson VPS account.
-2. Create a **Routing Target** for the indoor extension using **SIP desk phone**.
-3. Under **Automation & Webhook Calls**, create a preset and choose **Door camera SIP bridge**.
-4. Enter the outdoor station SIP extension, select the indoor SIP target, generate webhook credentials, and save.
+2. Create **Routing Targets** for every destination that may ring. Use **SIP desk phone** for indoor video monitors and **Home / node** for HAOS cards or other homes.
+3. Under **Automation & Webhook Calls**, create a door camera flow.
+4. Enter the outdoor station SIP extension, select one or more destinations, generate webhook credentials, and save.
 5. Configure the station's face-recognition mismatch action using one displayed recipe:
    - For a GET-only camera panel, paste the complete private camera callback URL.
    - For a controller that supports headers, `POST` the authenticated webhook URL with `X-Simson-Webhook-Secret` and `{"trigger_id":"your_trigger_id"}`.
@@ -181,7 +181,14 @@ For an outdoor SIP door station with a camera and face recognition:
 
 Use exactly one callback path for each face-recognition action. The direct GET-only camera URL calls Simson without passing through an HA webhook automation. If you use that direct path and need companion HA actions, trigger them from the `simson_door_station_call` event instead of calling `simson.run_trigger` again.
 
-The callback workflow calls the outdoor station first and then bridges its native SIP media to the indoor phone. The outdoor station must support auto-answer for SIP callbacks. H.264 video is negotiated only between compatible SIP endpoints; existing HAOS browser audio, gateway, and landline routes remain audio-only.
+The callback workflow calls the outdoor station first and then bridges its native SIP media to selected SIP/video phones. The outdoor station must support auto-answer for SIP callbacks. H.264 video is negotiated only between compatible SIP endpoints; existing HAOS browser audio, gateway, and landline routes remain audio-only. If you select HAOS node targets in the same flow, they receive a normal Simson call/event so local automations can react, but they do not receive the native SIP video stream.
+
+For Home Assistant automations, Simson publishes:
+
+- `simson_call_event` for incoming, outgoing, active, failed, ended, transferred, and forwarded call lifecycle changes.
+- `sensor.simson_last_call_event` with the same event data as attributes, including `call_id`, `direction`, `call_type`, `node_id`, `target_id`, `target_type`, `sip_extension`, `source_extension`, `target_extension`, `remote_number`, and `status`.
+- `simson_door_station_call` when a door camera SIP bridge is started for a SIP/video target.
+- `sensor.simson_last_automation_event` with the last automation or door-flow result, including per-target status for multi-destination flows.
 
 If the door-station firmware can place a SIP call directly when recognition fails, use that device-native mode only after adding an approved PBX direct-dial rule for the station. The supported default in Simson is the protected webhook callback flow above.
 - `POST /api/answer` - Answer a call

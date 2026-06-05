@@ -18,6 +18,15 @@ _supervisor_host = (
 HA_API_BASE = f"{_supervisor_host}/core/api"
 
 
+def _entity_safe(value: str) -> str:
+    """Return a Home Assistant entity-id safe fragment."""
+    safe = []
+    for ch in str(value or "").lower():
+        safe.append(ch if ch.isalnum() else "_")
+    collapsed = "_".join(part for part in "".join(safe).split("_") if part)
+    return collapsed or "node"
+
+
 class HABridge:
     """Communicates with Home Assistant via the Supervisor REST API."""
 
@@ -78,6 +87,31 @@ class HABridge:
                     )
         except Exception as e:
             logger.warning("HA state set error: %s", e)
+
+    async def publish_call_event(self, payload: dict):
+        """Expose the latest call event as both an HA event and state sensor."""
+        await self.fire_event("simson_call_event", payload)
+        attrs = dict(payload)
+        attrs.setdefault("friendly_name", "Simson Last Call Event")
+        attrs.setdefault("icon", "mdi:phone-in-talk")
+        event_state = str(payload.get("event") or payload.get("status") or "unknown")[:255]
+        await self.set_state("sensor.simson_last_call_event", event_state, attrs)
+
+        node_fragment = _entity_safe(payload.get("node_id", self.cfg.node_id))
+        await self.set_state(
+            f"sensor.simson_{node_fragment}_last_call_event",
+            event_state,
+            attrs,
+        )
+
+    async def publish_automation_event(self, event_type: str, payload: dict):
+        """Expose the latest automation/door event for HA automations."""
+        await self.fire_event(event_type, payload)
+        attrs = dict(payload)
+        attrs.setdefault("friendly_name", "Simson Last Automation Event")
+        attrs.setdefault("icon", "mdi:lightning-bolt")
+        event_state = str(payload.get("status") or payload.get("event") or event_type)[:255]
+        await self.set_state("sensor.simson_last_automation_event", event_state, attrs)
 
     async def call_service(self, domain: str, service: str, data: dict | None = None):
         """Call a Home Assistant service."""

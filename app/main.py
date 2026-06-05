@@ -79,6 +79,7 @@ class SimsonAddon:
     def _call_event_payload(self, call: CallInfo, event: str, reason: str = "", **extra) -> dict:
         """Build a normalized HA automation event for every call lifecycle change."""
         metadata = call.metadata or {}
+        routing_meta = metadata.get("routing") if isinstance(metadata.get("routing"), dict) else {}
         payload = {
             "event": event,
             "call_id": call.call_id,
@@ -92,6 +93,10 @@ class SimsonAddon:
             "remote_node_id": call.remote_node_id,
             "remote_label": call.remote_label,
             "caller_user_id": call.caller_user_id,
+            "target_id": metadata.get("target_id", routing_meta.get("target_id", "")),
+            "target_node_id": metadata.get("target_node_id", ""),
+            "target_type": metadata.get("target_type", routing_meta.get("target_type", "")),
+            "target_label": metadata.get("target_label", routing_meta.get("target_label", "")),
             "target_user_id": metadata.get("target_user_id", ""),
             "target_user_name": metadata.get("target_user_name", ""),
             "sip_bridge_id": metadata.get("sip_bridge_id", ""),
@@ -111,7 +116,7 @@ class SimsonAddon:
     async def _emit_call_event(self, call: CallInfo, event: str, reason: str = "", **extra):
         """Fire a single normalized HA event for automations and dashboards."""
         payload = self._call_event_payload(call, event, reason, **extra)
-        await self.ha.fire_event("simson_call_event", payload)
+        await self.ha.publish_call_event(payload)
         return payload
 
     def track_outgoing_call_request(self, request_id: str, call_id: str):

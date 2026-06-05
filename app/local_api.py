@@ -18,7 +18,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.2.0"
+ADDON_VERSION = "4.2.1"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -855,6 +855,9 @@ class LocalAPI:
         remote_label = ""
         if routing:
             remote_label = routing.target_label or routing.extension or routing.target_id
+            metadata["target_id"] = routing.target_id or target_id
+            metadata["target_type"] = routing.target_type
+            metadata["target_label"] = remote_label
             # Central SIP path (to_node_id = sip:EXT) needs conservative,
             # flat metadata for compatibility with older VPS payload decoders.
             if routing.target_type in ("asterisk", "sip", "gateway") and str(to_node).startswith("sip:"):
@@ -867,7 +870,7 @@ class LocalAPI:
                 metadata["extension"] = routing.extension
                 metadata["context"] = routing.context
                 metadata["trunk"] = routing.trunk
-                metadata["target_label"] = remote_label
+                metadata["target_extension"] = routing.extension
             else:
                 metadata["routing"] = {
                     "target_type": routing.target_type,
@@ -1090,14 +1093,21 @@ class LocalAPI:
                 "last_run_age_seconds": int(now - last_run),
             }, status=429)
 
-        target_id = str(trigger.get("target_id", "")).strip()
-        if not target_id:
+        target_ids = self._trigger_target_ids(trigger)
+        target_id = target_ids[0] if target_ids else ""
+        if not target_ids:
             return web.json_response({"error": "automation trigger has no target"}, status=422)
 
         self._automation_last_run[trigger_id] = now
-        logger.info("Running automation trigger %s from %s to target %s", trigger_id, source, target_id)
+        logger.info("Running automation trigger %s from %s to target(s) %s", trigger_id, source, target_ids)
         if str(trigger.get("mode", "standard")).strip() == "door_station":
-            response = await self._initiate_door_station_call(trigger_id, trigger, source)
+            response = await self._initiate_door_station_calls(trigger_id, trigger, source)
+            if response.status >= 400:
+                self._automation_last_run.pop(trigger_id, None)
+            return response
+
+        if len(target_ids) > 1:
+            response = await self._initiate_standard_trigger_calls(trigger_id, trigger, source, target_ids)
             if response.status >= 400:
                 self._automation_last_run.pop(trigger_id, None)
             return response
@@ -1113,42 +1123,185 @@ class LocalAPI:
             return response
 
         if self.addon and getattr(self.addon, "ha", None):
-            await self.addon.ha.fire_event("simson_automation_triggered", {
+            await self.addon.ha.publish_automation_event("simson_automation_triggered", {
                 "trigger_id": trigger_id,
                 "label": trigger.get("label", trigger_id),
                 "target_id": target_id,
+                "target_ids": target_ids,
                 "source": source,
+                "mode": str(trigger.get("mode", "standard")).strip() or "standard",
+                "status": "started",
             })
         return response
 
+    def _trigger_target_ids(self, trigger: dict) -> list[str]:
+        """Return unique trigger target IDs, preserving legacy target_id support."""
+        raw = trigger.get("target_ids")
+        if not isinstance(raw, list):
+            raw = []
+        ids: list[str] = []
+        for item in raw + [trigger.get("target_id", "")]:
+            target_id = str(item or "").strip()
+            if target_id and target_id not in ids:
+                ids.append(target_id)
+        return ids
+
+    async def _initiate_standard_trigger_calls(
+        self,
+        trigger_id: str,
+        trigger: dict,
+        source: str,
+        target_ids: list[str],
+    ) -> web.Response:
+        """Fan out a standard automation trigger to multiple saved targets."""
+        results = []
+        for target_id in target_ids:
+            response = await self._initiate_call({
+                "target_id": target_id,
+                "caller_id": str(trigger.get("caller_id", "")).strip(),
+                "caller_user_id": f"automation:{trigger_id}:{target_id}",
+            }, source=f"{source}:{trigger_id}")
+            results.append(self._response_summary(response, target_id))
+
+        ok = [item for item in results if 200 <= item["status"] < 400]
+        payload = {
+            "trigger_id": trigger_id,
+            "label": trigger.get("label", trigger_id),
+            "target_ids": target_ids,
+            "source": source,
+            "mode": str(trigger.get("mode", "standard")).strip() or "standard",
+            "status": "started" if ok else "failed",
+            "results": results,
+        }
+        if self.addon and getattr(self.addon, "ha", None):
+            await self.addon.ha.publish_automation_event("simson_automation_triggered", payload)
+        return web.json_response(payload, status=202 if ok else 502)
+
+    def _response_summary(self, response: web.Response, target_id: str) -> dict:
+        """Summarize an internal aiohttp response without leaking implementation details."""
+        try:
+            data = json.loads(response.text or "{}")
+        except Exception:
+            data = {"body": response.text}
+        return {
+            "target_id": target_id,
+            "status": response.status,
+            "ok": 200 <= response.status < 400,
+            "data": data,
+        }
+
     async def _initiate_door_station_call(self, trigger_id: str, trigger: dict, source: str) -> web.Response:
-        """Start a tenant-scoped native SIP door-camera bridge through the VPS."""
+        """Backward-compatible wrapper for the old single-target door flow."""
+        return await self._initiate_door_station_calls(trigger_id, trigger, source)
+
+    async def _initiate_door_station_calls(self, trigger_id: str, trigger: dict, source: str) -> web.Response:
+        """Start one or more tenant-scoped door-camera actions."""
         if not self.cfg.account_id or not self.cfg.node_id or not self.cfg.install_token or not self.cfg.server_url:
             return web.json_response(
                 {"error": "door station calls require a provisioned addon node"},
                 status=400,
             )
-        target_id = str(trigger.get("target_id", "")).strip()
-        routing = self.target_dir.resolve_routing(target_id) if self.target_dir else None
-        if not routing or routing.target_type not in ("sip", "asterisk"):
-            return web.json_response(
-                {"error": "door station target must be a saved SIP desk phone"},
-                status=422,
-            )
         source_extension = str(trigger.get("source_extension", "")).strip()
-        target_extension = str(routing.extension or "").strip()
-        if not source_extension.isdigit() or not target_extension.isdigit():
+        if not source_extension.isdigit():
             return web.json_response(
-                {"error": "door station source and target must be numeric SIP extensions"},
+                {"error": "door station source must be a numeric SIP extension"},
                 status=422,
             )
 
         try:
-            timeout_sec = int(trigger.get("timeout", routing.timeout or 30))
+            timeout_sec = int(trigger.get("timeout", 30))
         except (TypeError, ValueError):
             return web.json_response({"error": "door station timeout must be an integer"}, status=422)
         if not 5 <= timeout_sec <= 120:
             return web.json_response({"error": "door station timeout must be between 5 and 120 seconds"}, status=422)
+
+        target_ids = self._trigger_target_ids(trigger)
+        if not target_ids:
+            return web.json_response({"error": "door station trigger has no targets"}, status=422)
+
+        results = []
+        for target_id in target_ids:
+            routing = self.target_dir.resolve_routing(target_id) if self.target_dir else None
+            if not routing:
+                results.append({
+                    "target_id": target_id,
+                    "status": 404,
+                    "ok": False,
+                    "error": "target not found",
+                })
+                continue
+            if routing.target_type in ("sip", "asterisk"):
+                result = await self._initiate_door_station_sip_target(
+                    trigger_id,
+                    trigger,
+                    source,
+                    routing,
+                    source_extension,
+                    timeout_sec,
+                )
+            elif routing.target_type in ("node", "device"):
+                response = await self._initiate_call({
+                    "target_id": target_id,
+                    "caller_id": str(trigger.get("caller_id", "")).strip(),
+                    "caller_user_id": f"automation:{trigger_id}:{target_id}",
+                    "call_type": "voice",
+                }, source=f"{source}:{trigger_id}")
+                result = self._response_summary(response, target_id)
+                result["target_type"] = routing.target_type
+            else:
+                result = {
+                    "target_id": target_id,
+                    "target_type": routing.target_type,
+                    "status": 422,
+                    "ok": False,
+                    "error": "door station targets must be SIP phones or HAOS nodes",
+                }
+            results.append(result)
+
+        ok = [item for item in results if item.get("ok")]
+        payload = {
+            "trigger_id": trigger_id,
+            "label": trigger.get("label", trigger_id),
+            "source": source,
+            "source_extension": source_extension,
+            "target_ids": target_ids,
+            "mode": "door_station",
+            "status": "started" if ok else "failed",
+            "results": results,
+        }
+        if self.addon and getattr(self.addon, "ha", None):
+            await self.addon.ha.publish_automation_event("simson_automation_triggered", payload)
+        return web.json_response(payload, status=202 if ok else 502)
+
+    async def _initiate_door_station_sip_target(
+        self,
+        trigger_id: str,
+        trigger: dict,
+        source: str,
+        routing: RoutingIntent,
+        source_extension: str,
+        timeout_sec: int,
+    ) -> dict:
+        """Start a native SIP door-camera bridge to one SIP-capable target."""
+        target_id = routing.target_id
+        target_extension = str(routing.extension or "").strip()
+        if not target_extension.isdigit():
+            return {
+                "target_id": target_id,
+                "target_type": routing.target_type,
+                "status": 422,
+                "ok": False,
+                "error": "door station SIP target must have a numeric extension",
+            }
+        if source_extension == target_extension:
+            return {
+                "target_id": target_id,
+                "target_type": routing.target_type,
+                "target_extension": target_extension,
+                "status": 422,
+                "ok": False,
+                "error": "door station source and target extension cannot match",
+            }
 
         payload = {
             "source_extension": source_extension,
@@ -1175,10 +1328,24 @@ class LocalAPI:
                         data = {"error": await resp.text()}
                     if resp.status not in (200, 201, 202):
                         logger.error("VPS door event failed: %s %s", resp.status, data)
-                        return web.json_response(data, status=resp.status)
+                        data.update({
+                            "target_id": target_id,
+                            "target_type": routing.target_type,
+                            "target_extension": target_extension,
+                            "status": resp.status,
+                            "ok": False,
+                        })
+                        return data
         except Exception as exc:
             logger.error("Door station event error: %s", exc)
-            return web.json_response({"error": f"door station request failed: {exc}"}, status=502)
+            return {
+                "target_id": target_id,
+                "target_type": routing.target_type,
+                "target_extension": target_extension,
+                "status": 502,
+                "ok": False,
+                "error": f"door station request failed: {exc}",
+            }
 
         logger.info(
             "Door station trigger %s started native SIP bridge %s -> %s",
@@ -1187,14 +1354,7 @@ class LocalAPI:
             target_extension,
         )
         if self.addon and getattr(self.addon, "ha", None):
-            await self.addon.ha.fire_event("simson_automation_triggered", {
-                "trigger_id": trigger_id,
-                "label": trigger.get("label", trigger_id),
-                "target_id": target_id,
-                "source": source,
-                "mode": "door_station",
-            })
-            await self.addon.ha.fire_event("simson_door_station_call", {
+            await self.addon.ha.publish_automation_event("simson_door_station_call", {
                 "trigger_id": trigger_id,
                 "label": trigger.get("label", trigger_id),
                 "source": source,
@@ -1204,7 +1364,15 @@ class LocalAPI:
                 "call_id": data.get("call_id", ""),
                 "status": data.get("status", "calling_door_station"),
             })
-        return web.json_response(data, status=202)
+        data.update({
+            "target_id": target_id,
+            "target_type": routing.target_type,
+            "target_extension": target_extension,
+            "phase": data.get("status", "calling_door_station"),
+            "status": 202,
+            "ok": True,
+        })
+        return data
 
     async def handle_answer(self, request: web.Request) -> web.Response:
         """Answer an incoming call."""

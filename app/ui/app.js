@@ -519,7 +519,7 @@ function renderAutomation() {
   const settings = getSettings();
   const auto = settings.automation;
   const videoSip = state.sip.map(normalizeSipEndpoint).filter((ep) => ep && ep.enabled !== false && ep.video_enabled);
-  const sipTargets = settings.call_targets.filter((t) => ["sip", "asterisk"].includes(t.type));
+  const doorTargets = settings.call_targets.filter((t) => ["sip", "asterisk", "node", "device"].includes(t.type));
   $("content").innerHTML = `
     <div class="grid cols-2">
       <div class="card glow">
@@ -558,16 +558,26 @@ function renderAutomation() {
       </div>
       <div class="card">
         <div class="card-title">Door camera flow</div>
-        <div class="card-sub">Source is the outdoor camera station. Destination is the indoor SIP phone/monitor that should receive live audio + H.264 video.</div>
-        <div class="door-flow" style="margin-top:14px">
+        <div class="card-sub">Source is the outdoor camera station. SIP/video destinations receive native audio + H.264 video; HAOS nodes receive a normal Simson call/event.</div>
+        <div class="door-flow multi" style="margin-top:14px">
           <div class="door-step">
             <label>1 · Outdoor source</label>
             <select id="door-source">${videoSip.map((ep) => option(ep.extension, `${ep.extension} · ${ep.description || ep.username}`, "")).join("")}</select>
           </div>
           <div class="door-arrow">→</div>
           <div class="door-step destination">
-            <label>2 · Indoor destination</label>
-            <select id="door-target">${sipTargets.map((t) => option(t.id, `${t.label || t.id} · ${t.extension}`, "")).join("")}</select>
+            <label>2 · Destinations</label>
+            <div class="check-list">
+              ${doorTargets.map((t) => `
+                <label class="check-row">
+                  <input type="checkbox" class="door-target-check" value="${esc(t.id)}">
+                  <span>
+                    <strong>${esc(t.label || t.id)}</strong>
+                    <small>${esc(targetDescriptor(t))}</small>
+                  </span>
+                </label>
+              `).join("") || `<div class="empty">Add SIP phones or HAOS node routes first.</div>`}
+            </div>
           </div>
         </div>
         <div class="form-grid" style="margin-top:14px">
@@ -587,6 +597,14 @@ function renderAutomation() {
             <label>Caller ID</label>
             <input id="door-caller" placeholder="Unknown visitor">
           </div>
+          <div class="field full">
+            <label>Fan-out mode</label>
+            <select id="door-fanout">
+              <option value="parallel">Ring selected destinations at the same time</option>
+              <option value="priority">Priority order (save now, route engine can step later)</option>
+            </select>
+            <div class="hint">For video, parallel SIP destinations require the outdoor station to support multiple simultaneous calls. If not, select one SIP video destination and use HA automations for extra actions.</div>
+          </div>
         </div>
         <div style="margin-top:14px"><button class="btn orange" data-action="create-door-flow">Create Door Flow</button></div>
       </div>
@@ -605,6 +623,13 @@ function renderAutomation() {
   `;
 }
 
+function targetDescriptor(target) {
+  if (!target) return "";
+  if (["sip", "asterisk"].includes(target.type)) return `SIP/video extension ${target.extension || target.id}`;
+  if (["node", "device"].includes(target.type)) return `HAOS node ${target.node_id || target.id}`;
+  return `${target.type || "target"} ${target.extension || target.node_id || target.id}`;
+}
+
 function webhookPreview(auto) {
   if (!auto.webhook_id) {
     return `<div class="empty" style="margin-top:14px">Generate credentials to get device callback URLs.</div>`;
@@ -619,12 +644,14 @@ function webhookPreview(auto) {
 }
 
 function triggerRow(t) {
+  const targetIds = Array.isArray(t.target_ids) && t.target_ids.length ? t.target_ids : [t.target_id].filter(Boolean);
+  const targetText = targetIds.join(", ");
   return `
     <div class="row">
       <div class="row-main">
         <div>
           <div class="row-title">${esc(t.label || t.id)}</div>
-          <div class="row-sub">${esc(t.mode || "standard")} · target ${esc(t.target_id)} · cooldown ${esc(t.cooldown_seconds || getSettings().automation.cooldown_seconds || 90)}s</div>
+          <div class="row-sub">${esc(t.mode || "standard")} · targets ${esc(targetText || "none")} · cooldown ${esc(t.cooldown_seconds || getSettings().automation.cooldown_seconds || 90)}s</div>
         </div>
         <div class="row-actions">
           <span class="pill ${t.enabled !== false ? "ok" : "bad"}">${t.enabled !== false ? "enabled" : "disabled"}</span>
@@ -772,18 +799,20 @@ function generateWebhook() {
 
 function createDoorFlow() {
   const source = $("door-source").value;
-  const target = $("door-target").value;
+  const targets = Array.from(document.querySelectorAll(".door-target-check:checked")).map((el) => el.value);
   const label = $("door-label").value.trim() || "Unknown visitor";
-  if (!source || !target) {
-    toast("Pick both source and destination SIP phones.");
+  if (!source || !targets.length) {
+    toast("Pick the outdoor source and at least one destination.");
     return;
   }
   const trigger = {
-    id: slug(`unknown_face_${source}_${target}`).slice(0, 64),
+    id: slug(`unknown_face_${source}_${targets.join("_")}`).slice(0, 64),
     label,
     enabled: true,
     mode: "door_station",
-    target_id: target,
+    target_id: targets[0],
+    target_ids: targets,
+    fanout_mode: $("door-fanout").value || "parallel",
     source_extension: source,
     caller_id: $("door-caller").value.trim() || label,
     timeout: Number($("door-timeout").value) || 30,
