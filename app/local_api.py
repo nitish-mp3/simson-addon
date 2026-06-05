@@ -18,7 +18,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.2.5"
+ADDON_VERSION = "4.2.9"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -278,6 +278,7 @@ class LocalAPI:
 
         errors = validate_settings(body)
         if errors:
+            logger.warning("Rejected settings update: %s", "; ".join(errors))
             return web.json_response({"errors": errors}, status=422)
 
         old = load_settings()
@@ -1003,13 +1004,12 @@ class LocalAPI:
         return await self._execute_automation_trigger(trigger_id, source="device_webhook")
 
     async def handle_automation_legacy_get(self, request: web.Request) -> web.Response:
-        """Run the only saved door flow for panels using the historic GET URL.
+        """Run the single saved door flow for GET-only camera panels.
 
-        Early UI versions displayed /api/automation/webhook/{webhook_id} before
-        distinguishing POST controllers from GET-only camera panels. Preserve that
-        onsite URL safely: it can invoke only one enabled door preset, never an
-        arbitrary trigger or destination. Sites with multiple door presets must
-        use the explicit /api/automation/device/{webhook_id}/{trigger_id} URL.
+        This is the normal practical device URL: the outdoor panel calls one
+        stable site callback, while the addon settings decide which destinations
+        should ring. It can invoke only one enabled door preset, never an
+        arbitrary trigger or destination.
         """
         automation = self.cfg.automation or {}
         if not automation.get("webhook_enabled"):
@@ -1038,11 +1038,7 @@ class LocalAPI:
             )
 
         trigger_id = str(door_triggers[0]["id"]).strip()
-        logger.warning(
-            "Running legacy GET-only camera webhook for saved trigger %s; "
-            "regenerate credentials and migrate to the explicit device callback URL",
-            trigger_id,
-        )
+        logger.info("Running GET-only camera webhook for saved door trigger %s", trigger_id)
         return await self._execute_automation_trigger(trigger_id, source="legacy_device_webhook")
 
     async def _execute_automation_trigger(self, trigger_id: str, source: str) -> web.Response:
