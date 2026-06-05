@@ -36,9 +36,9 @@ body {
   color: var(--text);
   font-family: "Aptos", "Segoe UI", "Trebuchet MS", sans-serif;
   background:
-    radial-gradient(circle at 12% 8%, rgba(22, 160, 133, 0.22), transparent 32rem),
-    radial-gradient(circle at 92% 8%, rgba(216, 137, 44, 0.18), transparent 28rem),
-    linear-gradient(135deg, #08100f 0%, #10100c 55%, #070808 100%);
+    radial-gradient(circle at 8% 0%, rgba(22, 160, 133, 0.12), transparent 28rem),
+    linear-gradient(135deg, #090d0c 0%, #10110e 58%, #080908 100%);
+  text-shadow: none;
 }
 
 button,
@@ -54,14 +54,14 @@ button {
 
 .shell {
   min-height: 100vh;
-  padding: 22px;
+  padding: 14px;
 }
 
 .app-frame {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
-  gap: 18px;
-  max-width: 1440px;
+  grid-template-columns: 224px minmax(0, 1fr);
+  gap: 12px;
+  max-width: 1320px;
   margin: 0 auto;
 }
 
@@ -74,61 +74,61 @@ button {
 
 .sidebar {
   position: sticky;
-  top: 22px;
-  height: calc(100vh - 44px);
-  border-radius: var(--radius-xl);
-  padding: 22px;
+  top: 14px;
+  height: calc(100vh - 28px);
+  border-radius: 18px;
+  padding: 14px;
   display: flex;
   flex-direction: column;
   gap: 20px;
 }
 
 .workspace {
-  min-height: calc(100vh - 44px);
-  border-radius: var(--radius-xl);
+  min-height: calc(100vh - 28px);
+  border-radius: 18px;
   overflow: hidden;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
 }
 
 .brand-mark {
-  width: 50px;
-  height: 50px;
+  width: 36px;
+  height: 36px;
   display: grid;
   place-items: center;
-  border-radius: 16px;
+  border-radius: 10px;
   background: linear-gradient(135deg, rgba(22, 160, 133, 0.26), rgba(216, 137, 44, 0.22));
   border: 1px solid var(--line-strong);
-  font-size: 24px;
+  font-size: 17px;
 }
 
 .brand-title {
-  font-size: 20px;
+  font-size: 17px;
   font-weight: 900;
   letter-spacing: -0.03em;
 }
 
 .brand-sub {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   margin-top: 3px;
 }
 
 .nav {
   display: grid;
-  gap: 8px;
+  gap: 4px;
 }
 
 .nav button {
   border: 1px solid transparent;
   background: transparent;
   color: var(--muted);
-  border-radius: 16px;
-  padding: 13px 14px;
+  border-radius: 10px;
+  padding: 9px 10px;
   text-align: left;
   display: flex;
   align-items: center;
@@ -147,6 +147,14 @@ button {
   border-color: var(--line-strong);
 }
 
+.nav b,
+.card-title,
+.row-title,
+.door-step label,
+label {
+  text-shadow: none;
+}
+
 .sidebar-footer {
   margin-top: auto;
   display: grid;
@@ -154,8 +162,8 @@ button {
 }
 
 .mini-card {
-  padding: 12px;
-  border-radius: 16px;
+  padding: 9px;
+  border-radius: 10px;
   background: rgba(255, 255, 255, 0.035);
   border: 1px solid var(--line);
 }
@@ -180,7 +188,7 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  padding: 26px 30px;
+  padding: 16px 20px;
   border-bottom: 1px solid var(--line);
   background:
     linear-gradient(90deg, rgba(22, 160, 133, 0.13), rgba(216, 137, 44, 0.08)),
@@ -189,7 +197,7 @@ button {
 
 .kicker {
   color: var(--accent);
-  font-size: 12px;
+  font-size: 10px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   font-weight: 900;
@@ -197,9 +205,9 @@ button {
 
 .page-title {
   margin: 3px 0 0;
-  font-size: clamp(28px, 4vw, 46px);
-  letter-spacing: -0.06em;
-  line-height: 0.95;
+  font-size: clamp(22px, 2.4vw, 30px);
+  letter-spacing: -0.04em;
+  line-height: 1.05;
 }
 
 .top-actions {
@@ -210,7 +218,7 @@ button {
 }
 
 .content {
-  padding: 26px 30px 120px;
+  padding: 18px 20px 92px;
 }
 
 .panel {
@@ -231,7 +239,7 @@ button {
 
 .grid {
   display: grid;
-  gap: 16px;
+  gap: 12px;
 }
 
 .grid.cols-2 {
@@ -245,8 +253,8 @@ button {
 .card {
   border: 1px solid var(--line);
   background: var(--card);
-  border-radius: var(--radius-lg);
-  padding: 18px;
+  border-radius: 14px;
+  padding: 14px;
 }
 
 .card.glow {
@@ -260,33 +268,33 @@ button {
   justify-content: space-between;
   align-items: flex-start;
   gap: 14px;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 
 .card-title {
   font-weight: 900;
   letter-spacing: -0.02em;
-  font-size: 18px;
+  font-size: 15px;
 }
 
 .card-sub {
   color: var(--muted);
-  font-size: 13px;
-  line-height: 1.55;
+  font-size: 12px;
+  line-height: 1.45;
   margin-top: 4px;
 }
 
 .stat {
   display: grid;
-  gap: 6px;
-  padding: 16px;
-  border-radius: 18px;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.035);
   border: 1px solid var(--line);
 }
 
 .stat b {
-  font-size: 24px;
+  font-size: 19px;
   letter-spacing: -0.04em;
 }
 
@@ -301,9 +309,9 @@ button {
   gap: 7px;
   border-radius: 999px;
   border: 1px solid var(--line-strong);
-  padding: 6px 10px;
+  padding: 4px 8px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
 }
 
@@ -328,7 +336,7 @@ button {
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: 10px;
 }
 
 .field {
@@ -353,8 +361,8 @@ textarea {
   border: 1px solid var(--line-strong);
   background: rgba(4, 6, 6, 0.42);
   color: var(--text);
-  border-radius: 14px;
-  padding: 12px 13px;
+  border-radius: 10px;
+  padding: 9px 10px;
   outline: none;
   transition: 150ms ease;
 }
@@ -376,8 +384,8 @@ textarea:focus {
   border: 1px solid transparent;
   color: white;
   background: linear-gradient(135deg, #147e70, #16a085);
-  border-radius: 14px;
-  padding: 11px 15px;
+  border-radius: 10px;
+  padding: 9px 12px;
   font-weight: 900;
   transition: 150ms ease;
 }
@@ -402,23 +410,23 @@ textarea:focus {
 }
 
 .btn.small {
-  padding: 8px 11px;
-  border-radius: 12px;
+  padding: 6px 9px;
+  border-radius: 8px;
   font-size: 12px;
 }
 
 .list {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .row {
   border: 1px solid var(--line);
   background: var(--card-soft);
-  border-radius: 18px;
-  padding: 14px;
+  border-radius: 12px;
+  padding: 10px;
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .row-main {
@@ -455,16 +463,16 @@ textarea:focus {
 
 .door-flow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 54px minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) 36px minmax(0, 1fr);
+  gap: 10px;
   align-items: stretch;
 }
 
 .door-step {
   border: 1px solid rgba(22, 160, 133, 0.3);
   background: rgba(7, 28, 26, 0.56);
-  border-radius: 20px;
-  padding: 16px;
+  border-radius: 12px;
+  padding: 10px;
 }
 
 .door-step.destination {
@@ -476,14 +484,14 @@ textarea:focus {
   display: grid;
   place-items: center;
   color: var(--accent);
-  font-size: 26px;
+  font-size: 18px;
   font-weight: 900;
 }
 
 .save-bar {
   position: fixed;
-  right: max(22px, calc((100vw - 1440px) / 2 + 22px));
-  bottom: 22px;
+  right: max(14px, calc((100vw - 1320px) / 2 + 14px));
+  bottom: 14px;
   z-index: 10;
   display: flex;
   align-items: center;
@@ -491,10 +499,56 @@ textarea:focus {
   max-width: min(760px, calc(100vw - 44px));
   padding: 12px;
   border: 1px solid var(--line-strong);
-  border-radius: 20px;
+  border-radius: 14px;
   background: rgba(14, 18, 17, 0.92);
   box-shadow: var(--shadow);
   backdrop-filter: blur(18px);
+}
+
+.dense-grid {
+  align-items: start;
+}
+
+.data-table {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.data-head,
+.data-row {
+  display: grid;
+  grid-template-columns: 1.05fr 1fr 1.15fr 1fr 0.75fr;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 12px;
+}
+
+.data-head {
+  color: var(--faint);
+  background: rgba(255, 255, 255, 0.035);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.data-row {
+  min-height: 46px;
+  border-top: 1px solid var(--line);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.data-row small {
+  display: block;
+  margin-top: 2px;
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.data-row b {
+  font-weight: 900;
 }
 
 .save-state {
@@ -541,7 +595,7 @@ textarea:focus {
   }
 
   .nav {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .topbar {
@@ -564,5 +618,20 @@ textarea:focus {
     left: 12px;
     right: 12px;
     bottom: 12px;
+  }
+}
+
+@media (max-width: 720px) {
+  .nav {
+    grid-template-columns: 1fr;
+  }
+
+  .data-head {
+    display: none;
+  }
+
+  .data-row {
+    grid-template-columns: 1fr;
+    gap: 5px;
   }
 }

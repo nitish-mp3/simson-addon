@@ -18,7 +18,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.1.9"
+ADDON_VERSION = "4.2.0"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -1636,13 +1636,34 @@ class LocalAPI:
     def _normalize_sip_endpoints_payload(payload) -> list:
         """Normalize possible VPS response shapes to a plain endpoints list."""
         if isinstance(payload, list):
-            return payload
-        if isinstance(payload, dict):
+            items = payload
+        elif isinstance(payload, dict):
             if isinstance(payload.get("endpoints"), list):
-                return payload["endpoints"]
-            if isinstance(payload.get("items"), list):
-                return payload["items"]
-        return []
+                items = payload["endpoints"]
+            elif isinstance(payload.get("items"), list):
+                items = payload["items"]
+            else:
+                items = []
+        else:
+            items = []
+
+        endpoints: list[dict] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            endpoints.append({
+                "id": item.get("id", item.get("ID", "")),
+                "account_id": item.get("account_id", item.get("AccountID", "")),
+                "extension": item.get("extension", item.get("Extension", "")),
+                "username": item.get("username", item.get("Username", "")),
+                "description": item.get("description", item.get("Description", "")),
+                "route_to": item.get("route_to", item.get("RouteTo", "")),
+                "video_enabled": bool(item.get("video_enabled", item.get("VideoEnabled", False))),
+                "enabled": bool(item.get("enabled", item.get("Enabled", True))),
+                "created_at": item.get("created_at", item.get("CreatedAt", "")),
+                "updated_at": item.get("updated_at", item.get("UpdatedAt", "")),
+            })
+        return endpoints
 
     def _ws_to_http_url(self, ws_url: str) -> str:
         """Convert a WS/WSS URL to an HTTP(S) base URL for admin API calls.

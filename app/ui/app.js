@@ -34,7 +34,7 @@ const defaults = {
 };
 
 const pages = [
-  ["overview", "Pulse", "Live health"],
+  ["overview", "Overview", "Live health"],
   ["routing", "Routing", "Targets and fallback"],
   ["sip", "SIP Phones", "Extensions and video"],
   ["automation", "Door Automation", "Webhooks and cooldowns"],
@@ -206,6 +206,20 @@ function render() {
     advanced: renderAdvanced,
   }[state.page] || renderOverview;
   renderer();
+}
+
+function normalizeSipEndpoint(ep) {
+  if (!ep || typeof ep !== "object") return null;
+  return {
+    id: ep.id ?? ep.ID ?? "",
+    account_id: ep.account_id ?? ep.AccountID ?? "",
+    extension: ep.extension ?? ep.Extension ?? "",
+    username: ep.username ?? ep.Username ?? "",
+    description: ep.description ?? ep.Description ?? "",
+    route_to: ep.route_to ?? ep.RouteTo ?? "",
+    video_enabled: Boolean(ep.video_enabled ?? ep.VideoEnabled ?? ep.video ?? false),
+    enabled: ep.enabled ?? ep.Enabled ?? true,
+  };
 }
 
 function renderSetup() {
@@ -426,7 +440,7 @@ function targetRow(t) {
 
 function renderSip() {
   $("content").innerHTML = `
-    <div class="grid cols-2">
+    <div class="grid cols-2 dense-grid">
       <div class="card glow">
         <div class="card-title">Create SIP phone</div>
         <div class="card-sub">Use for desk phones, indoor video monitors, door stations, or ATA boxes.</div>
@@ -470,24 +484,33 @@ function renderSip() {
           <div class="card-sub">These are scoped to this VPS account/site.</div>
         </div>
       </div>
-      <div class="list">
-        ${state.sip.map(sipRow).join("") || `<div class="empty">No SIP endpoints returned yet.</div>`}
-      </div>
+      ${sipTable()}
     </div>
   `;
 }
 
-function sipRow(ep) {
+function sipTable() {
+  if (!state.sip.length) return `<div class="empty">No SIP endpoints returned yet.</div>`;
+  return `
+    <div class="data-table">
+      <div class="data-head">
+        <span>Extension</span><span>User</span><span>Route</span><span>Media</span><span>Status</span>
+      </div>
+      ${state.sip.map(sipRow).join("")}
+    </div>
+  `;
+}
+
+function sipRow(raw) {
+  const ep = normalizeSipEndpoint(raw) || {};
   const enabled = ep.enabled !== false;
   return `
-    <div class="row">
-      <div class="row-main">
-        <div>
-          <div class="row-title">[${esc(ep.extension)}] ${esc(ep.description || ep.username || ep.extension)}</div>
-          <div class="row-sub">Username ${esc(ep.username)} · Route ${esc(ep.route_to || "any available node")} · ${ep.video ? "Audio + H.264 video" : "Audio only"}</div>
-        </div>
-        <span class="pill ${enabled ? "ok" : "bad"}">${enabled ? "enabled" : "disabled"}</span>
-      </div>
+    <div class="data-row">
+      <span><b>${esc(ep.extension || "-")}</b><small>${esc(ep.description || "")}</small></span>
+      <span>${esc(ep.username || "-")}</span>
+      <span>${esc(ep.route_to || "any node")}</span>
+      <span>${ep.video_enabled ? "Audio + H.264" : "Audio"}</span>
+      <span><span class="pill ${enabled ? "ok" : "bad"}">${enabled ? "enabled" : "disabled"}</span></span>
     </div>
   `;
 }
@@ -495,7 +518,7 @@ function sipRow(ep) {
 function renderAutomation() {
   const settings = getSettings();
   const auto = settings.automation;
-  const videoSip = state.sip.filter((ep) => ep.enabled !== false && ep.video);
+  const videoSip = state.sip.map(normalizeSipEndpoint).filter((ep) => ep && ep.enabled !== false && ep.video_enabled);
   const sipTargets = settings.call_targets.filter((t) => ["sip", "asterisk"].includes(t.type));
   $("content").innerHTML = `
     <div class="grid cols-2">
@@ -730,7 +753,7 @@ async function createSip() {
     password: $("sip-pass").value.trim(),
     description: $("sip-desc").value.trim(),
     route_to: $("sip-route").value.trim(),
-    video: $("sip-video").checked,
+    video_enabled: $("sip-video").checked,
     enabled: true,
   };
   await api("api/sip-endpoints", { method: "POST", body: JSON.stringify(payload) });
@@ -811,7 +834,8 @@ async function refresh() {
   state.status = status;
   state.settings = settings ? deepMerge(defaults, settings) : getSettings();
   state.nodes = Array.isArray(nodes?.nodes) ? nodes.nodes : [];
-  state.sip = Array.isArray(sip) ? sip : Array.isArray(sip?.endpoints) ? sip.endpoints : [];
+  const sipItems = Array.isArray(sip) ? sip : Array.isArray(sip?.endpoints) ? sip.endpoints : [];
+  state.sip = sipItems.map(normalizeSipEndpoint).filter(Boolean);
   state.routing = routing;
   state.loaded = true;
   if (!state.dirty) setSaveState("Everything saved", "ok");
