@@ -18,7 +18,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.3.8"
+ADDON_VERSION = "4.3.9"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -1249,10 +1249,11 @@ class LocalAPI:
             else:
                 resolved_targets.append((target_id, routing))
 
-        has_native_sip_target = any(
-            routing is not None and routing.target_type in ("sip", "asterisk")
-            for _, routing in resolved_targets
-        )
+        sip_targets = [
+            (target_id, routing)
+            for target_id, routing in resolved_targets
+            if routing is not None and routing.target_type in ("sip", "asterisk")
+        ]
         node_targets = [
             (target_id, routing)
             for target_id, routing in resolved_targets
@@ -1260,6 +1261,56 @@ class LocalAPI:
         ]
 
         results = []
+        mixed_shared_bridge = bool(node_targets and sip_targets)
+        if mixed_shared_bridge:
+            results.extend(await self._initiate_door_station_node_targets(
+                trigger_id,
+                trigger,
+                source,
+                node_targets,
+                source_extension,
+                timeout_sec,
+                sip_targets=sip_targets,
+            ))
+            ok = [item for item in results if item.get("ok")]
+            retry_after = max(
+                [
+                    _safe_int(item.get("retry_after", 0), 0, 0, 3600)
+                    for item in results
+                    if int(item.get("status", 0) or 0) == 429
+                ] or [0]
+            )
+            if retry_after:
+                self._automation_block_until[trigger_id] = time.time() + retry_after
+            payload = {
+                "trigger_id": trigger_id,
+                "label": trigger.get("label", trigger_id),
+                "source": source,
+                "source_extension": source_extension,
+                "target_ids": target_ids,
+                "fanout_mode": fanout_mode,
+                "mode": "door_station",
+                "media_mode": "shared_bridge_audio",
+                "status": "started" if ok else "failed",
+                "retry_after": retry_after,
+                "results": results,
+            }
+            if self.addon and getattr(self.addon, "ha", None):
+                await self.addon.ha.publish_automation_event("simson_automation_triggered", payload)
+            return web.json_response(payload, status=202 if ok else (429 if retry_after else 502))
+
+        if len(sip_targets) > 1 and fanout_mode != "priority":
+            return web.json_response(
+                {
+                    "error": (
+                        "door stations can only serve one native SIP-video call at a time. "
+                        "Select one SIP/video destination, add a HAOS target to use shared bridge fanout, "
+                        "or choose priority mode."
+                    )
+                },
+                status=422,
+            )
+
         for target_id, routing in resolved_targets:
             if not routing:
                 results.append({
@@ -1279,10 +1330,7 @@ class LocalAPI:
                     timeout_sec,
                 )
             elif routing.target_type in ("node", "device"):
-                # HAOS/browser cards need one shared ConfBridge call. A native
-                # SIP-video target already consumes the door station's single
-                # media call, so mixed flows publish an event instead of trying
-                # a second source call that will immediately hang up the card.
+                # HAOS/browser cards are handled as one shared ConfBridge below.
                 continue
             else:
                 result = {
@@ -1306,18 +1354,7 @@ class LocalAPI:
                 break
 
         if node_targets:
-            if has_native_sip_target:
-                results.extend([
-                    await self._publish_door_station_node_notification(
-                        trigger_id,
-                        trigger,
-                        source,
-                        routing,
-                        source_extension,
-                    )
-                    for _, routing in node_targets
-                ])
-            elif fanout_mode != "priority" or not any(item.get("ok") for item in results):
+            if fanout_mode != "priority" or not any(item.get("ok") for item in results):
                 results.extend(await self._initiate_door_station_node_targets(
                     trigger_id,
                     trigger,
@@ -1454,8 +1491,10 @@ class LocalAPI:
         node_targets: list[tuple[str, RoutingIntent]],
         source_extension: str,
         timeout_sec: int,
+        sip_targets: list[tuple[str, RoutingIntent]] | None = None,
     ) -> list[dict]:
-        """Start one shared WebRTC audio bridge for selected HAOS node targets."""
+        """Start one shared audio bridge for HAOS nodes and optional SIP phones."""
+        sip_targets = sip_targets or []
         node_ids: list[str] = []
         target_ids: list[str] = []
         for target_id, routing in node_targets:
@@ -1466,7 +1505,17 @@ class LocalAPI:
             if node_id not in node_ids:
                 node_ids.append(node_id)
             target_ids.append(target_id)
-        if not node_ids:
+        sip_extensions: list[str] = []
+        sip_target_ids: list[str] = []
+        for target_id, routing in sip_targets:
+            ext = str(routing.extension or "").strip()
+            if not ext:
+                continue
+            if ext not in sip_extensions:
+                sip_extensions.append(ext)
+            sip_target_ids.append(target_id)
+
+        if not node_ids and not sip_extensions:
             return [{
                 "target_id": ",".join(target_ids) or "haos",
                 "target_type": "node",
@@ -1478,6 +1527,7 @@ class LocalAPI:
         payload = {
             "source_extension": source_extension,
             "target_node_ids": node_ids,
+            "target_sip_extensions": sip_extensions,
             "caller_id": str(trigger.get("caller_id", "")).strip(),
             "trigger_id": trigger_id,
             "timeout_sec": timeout_sec,
@@ -1522,7 +1572,7 @@ class LocalAPI:
             "Door station trigger %s started HAOS bridge %s -> %s",
             trigger_id,
             source_extension,
-            ",".join(node_ids),
+            ",".join(node_ids + [f"sip:{ext}" for ext in sip_extensions]),
         )
         if self.addon and getattr(self.addon, "ha", None):
             await self.addon.ha.publish_automation_event("simson_door_station_call", {
@@ -1532,12 +1582,13 @@ class LocalAPI:
                 "source_extension": source_extension,
                 "target_ids": target_ids,
                 "target_node_ids": node_ids,
+                "target_sip_extensions": data.get("target_sip_extensions", sip_extensions),
                 "call_id": data.get("call_id", ""),
                 "sip_bridge_id": data.get("sip_bridge_id", ""),
                 "status": data.get("status", "calling_door_station"),
-                "media_mode": "webrtc_audio",
+                "media_mode": "shared_bridge_audio" if sip_extensions else "webrtc_audio",
             })
-        return [
+        node_results = [
             {
                 "target_id": target_id,
                 "target_type": routing.target_type,
@@ -1547,10 +1598,25 @@ class LocalAPI:
                 "phase": data.get("status", "calling_door_station"),
                 "status": 202,
                 "ok": True,
-                "media_mode": "webrtc_audio",
+                "media_mode": "shared_bridge_audio" if sip_extensions else "webrtc_audio",
             }
             for target_id, routing in node_targets
         ]
+        sip_results = [
+            {
+                "target_id": target_id,
+                "target_type": routing.target_type,
+                "target_extension": str(routing.extension or "").strip(),
+                "call_id": data.get("call_id", ""),
+                "sip_bridge_id": data.get("sip_bridge_id", ""),
+                "phase": data.get("status", "calling_door_station"),
+                "status": 202,
+                "ok": True,
+                "media_mode": "shared_bridge_audio",
+            }
+            for target_id, routing in sip_targets
+        ]
+        return node_results + sip_results
 
     async def _initiate_door_station_sip_target(
         self,

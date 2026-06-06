@@ -659,7 +659,7 @@ function renderAutomation() {
       </div>
       <div class="card">
         <div class="card-title">Door camera flow</div>
-        <div class="card-sub">Source is the outdoor camera station. Pick SIP/video targets for native H.264 video, or HAOS node targets for browser audio. If you mix both, SIP video is kept and HAOS receives an automation/mobile notification instead of a doomed second call.</div>
+        <div class="card-sub">Source is the outdoor camera station. SIP-only flows keep native H.264 video. HAOS-only flows ring browser cards. Mixed SIP + HAOS flows use one shared audio bridge so every selected device can actually ring without double-calling the door station.</div>
         <div class="door-flow multi" style="margin-top:14px">
           <div class="door-step">
             <label>1 · Outdoor source</label>
@@ -706,7 +706,7 @@ function renderAutomation() {
               ${option("parallel", "Ring selected destinations at the same time", selectedFanout)}
               ${option("priority", "Try destinations in priority order", selectedFanout)}
             </select>
-            <div class="hint">Most door stations support one live SIP media call. For HAOS card ringing, select only HAOS node targets. For native video monitors, select SIP/video targets.</div>
+            <div class="hint">Native H.264 video is safest with one SIP monitor. If you select SIP + HAOS together, Simson uses shared bridge fanout so HAOS rings too; video remains native only in SIP-only monitor flows.</div>
           </div>
           <div class="field full">
             <div class="flow-preview">
@@ -1005,6 +1005,15 @@ function createDoorFlow() {
     toast("Outdoor source cannot also be a SIP destination.");
     return;
   }
+  const selectedTargets = targets
+    .map((targetId) => getSettings().call_targets.find((item) => String(item.id) === String(targetId)))
+    .filter(Boolean);
+  const sipCount = selectedTargets.filter((target) => ["sip", "asterisk"].includes(target.type)).length;
+  const haosCount = selectedTargets.filter((target) => ["node", "device"].includes(target.type)).length;
+  if (sipCount > 1 && haosCount === 0 && $("door-fanout").value !== "priority") {
+    toast("Native SIP video supports one monitor at a time. Add a HAOS target for shared fanout, or choose priority order.");
+    return;
+  }
   if (rawCooldown && rawCooldown < cooldown) {
     $("door-cooldown").value = cooldown;
     toast(`Door cooldown raised to ${cooldown}s minimum to prevent spam.`);
@@ -1032,7 +1041,12 @@ function createDoorFlow() {
       ? automation.webhook_secret
       : crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "");
   }
-  setDirty(`Door flow ready: ${sourceSipLabel(source)} to ${targets.length} destination(s). Save once; the outdoor device URL stays the same.`);
+  const modeText = sipCount && haosCount
+    ? "shared bridge fanout"
+    : sipCount
+      ? "native SIP video"
+      : "HAOS browser bridge";
+  setDirty(`Door flow ready: ${sourceSipLabel(source)} to ${targets.length} destination(s) using ${modeText}. Save once; the outdoor device URL stays the same.`);
   renderAutomation();
 }
 
