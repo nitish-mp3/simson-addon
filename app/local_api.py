@@ -18,7 +18,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.3.7"
+ADDON_VERSION = "4.3.8"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -1382,6 +1382,7 @@ class LocalAPI:
         }
         if self.addon and getattr(self.addon, "ha", None):
             await self.addon.ha.publish_automation_event("simson_door_station_call", payload)
+            await self._notify_door_station_skip(trigger, routing, source_extension, reason, payload)
         logger.info(
             "Door station trigger %s skipped HAOS media target %s: source %s is already used by native SIP video",
             trigger_id,
@@ -1397,6 +1398,53 @@ class LocalAPI:
             "media_mode": "event_only",
             "reason": reason,
         }
+
+    async def _notify_door_station_skip(
+        self,
+        trigger: dict,
+        routing: RoutingIntent,
+        source_extension: str,
+        reason: str,
+        payload: dict,
+    ) -> None:
+        """Notify HA users when a mixed door-video flow cannot ring HAOS media."""
+        if not self.addon or not getattr(self.addon, "ha", None):
+            return
+        label = str(trigger.get("label", "Door camera event")).strip() or "Door camera event"
+        target_label = routing.target_label or routing.target_id
+        title = "Simson Door Event"
+        message = (
+            f"{label}: outdoor SIP {source_extension} is already serving the native "
+            f"SIP video call, so HAOS target {target_label} was notified but not called. "
+            "Select only HAOS targets for browser audio, or only SIP/video targets for native video."
+        )
+        settings = load_settings()
+        automation = settings.get("automation") or {}
+        if automation.get("persistent_notifications", True):
+            await self.addon.ha.create_notification(
+                f"simson_door_{str(trigger.get('id', 'event')).strip() or 'event'}",
+                title,
+                message,
+            )
+        notify_services = [
+            item.strip()
+            for item in str(automation.get("notify_services", "")).split(",")
+            if item.strip()
+        ]
+        for service_ref in notify_services:
+            if "." not in service_ref:
+                continue
+            domain, service = service_ref.split(".", 1)
+            await self.addon.ha.call_service(domain, service, {
+                "title": title,
+                "message": message,
+                "data": {
+                    "tag": f"simson-door-{str(trigger.get('id', 'event')).strip() or 'event'}",
+                    "group": "simson-door",
+                    "notification_icon": "mdi:cctv",
+                    "simson": payload,
+                },
+            })
 
     async def _initiate_door_station_node_targets(
         self,

@@ -29,6 +29,8 @@ const defaults = {
     webhook_secret: "",
     cooldown_seconds: 90,
     block_while_call_active: true,
+    persistent_notifications: true,
+    notify_services: "",
     triggers: [],
   },
 };
@@ -641,6 +643,14 @@ function renderAutomation() {
           <div class="field full">
             <label><input type="checkbox" data-path="automation.block_while_call_active" ${auto.block_while_call_active !== false ? "checked" : ""}> Suppress triggers while a call is already active</label>
           </div>
+          <div class="field full">
+            <label><input type="checkbox" data-path="automation.persistent_notifications" ${auto.persistent_notifications !== false ? "checked" : ""}> Create Home Assistant notifications for door events</label>
+          </div>
+          <div class="field full">
+            <label>Mobile app notify services</label>
+            <input data-path="automation.notify_services" value="${esc(auto.notify_services || "")}" placeholder="notify.mobile_app_your_phone, notify.notify">
+            <div class="hint">Home Assistant events do not push to phones by themselves. Add your HA mobile app notify service here for push alerts.</div>
+          </div>
         </div>
         <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
           <button class="btn secondary" data-action="generate-webhook">Generate credentials</button>
@@ -649,7 +659,7 @@ function renderAutomation() {
       </div>
       <div class="card">
         <div class="card-title">Door camera flow</div>
-        <div class="card-sub">Source is the outdoor camera station. SIP/video destinations receive native audio + H.264 video; HAOS nodes receive a normal Simson call/event.</div>
+        <div class="card-sub">Source is the outdoor camera station. Pick SIP/video targets for native H.264 video, or HAOS node targets for browser audio. If you mix both, SIP video is kept and HAOS receives an automation/mobile notification instead of a doomed second call.</div>
         <div class="door-flow multi" style="margin-top:14px">
           <div class="door-step">
             <label>1 · Outdoor source</label>
@@ -696,7 +706,7 @@ function renderAutomation() {
               ${option("parallel", "Ring selected destinations at the same time", selectedFanout)}
               ${option("priority", "Try destinations in priority order", selectedFanout)}
             </select>
-            <div class="hint">For video, parallel SIP destinations require the outdoor station to support multiple simultaneous calls. If not, select one SIP video destination and use HA automations for extra actions.</div>
+            <div class="hint">Most door stations support one live SIP media call. For HAOS card ringing, select only HAOS node targets. For native video monitors, select SIP/video targets.</div>
           </div>
           <div class="field full">
             <div class="flow-preview">

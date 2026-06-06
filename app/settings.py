@@ -62,6 +62,8 @@ DEFAULT_SETTINGS: dict = {
         "webhook_secret": "",
         "cooldown_seconds": 90,
         "block_while_call_active": True,
+        "persistent_notifications": True,
+        "notify_services": "",
         "triggers": [],
     },
 }
@@ -276,6 +278,19 @@ def validate_settings(data: dict) -> list[str]:
             errors.append("Automation: webhook ID is required when webhooks are enabled")
         if len(webhook_secret) < 24:
             errors.append("Automation: webhook secret must contain at least 24 characters")
+    notify_services = str(automation.get("notify_services", "")).strip()
+    if notify_services:
+        for item in notify_services.split(","):
+            service_ref = item.strip()
+            if not service_ref:
+                continue
+            if "." not in service_ref:
+                errors.append("Automation: notify services must look like notify.mobile_app_phone")
+                break
+            domain, service = service_ref.split(".", 1)
+            if not ASTERISK_NAME_RE.match(domain) or not ASTERISK_NAME_RE.match(service):
+                errors.append("Automation: notify services may only contain letters, numbers, dash, and underscore")
+                break
 
     valid_target_ids = {
         str(target.get("id", "")).strip()
