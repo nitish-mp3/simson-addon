@@ -528,9 +528,6 @@ function sipTable() {
   if (!state.sip.length) return `<div class="empty">No SIP endpoints returned yet.</div>`;
   return `
     <div class="data-table">
-      <div class="data-head">
-        <span>Extension</span><span>User</span><span>Route</span><span>Media</span><span>Status</span>
-      </div>
       ${state.sip.map(sipRow).join("")}
     </div>
   `;
@@ -539,15 +536,51 @@ function sipTable() {
 function sipRow(raw) {
   const ep = normalizeSipEndpoint(raw) || {};
   const enabled = ep.enabled !== false;
+  const endpointId = ep.id || ep.extension || ep.username;
+  const isGateway = isGatewaySip(ep);
   return `
-    <div class="data-row">
-      <span><b>${esc(ep.extension || "-")}</b><small>${esc(ep.description || "")}</small></span>
-      <span>${esc(ep.username || "-")}</span>
-      <span>${esc(ep.route_to || "any node")}</span>
-      <span>${ep.video_enabled ? "Audio + H.264" : "Audio"}</span>
-      <span><span class="pill ${enabled ? "ok" : "bad"}">${enabled ? "enabled" : "disabled"}</span></span>
+    <div class="sip-manage-row ${isGateway ? "protected" : ""}">
+      <div class="sip-main">
+        <div>
+          <div class="row-title">${esc(ep.extension || "-")} ${ep.description ? `<span>${esc(ep.description)}</span>` : ""}</div>
+          <div class="row-sub">User ${esc(ep.username || "-")} · ${esc(ep.route_to || "any available node")} · ${ep.video_enabled ? "Audio + H.264" : "Audio only"}</div>
+        </div>
+        <div class="row-actions">
+          <span class="pill ${enabled ? "ok" : "bad"}">${enabled ? "enabled" : "disabled"}</span>
+          ${isGateway ? `<span class="pill warn">gateway protected</span>` : ""}
+        </div>
+      </div>
+      <div class="sip-edit-grid">
+        <div class="field">
+          <label>Label</label>
+          <input data-sip-id="${esc(endpointId)}" data-sip-key="description" value="${esc(ep.description || "")}" placeholder="Kitchen monitor">
+        </div>
+        <div class="field">
+          <label>Route to HAOS node</label>
+          <input data-sip-id="${esc(endpointId)}" data-sip-key="route_to" list="node-list" value="${esc(ep.route_to || "")}" placeholder="any available node">
+        </div>
+        <div class="field">
+          <label>Rotate password</label>
+          <input data-sip-id="${esc(endpointId)}" data-sip-key="password" type="password" placeholder="new password only">
+        </div>
+        <div class="sip-checks">
+          <label><input data-sip-id="${esc(endpointId)}" data-sip-key="enabled" type="checkbox" ${enabled ? "checked" : ""}> Enabled</label>
+          <label><input data-sip-id="${esc(endpointId)}" data-sip-key="video_enabled" type="checkbox" ${ep.video_enabled ? "checked" : ""}> H.264 video</label>
+        </div>
+      </div>
+      <div class="sip-actions">
+        <button class="btn small secondary" data-action="save-sip" data-id="${esc(endpointId)}">Save Device</button>
+        ${isGateway
+          ? `<button class="btn small secondary" disabled title="Gateway trunks are protected here">Delete locked</button>`
+          : `<button class="btn small red" data-action="delete-sip" data-id="${esc(endpointId)}" data-ext="${esc(ep.extension || endpointId)}">Delete</button>`}
+      </div>
     </div>
   `;
+}
+
+function isGatewaySip(ep) {
+  const text = `${ep.extension || ""} ${ep.username || ""} ${ep.description || ""}`.toLowerCase();
+  return /^700[0-9]/.test(String(ep.extension || "")) || text.includes("gateway") || text.includes("gsm") || text.includes("fxo") || text.includes("landline");
 }
 
 function renderAutomation() {
@@ -779,6 +812,8 @@ async function onClick(event) {
     if (action === "delete-target") deleteTarget(btn.dataset.index);
     if (action === "target-mode") setTargetMode(btn.dataset.id, btn.dataset.mode);
     if (action === "create-sip") await createSip();
+    if (action === "save-sip") await saveSip(btn.dataset.id);
+    if (action === "delete-sip") await deleteSip(btn.dataset.id, btn.dataset.ext);
     if (action === "generate-webhook") generateWebhook();
     if (action === "create-door-flow") createDoorFlow();
     if (action === "delete-trigger") deleteTrigger(btn.dataset.id);
@@ -840,6 +875,47 @@ async function createSip() {
   };
   await api("api/sip-endpoints", { method: "POST", body: JSON.stringify(payload) });
   toast("SIP phone created.");
+  await refresh();
+}
+
+function sipFieldValue(endpointId, key) {
+  const el = document.querySelector(`[data-sip-id="${CSS.escape(endpointId)}"][data-sip-key="${key}"]`);
+  if (!el) return "";
+  return el.type === "checkbox" ? el.checked : el.value.trim();
+}
+
+async function saveSip(endpointId) {
+  if (!endpointId) {
+    toast("Missing SIP endpoint ID.");
+    return;
+  }
+  const payload = {
+    description: sipFieldValue(endpointId, "description"),
+    route_to: sipFieldValue(endpointId, "route_to"),
+    video_enabled: sipFieldValue(endpointId, "video_enabled"),
+    enabled: sipFieldValue(endpointId, "enabled"),
+  };
+  const password = sipFieldValue(endpointId, "password");
+  if (password) payload.password = password;
+  await api(`api/sip-endpoints/${encodeURIComponent(endpointId)}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+  toast(password ? "SIP device saved and password rotated." : "SIP device saved.");
+  await refresh();
+}
+
+async function deleteSip(endpointId, extension) {
+  if (!endpointId) {
+    toast("Missing SIP endpoint ID.");
+    return;
+  }
+  const label = extension || endpointId;
+  if (!confirm(`Delete SIP device ${label}? The phone will stop registering until you create it again.`)) {
+    return;
+  }
+  await api(`api/sip-endpoints/${encodeURIComponent(endpointId)}`, { method: "DELETE" });
+  toast(`SIP device ${label} deleted.`);
   await refresh();
 }
 

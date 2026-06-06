@@ -18,7 +18,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.3.2"
+ADDON_VERSION = "4.3.3"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -575,11 +575,16 @@ class LocalAPI:
                         logger.info(f"SIP endpoint deleted: {endpoint_id}")
                         return web.json_response({"deleted": True})
                     else:
-                        error = await resp.text()
-                        logger.error(f"VPS SIP delete failed: {resp.status} {error}")
-                        return web.json_response(
-                            {"error": f"VPS returned {resp.status}"}, status=resp.status
-                        )
+                        error_text = await resp.text()
+                        try:
+                            error_payload = json.loads(error_text) if error_text else {}
+                        except Exception:
+                            error_payload = {"error": error_text or f"VPS returned {resp.status}"}
+                        if not isinstance(error_payload, dict):
+                            error_payload = {"error": str(error_payload)}
+                        error_payload.setdefault("error", f"VPS returned {resp.status}")
+                        logger.error(f"VPS SIP delete failed: {resp.status} {error_text}")
+                        return web.json_response(error_payload, status=resp.status)
         except Exception as e:
             logger.error(f"SIP endpoint delete error: {e}")
             return web.json_response({"error": str(e)}, status=500)
