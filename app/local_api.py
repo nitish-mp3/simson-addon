@@ -18,7 +18,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.3.9"
+ADDON_VERSION = "4.3.10"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -1469,19 +1469,17 @@ class LocalAPI:
             if item.strip()
         ]
         for service_ref in notify_services:
-            if "." not in service_ref:
-                continue
-            domain, service = service_ref.split(".", 1)
-            await self.addon.ha.call_service(domain, service, {
-                "title": title,
-                "message": message,
-                "data": {
+            await self.addon.ha.send_notify_message(
+                service_ref,
+                message,
+                title=title,
+                data={
                     "tag": f"simson-door-{str(trigger.get('id', 'event')).strip() or 'event'}",
                     "group": "simson-door",
                     "notification_icon": "mdi:cctv",
                     "simson": payload,
                 },
-            })
+            )
 
     async def _initiate_door_station_node_targets(
         self,

@@ -24,6 +24,7 @@ from asterisk_setup import setup_asterisk
 from local_api import LocalAPI
 from ha_bridge import HABridge
 from target_directory import TargetDirectory
+from settings import load_settings
 
 # --- Logging setup ---
 
@@ -75,6 +76,7 @@ class SimsonAddon:
         self._pending_call_requests: dict[str, tuple[str, float]] = {}
         # Deduplicate repeated incoming invites from the same SIP source.
         self._recent_invite_sources: dict[str, float] = {}
+        self._mobile_notify_last: dict[str, float] = {}
 
     def _call_event_payload(self, call: CallInfo, event: str, reason: str = "", **extra) -> dict:
         """Build a normalized HA automation event for every call lifecycle change."""
@@ -117,7 +119,80 @@ class SimsonAddon:
         """Fire a single normalized HA event for automations and dashboards."""
         payload = self._call_event_payload(call, event, reason, **extra)
         await self.ha.publish_call_event(payload)
+        await self._notify_call_event(payload)
         return payload
+
+    async def _notify_call_event(self, payload: dict) -> None:
+        """Send configured HA mobile notifications for every meaningful call event."""
+        settings = load_settings()
+        automation = settings.get("automation") or {}
+        notify_services = [
+            item.strip()
+            for item in str(automation.get("notify_services", "")).split(",")
+            if item.strip()
+        ]
+        if not notify_services:
+            return
+
+        event = str(payload.get("event") or payload.get("status") or "").strip()
+        call_id = str(payload.get("call_id") or "").strip()
+        if event not in {
+            "incoming", "outgoing", "active", "ended", "failed",
+            "missed", "declined", "timeout", "forwarded",
+        }:
+            return
+
+        dedupe_key = f"{call_id}:{event}"
+        now = time.time()
+        if now - self._mobile_notify_last.get(dedupe_key, 0) < 2:
+            return
+        self._mobile_notify_last[dedupe_key] = now
+        for key, ts in list(self._mobile_notify_last.items()):
+            if now - ts > 600:
+                self._mobile_notify_last.pop(key, None)
+
+        remote = (
+            payload.get("remote_number")
+            or payload.get("remote_label")
+            or payload.get("remote_node_id")
+            or "Unknown caller"
+        )
+        direction = str(payload.get("direction") or "").strip()
+        call_type = str(payload.get("call_type") or "call").strip()
+        title_map = {
+            "incoming": "Simson Incoming Call",
+            "outgoing": "Simson Outgoing Call",
+            "active": "Simson Call Active",
+            "ended": "Simson Call Ended",
+            "failed": "Simson Call Failed",
+            "missed": "Simson Missed Call",
+            "declined": "Simson Call Declined",
+            "timeout": "Simson Call Timed Out",
+            "forwarded": "Simson Call Forwarded",
+        }
+        title = title_map.get(event, "Simson Call")
+        if event == "incoming":
+            message = f"{remote} is calling this site ({call_type})."
+        elif event == "outgoing":
+            message = f"Calling {remote} from this site."
+        elif event == "active":
+            message = f"Call with {remote} is active."
+        elif event == "forwarded":
+            message = f"Call from {remote} forwarded to {payload.get('forwarded_to') or payload.get('forwarded_extension') or 'fallback target'}."
+        elif event == "failed":
+            message = f"Call with {remote} failed: {payload.get('reason') or 'unknown reason'}."
+        else:
+            suffix = f": {payload.get('reason')}" if payload.get("reason") else ""
+            message = f"{direction or 'Call'} with {remote} is {event}{suffix}."
+
+        data = {
+            "tag": f"simson-call-{call_id or event}",
+            "group": "simson-calls",
+            "notification_icon": "mdi:phone",
+            "simson": payload,
+        }
+        for service_ref in notify_services:
+            await self.ha.send_notify_message(service_ref, message, title=title, data=data)
 
     def track_outgoing_call_request(self, request_id: str, call_id: str):
         """Register a pending outgoing call.request envelope."""

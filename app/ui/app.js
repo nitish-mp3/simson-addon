@@ -648,8 +648,8 @@ function renderAutomation() {
           </div>
           <div class="field full">
             <label>Mobile app notify services</label>
-            <input data-path="automation.notify_services" value="${esc(auto.notify_services || "")}" placeholder="notify.mobile_app_your_phone, notify.notify">
-            <div class="hint">Home Assistant events do not push to phones by themselves. Add your HA mobile app notify service here for push alerts.</div>
+            <input data-path="automation.notify_services" value="${esc(auto.notify_services || "")}" placeholder="notify.23090ra98i, notify.mobile_app_your_phone">
+            <div class="hint">Use the notify entity/service that works in HA automations. Modern notify entities like notify.23090ra98i are sent through notify.send_message.</div>
           </div>
         </div>
         <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">

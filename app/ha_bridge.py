@@ -113,7 +113,7 @@ class HABridge:
         event_state = str(payload.get("status") or payload.get("event") or event_type)[:255]
         await self.set_state("sensor.simson_last_automation_event", event_state, attrs)
 
-    async def call_service(self, domain: str, service: str, data: dict | None = None):
+    async def call_service(self, domain: str, service: str, data: dict | None = None) -> bool:
         """Call a Home Assistant service."""
         url = f"{HA_API_BASE}/services/{domain}/{service}"
         try:
@@ -121,16 +121,55 @@ class HABridge:
             async with session.post(
                 url, json=data or {}, timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
-                if resp.status == 200:
+                if resp.status in (200, 201):
                     logger.debug("Called HA service: %s.%s", domain, service)
+                    return True
                 else:
                     body = await resp.text()
                     logger.warning(
                         "Failed to call service %s.%s: %d %s",
                         domain, service, resp.status, body,
                     )
+                    return False
         except Exception as e:
             logger.warning("HA service call error: %s", e)
+            return False
+
+    async def send_notify_message(
+        self,
+        notify_ref: str,
+        message: str,
+        title: str = "",
+        data: dict | None = None,
+    ) -> bool:
+        """Send a push notification to a Home Assistant notify entity/service.
+
+        Supports both modern notify entities, e.g. notify.23090ra98i via
+        notify.send_message, and legacy services such as notify.mobile_app_x.
+        """
+        ref = str(notify_ref or "").strip()
+        if not ref or "." not in ref:
+            return False
+
+        payload = {"message": message}
+        if title:
+            payload["title"] = title
+        if data:
+            payload["data"] = data
+
+        # Modern HA notify entities use action notify.send_message with a
+        # target entity_id. The REST API accepts entity_id in service data.
+        if ref.startswith("notify."):
+            if await self.call_service("notify", "send_message", {"entity_id": ref, **payload}):
+                return True
+            if await self.call_service("notify", "send_message", {
+                "target": {"entity_id": ref},
+                "data": payload,
+            }):
+                return True
+
+        domain, service = ref.split(".", 1)
+        return await self.call_service(domain, service, payload)
 
     async def create_notification(self, notification_id: str, title: str, message: str):
         """Create a persistent notification in HA."""
