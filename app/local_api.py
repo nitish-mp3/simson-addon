@@ -18,7 +18,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.3.6"
+ADDON_VERSION = "4.3.7"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -1249,6 +1249,10 @@ class LocalAPI:
             else:
                 resolved_targets.append((target_id, routing))
 
+        has_native_sip_target = any(
+            routing is not None and routing.target_type in ("sip", "asterisk")
+            for _, routing in resolved_targets
+        )
         node_targets = [
             (target_id, routing)
             for target_id, routing in resolved_targets
@@ -1275,10 +1279,10 @@ class LocalAPI:
                     timeout_sec,
                 )
             elif routing.target_type in ("node", "device"):
-                # HAOS/browser cards need one shared ConfBridge call for all
-                # selected HAOS targets. Start it once after direct SIP targets
-                # have been dispatched, then let the grouped result cover every
-                # node target below.
+                # HAOS/browser cards need one shared ConfBridge call. A native
+                # SIP-video target already consumes the door station's single
+                # media call, so mixed flows publish an event instead of trying
+                # a second source call that will immediately hang up the card.
                 continue
             else:
                 result = {
@@ -1301,15 +1305,27 @@ class LocalAPI:
                     })
                 break
 
-        if node_targets and (fanout_mode != "priority" or not any(item.get("ok") for item in results)):
-            results.extend(await self._initiate_door_station_node_targets(
-                trigger_id,
-                trigger,
-                source,
-                node_targets,
-                source_extension,
-                timeout_sec,
-            ))
+        if node_targets:
+            if has_native_sip_target:
+                results.extend([
+                    await self._publish_door_station_node_notification(
+                        trigger_id,
+                        trigger,
+                        source,
+                        routing,
+                        source_extension,
+                    )
+                    for _, routing in node_targets
+                ])
+            elif fanout_mode != "priority" or not any(item.get("ok") for item in results):
+                results.extend(await self._initiate_door_station_node_targets(
+                    trigger_id,
+                    trigger,
+                    source,
+                    node_targets,
+                    source_extension,
+                    timeout_sec,
+                ))
 
         ok = [item for item in results if item.get("ok")]
         retry_after = max(
@@ -1336,6 +1352,51 @@ class LocalAPI:
         if self.addon and getattr(self.addon, "ha", None):
             await self.addon.ha.publish_automation_event("simson_automation_triggered", payload)
         return web.json_response(payload, status=202 if ok else (429 if retry_after else 502))
+
+    async def _publish_door_station_node_notification(
+        self,
+        trigger_id: str,
+        trigger: dict,
+        source: str,
+        routing: RoutingIntent,
+        source_extension: str,
+    ) -> dict:
+        """Publish a safe HA event for mixed native SIP-video + HAOS flows."""
+        target_id = routing.target_id
+        reason = (
+            "HAOS media bridge skipped because the outdoor SIP station is already "
+            "in a native H.264 SIP call. Select only HAOS targets for browser "
+            "audio, or only SIP/video targets for native video."
+        )
+        payload = {
+            "trigger_id": trigger_id,
+            "label": trigger.get("label", trigger_id),
+            "source": source,
+            "source_extension": source_extension,
+            "target_id": target_id,
+            "target_type": routing.target_type,
+            "target_label": routing.target_label,
+            "status": "skipped",
+            "media_mode": "event_only",
+            "reason": reason,
+        }
+        if self.addon and getattr(self.addon, "ha", None):
+            await self.addon.ha.publish_automation_event("simson_door_station_call", payload)
+        logger.info(
+            "Door station trigger %s skipped HAOS media target %s: source %s is already used by native SIP video",
+            trigger_id,
+            target_id,
+            source_extension,
+        )
+        return {
+            "target_id": target_id,
+            "target_type": routing.target_type,
+            "status": 202,
+            "ok": True,
+            "phase": "event_only",
+            "media_mode": "event_only",
+            "reason": reason,
+        }
 
     async def _initiate_door_station_node_targets(
         self,
