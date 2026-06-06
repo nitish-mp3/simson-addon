@@ -121,7 +121,22 @@ function stableDoorCallbackUrl() {
 
 function effectiveDoorCooldown(value) {
   const parsed = Number(value);
-  return Math.max(20, Number.isFinite(parsed) && parsed > 0 ? parsed : 90);
+  const safe = Number.isFinite(parsed) && parsed > 0 ? parsed : 90;
+  return Math.max(20, Math.min(3600, Math.round(safe)));
+}
+
+function sourceSipLabel(extension) {
+  const ext = String(extension || "").trim();
+  if (!ext) return "No outdoor source selected";
+  const ep = state.sip.map(normalizeSipEndpoint).find((item) => item && String(item.extension) === ext);
+  const label = ep?.description || ep?.username || ext;
+  return `${label} (${ext})`;
+}
+
+function targetListText(ids) {
+  const list = Array.isArray(ids) ? ids.filter(Boolean) : [];
+  if (!list.length) return "No destinations selected";
+  return list.map(targetDisplayName).join(" + ");
 }
 
 async function api(path, options = {}) {
@@ -589,6 +604,13 @@ function renderAutomation() {
   const globalCooldown = effectiveDoorCooldown(auto.cooldown_seconds);
   const videoSip = state.sip.map(normalizeSipEndpoint).filter((ep) => ep && ep.enabled !== false && ep.video_enabled);
   const doorTargets = settings.call_targets.filter((t) => ["sip", "asterisk", "node", "device"].includes(t.type));
+  const existingDoor = (auto.triggers || []).find((item) => item.mode === "door_station") || {};
+  const existingTargetIds = Array.isArray(existingDoor.target_ids) && existingDoor.target_ids.length
+    ? existingDoor.target_ids
+    : [existingDoor.target_id].filter(Boolean);
+  const selectedDoorTargets = new Set(existingTargetIds.map(String));
+  const selectedSource = existingDoor.source_extension || videoSip[0]?.extension || "";
+  const selectedFanout = existingDoor.fanout_mode || "parallel";
   $("content").innerHTML = `
     <div class="automation-grid">
       <div class="card glow">
@@ -631,7 +653,8 @@ function renderAutomation() {
         <div class="door-flow multi" style="margin-top:14px">
           <div class="door-step">
             <label>1 · Outdoor source</label>
-            <select id="door-source">${videoSip.map((ep) => option(ep.extension, `${ep.extension} · ${ep.description || ep.username}`, "")).join("")}</select>
+            <select id="door-source">${videoSip.map((ep) => option(ep.extension, `${ep.extension} · ${ep.description || ep.username}`, selectedSource)).join("")}</select>
+            <div class="hint">This SIP device is called first so it can publish live audio + H.264 video.</div>
           </div>
           <div class="door-arrow">→</div>
           <div class="door-step destination">
@@ -639,7 +662,7 @@ function renderAutomation() {
             <div class="check-list">
               ${doorTargets.map((t) => `
                 <label class="check-row">
-                  <input type="checkbox" class="door-target-check" value="${esc(t.id)}">
+                  <input type="checkbox" class="door-target-check" value="${esc(t.id)}" ${selectedDoorTargets.has(String(t.id)) ? "checked" : ""}>
                   <span>
                     <strong>${esc(t.label || t.id)}</strong>
                     <small>${esc(targetDescriptor(t))}</small>
@@ -652,30 +675,39 @@ function renderAutomation() {
         <div class="form-grid" style="margin-top:14px">
           <div class="field">
             <label>Flow name</label>
-            <input id="door-label" value="Unknown visitor at front door">
+            <input id="door-label" value="${esc(existingDoor.label || "Unknown visitor at front door")}">
           </div>
           <div class="field">
             <label>Ring time seconds</label>
-            <input id="door-timeout" type="number" min="5" max="120" value="30">
+            <input id="door-timeout" type="number" min="5" max="120" value="${esc(existingDoor.timeout || 30)}">
           </div>
           <div class="field">
             <label>Trigger cooldown seconds</label>
-            <input id="door-cooldown" type="number" min="20" max="3600" value="${esc(globalCooldown)}">
+            <input id="door-cooldown" type="number" min="20" max="3600" value="${esc(effectiveDoorCooldown(existingDoor.cooldown_seconds || globalCooldown))}">
+            <div class="hint">Minimum 20s to prevent repeated face-detection calls.</div>
           </div>
           <div class="field">
             <label>Caller ID</label>
-            <input id="door-caller" placeholder="Unknown visitor">
+            <input id="door-caller" value="${esc(existingDoor.caller_id || "")}" placeholder="Unknown visitor">
           </div>
           <div class="field full">
             <label>Fan-out mode</label>
             <select id="door-fanout">
-              <option value="parallel">Ring selected destinations at the same time</option>
-              <option value="priority">Priority order (save now, route engine can step later)</option>
+              ${option("parallel", "Ring selected destinations at the same time", selectedFanout)}
+              ${option("priority", "Try destinations in priority order", selectedFanout)}
             </select>
             <div class="hint">For video, parallel SIP destinations require the outdoor station to support multiple simultaneous calls. If not, select one SIP video destination and use HA automations for extra actions.</div>
           </div>
+          <div class="field full">
+            <div class="flow-preview">
+              <strong>Current saved flow</strong>
+              <span>${esc(sourceSipLabel(selectedSource))}</span>
+              <b>→</b>
+              <span>${esc(targetListText(existingTargetIds))}</span>
+            </div>
+          </div>
         </div>
-        <div style="margin-top:14px"><button class="btn orange" data-action="create-door-flow">Create Door Flow</button></div>
+        <div style="margin-top:14px"><button class="btn orange" data-action="create-door-flow">Update Door Flow</button></div>
       </div>
     </div>
     <div class="card" style="margin-top:16px">
@@ -723,23 +755,40 @@ function webhookPreview(auto) {
 
 function triggerRow(t) {
   const targetIds = Array.isArray(t.target_ids) && t.target_ids.length ? t.target_ids : [t.target_id].filter(Boolean);
-  const targetText = targetIds.map(targetDisplayName).join(", ");
+  const targetText = targetIds.map(targetDisplayName).join(" + ");
   const cooldown = t.mode === "door_station"
     ? effectiveDoorCooldown(t.cooldown_seconds || getSettings().automation.cooldown_seconds)
     : (t.cooldown_seconds || getSettings().automation.cooldown_seconds || 90);
+  const isDoor = t.mode === "door_station";
+  const fanout = t.fanout_mode === "priority" ? "priority order" : "same time";
   return `
-    <div class="row">
+    <div class="row ${isDoor ? "door-trigger-row" : ""}">
       <div class="row-main">
         <div>
           <div class="row-title">${esc(t.label || t.id)}</div>
-          <div class="row-sub">${esc(t.mode || "standard")} · targets ${esc(targetText || "none")} · cooldown ${esc(cooldown)}s</div>
+          ${isDoor ? `
+            <div class="route-line">
+              <span class="route-chip source">Outdoor ${esc(sourceSipLabel(t.source_extension))}</span>
+              <span class="route-arrow">→</span>
+              <span class="route-chip destination">${esc(targetText || "no destination")}</span>
+            </div>
+            <div class="row-sub">Door camera bridge · ${esc(targetIds.length)} destination(s) · fan-out ${esc(fanout)} · cooldown ${esc(cooldown)}s · ring ${esc(t.timeout || 30)}s</div>
+          ` : `
+            <div class="row-sub">${esc(t.mode || "standard")} · targets ${esc(targetText || "none")} · cooldown ${esc(cooldown)}s</div>
+          `}
         </div>
         <div class="row-actions">
           <span class="pill ${t.enabled !== false ? "ok" : "bad"}">${t.enabled !== false ? "enabled" : "disabled"}</span>
           <button class="btn small red" data-action="delete-trigger" data-id="${esc(t.id)}">Delete</button>
         </div>
       </div>
-      ${t.mode === "door_station" && getSettings().automation.webhook_id ? `<input class="mono" readonly value="${esc(stableDoorCallbackUrl())}">` : ""}
+      ${isDoor && getSettings().automation.webhook_id ? `
+        <div class="callback-box">
+          <label>Single device callback URL for this full flow</label>
+          <input class="mono" readonly value="${esc(stableDoorCallbackUrl())}">
+          <div class="row-sub">Paste this one URL into the outdoor panel. It runs the saved source and every selected destination above.</div>
+        </div>
+      ` : ""}
     </div>
   `;
 }
@@ -932,9 +981,23 @@ function createDoorFlow() {
   const source = $("door-source").value;
   const targets = Array.from(document.querySelectorAll(".door-target-check:checked")).map((el) => el.value);
   const label = $("door-label").value.trim() || "Unknown visitor";
+  const rawCooldown = Number($("door-cooldown").value);
+  const cooldown = effectiveDoorCooldown(rawCooldown || getSettings().automation.cooldown_seconds);
   if (!source || !targets.length) {
     toast("Pick the outdoor source and at least one destination.");
     return;
+  }
+  const sourceAsTarget = targets.some((targetId) => {
+    const target = getSettings().call_targets.find((item) => String(item.id) === String(targetId));
+    return ["sip", "asterisk"].includes(target?.type) && String(target.extension || "").trim() === String(source);
+  });
+  if (sourceAsTarget) {
+    toast("Outdoor source cannot also be a SIP destination.");
+    return;
+  }
+  if (rawCooldown && rawCooldown < cooldown) {
+    $("door-cooldown").value = cooldown;
+    toast(`Door cooldown raised to ${cooldown}s minimum to prevent spam.`);
   }
   const trigger = {
     id: "unknown_face_door",
@@ -947,7 +1010,7 @@ function createDoorFlow() {
     source_extension: source,
     caller_id: $("door-caller").value.trim() || label,
     timeout: Number($("door-timeout").value) || 30,
-    cooldown_seconds: effectiveDoorCooldown(Number($("door-cooldown").value) || getSettings().automation.cooldown_seconds),
+    cooldown_seconds: cooldown,
   };
   const automation = getSettings().automation;
   automation.triggers = (automation.triggers || []).filter((item) => item.mode !== "door_station");
@@ -959,7 +1022,7 @@ function createDoorFlow() {
       ? automation.webhook_secret
       : crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "");
   }
-  setDirty("Door flow updated. Save once; the outdoor device URL stays the same.");
+  setDirty(`Door flow ready: ${sourceSipLabel(source)} to ${targets.length} destination(s). Save once; the outdoor device URL stays the same.`);
   renderAutomation();
 }
 

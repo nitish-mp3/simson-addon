@@ -18,7 +18,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.3.3"
+ADDON_VERSION = "4.3.4"
 DEFAULT_PSTN_TRUNK = "7009"
 
 

@@ -958,6 +958,86 @@ input.mono {
   letter-spacing: -0.02em;
 }
 
+.flow-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(1, 16, 14, 0.42);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow: hidden;
+}
+
+.flow-preview span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-preview strong {
+  color: var(--muted);
+  flex-shrink: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.door-trigger-row {
+  gap: 10px;
+}
+
+.route-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 6px;
+  margin-bottom: 5px;
+}
+
+.route-chip {
+  max-width: 100%;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.route-chip.source {
+  border-color: rgba(28, 211, 190, 0.36);
+}
+
+.route-chip.destination {
+  border-color: rgba(255, 147, 49, 0.38);
+}
+
+.route-arrow {
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.callback-box {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.callback-box label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 @media (max-width: 1100px) {
   .automation-grid {
     grid-template-columns: 1fr;
