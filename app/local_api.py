@@ -18,7 +18,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.3.10"
+ADDON_VERSION = "4.3.11"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -89,6 +89,7 @@ class LocalAPI:
             self.app.router.add_static("/ui", path=ui_dir, name="settings_ui")
         self.app.router.add_get("/", self.handle_ingress)
         self.app.router.add_get("/api/status", self.handle_status)
+        self.app.router.add_post("/api/notification/test", self.handle_notification_test)
         self.app.router.add_get("/api/calls", self.handle_list_calls)
         self.app.router.add_post("/api/call", self.handle_make_call)
         self.app.router.add_get("/api/routing", self.handle_routing)
@@ -212,7 +213,55 @@ class LocalAPI:
             status["asterisk_connected"] = self.asterisk.connected
         status["availability"] = self.cfg.availability
         status["routing"] = self.cfg.routing_policy
+        if self.addon and getattr(self.addon, "ha", None):
+            status["last_call_event"] = getattr(self.addon.ha, "last_call_event", {}) or {}
+            status["last_automation_event"] = getattr(self.addon.ha, "last_automation_event", {}) or {}
         return web.json_response(status)
+
+    async def handle_notification_test(self, request: web.Request) -> web.Response:
+        """Send a test push through the configured HA notify targets."""
+        if not self.addon or not getattr(self.addon, "ha", None):
+            return web.json_response({"error": "Home Assistant bridge is not available"}, status=503)
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        settings = load_settings()
+        automation = settings.get("automation", {}) if isinstance(settings, dict) else {}
+        notify_text = str(body.get("notify_services", "") or automation.get("notify_services", ""))
+        notify_services = [
+            item.strip()
+            for item in notify_text.split(",")
+            if item.strip()
+        ]
+        if not notify_services:
+            return web.json_response(
+                {"error": "No mobile app notify services configured"},
+                status=400,
+            )
+
+        results = []
+        success_count = 0
+        for service_ref in notify_services:
+            ok = await self.addon.ha.send_notify_message(
+                service_ref,
+                f"Test notification from Simson node {self.cfg.node_id}.",
+                title="Simson Notification Test",
+                data={
+                    "tag": "simson-notification-test",
+                    "notification_icon": "mdi:phone-check",
+                },
+            )
+            if ok:
+                success_count += 1
+            results.append({"target": service_ref, "ok": ok})
+
+        return web.json_response({
+            "sent": success_count,
+            "total": len(results),
+            "results": results,
+        }, status=200 if success_count else 502)
 
     async def handle_provision(self, request: web.Request) -> web.Response:
         """Provision account + node on VPS from the ingress panel."""

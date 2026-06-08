@@ -409,6 +409,12 @@ textarea:focus {
   background: linear-gradient(135deg, #b73737, #e75757);
 }
 
+.btn.red.ghost {
+  background: rgba(231, 87, 87, 0.08);
+  border-color: rgba(231, 87, 87, 0.45);
+  color: #ffb8b8;
+}
+
 .btn.small {
   padding: 6px 9px;
   border-radius: 8px;

@@ -588,7 +588,7 @@ function sipRow(raw) {
       <div class="sip-actions">
         <button class="btn small secondary" data-action="save-sip" data-id="${esc(endpointId)}">Save Device</button>
         ${isGateway
-          ? `<button class="btn small secondary" disabled title="Gateway trunks are protected here">Delete locked</button>`
+          ? `<button class="btn small red ghost" data-action="delete-sip" data-id="${esc(endpointId)}" data-ext="${esc(ep.extension || endpointId)}" title="Gateway trunks require typed confirmation">Delete Gateway</button>`
           : `<button class="btn small red" data-action="delete-sip" data-id="${esc(endpointId)}" data-ext="${esc(ep.extension || endpointId)}">Delete</button>`}
       </div>
     </div>
@@ -654,6 +654,7 @@ function renderAutomation() {
         </div>
         <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
           <button class="btn secondary" data-action="generate-webhook">Generate credentials</button>
+          <button class="btn secondary" data-action="test-notification">Send Test Notification</button>
         </div>
         ${webhookPreview(auto)}
       </div>
@@ -874,6 +875,7 @@ async function onClick(event) {
     if (action === "save-sip") await saveSip(btn.dataset.id);
     if (action === "delete-sip") await deleteSip(btn.dataset.id, btn.dataset.ext);
     if (action === "generate-webhook") generateWebhook();
+    if (action === "test-notification") await testNotification();
     if (action === "create-door-flow") createDoorFlow();
     if (action === "delete-trigger") deleteTrigger(btn.dataset.id);
   } catch (err) {
@@ -970,12 +972,41 @@ async function deleteSip(endpointId, extension) {
     return;
   }
   const label = extension || endpointId;
+  const endpoint = state.sip
+    .map(normalizeSipEndpoint)
+    .find((ep) => String(ep.id || ep.extension || ep.username) === String(endpointId));
+  const gateway = endpoint ? isGatewaySip(endpoint) : /^700[0-9]/.test(String(label || ""));
+  if (gateway) {
+    const typed = prompt(`Gateway ${label} is protected because deleting it can break live PSTN/GSM/FXO calling.\n\nType ${label} to confirm deletion.`);
+    if (typed !== String(label)) {
+      toast("Gateway deletion cancelled.");
+      return;
+    }
+  }
   if (!confirm(`Delete SIP device ${label}? The phone will stop registering until you create it again.`)) {
     return;
   }
   await api(`api/sip-endpoints/${encodeURIComponent(endpointId)}`, { method: "DELETE" });
   toast(`SIP device ${label} deleted.`);
   await refresh();
+}
+
+async function testNotification() {
+  setSaveState("Testing notification...");
+  const result = await api("api/notification/test", {
+    method: "POST",
+    body: JSON.stringify({
+      notify_services: getSettings().automation.notify_services || "",
+    }),
+  });
+  const sent = Number(result.sent || 0);
+  const total = Number(result.total || 0);
+  if (sent > 0) {
+    toast(`Notification test sent to ${sent}/${total} target(s).`);
+    setSaveState("Notification test sent", "ok");
+    return;
+  }
+  throw new Error("No notification target accepted the test message.");
 }
 
 function generateWebhook() {

@@ -33,6 +33,8 @@ class HABridge:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self._session: aiohttp.ClientSession | None = None
+        self.last_call_event: dict = {}
+        self.last_automation_event: dict = {}
         self._headers = {
             "Authorization": f"Bearer {cfg.supervisor_token}",
             "Content-Type": "application/json",
@@ -90,6 +92,7 @@ class HABridge:
 
     async def publish_call_event(self, payload: dict):
         """Expose the latest call event as both an HA event and state sensor."""
+        self.last_call_event = dict(payload or {})
         await self.fire_event("simson_call_event", payload)
         attrs = dict(payload)
         attrs.setdefault("friendly_name", "Simson Last Call Event")
@@ -106,6 +109,7 @@ class HABridge:
 
     async def publish_automation_event(self, event_type: str, payload: dict):
         """Expose the latest automation/door event for HA automations."""
+        self.last_automation_event = {"event_type": event_type, **dict(payload or {})}
         await self.fire_event(event_type, payload)
         attrs = dict(payload)
         attrs.setdefault("friendly_name", "Simson Last Automation Event")
@@ -161,6 +165,12 @@ class HABridge:
         # target entity_id. The REST API accepts entity_id in service data.
         if ref.startswith("notify."):
             if await self.call_service("notify", "send_message", {"entity_id": ref, **payload}):
+                return True
+            if (title or data) and await self.call_service(
+                "notify",
+                "send_message",
+                {"entity_id": ref, "message": message},
+            ):
                 return True
             if await self.call_service("notify", "send_message", {
                 "target": {"entity_id": ref},
