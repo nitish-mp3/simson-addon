@@ -22,15 +22,30 @@ ADDON_VERSION = "4.3.11"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
+def _is_gateway_trunk(trunk: str) -> bool:
+    """Return true for Synway/ATA style GSM/PSTN trunks.
+
+    7009 was the first production GSM trunk, but every site can add its own
+    70xx gateway endpoint.  Treat them consistently so a new trunk like 7010
+    does not dial a different number format than the known-good gateway.
+    """
+    value = str(trunk or "").strip()
+    digits = "".join(ch for ch in value if ch.isdigit())
+    return (
+        value == DEFAULT_PSTN_TRUNK
+        or (digits == value and digits.startswith("70") and 3 <= len(digits) <= 8)
+    )
+
+
 def _normalize_pstn_digits(digits: str, trunk: str) -> str:
     """Normalize numbers for the current GSM gateway trunk.
 
     Synway's GSM port dials plain digits; for Indian mobile callbacks, sending
     91XXXXXXXXXX without a leading + can be treated as an invalid 12-digit
-    domestic number by the SIM.  For trunk 7009, dial the local 10-digit mobile
-    number instead.
+    domestic number by the SIM.  For Synway-like 70xx gateway trunks, dial the
+    local 10-digit mobile number instead.
     """
-    if str(trunk).strip() == DEFAULT_PSTN_TRUNK and len(digits) == 12 and digits.startswith("91"):
+    if _is_gateway_trunk(trunk) and len(digits) == 12 and digits.startswith("91"):
         return digits[2:]
     return digits
 
