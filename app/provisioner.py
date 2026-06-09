@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import socket
 from urllib.parse import urlsplit, urlunsplit
 
@@ -102,7 +103,10 @@ async def auto_provision(server_url: str, admin_token: str,
 
     hostname = socket.gethostname() or "ha"
     if not account_id:
-        account_id = _sanitize_id(f"ha_{hostname}")
+        # Blank account means a new independent site.  Reusing only the
+        # hostname caused fresh HAOS installs to accidentally attach to an old
+        # site's VPS account when the container hostname repeated.
+        account_id = _sanitize_id(f"ha_{hostname}_{secrets.token_hex(4)}")
     node_id = _sanitize_id(node_label or hostname)
     caps = capabilities or ["haos", "voice"]
 

@@ -280,7 +280,7 @@ function renderSetup() {
     <div class="grid cols-2">
       <div class="card glow">
         <div class="card-title">Provision this HAOS site</div>
-        <div class="card-sub">Create a site node on the VPS. Credentials are saved by the addon, not exposed in the dashboard.</div>
+        <div class="card-sub">Leave Account ID blank for a new independent site. Paste an existing Account ID only when this HAOS must join that same site.</div>
       </div>
       <form class="card" id="setup-form">
         <div class="form-grid">
@@ -293,8 +293,8 @@ function renderSetup() {
             <input name="node_label" placeholder="Front office">
           </div>
           <div class="field">
-            <label>Account ID optional</label>
-            <input name="account_id" placeholder="leave blank for new">
+            <label>Existing Account ID optional</label>
+            <input name="account_id" placeholder="blank = new independent site">
           </div>
         </div>
         <div style="margin-top:16px"><button class="btn" data-action="provision">Provision</button></div>
