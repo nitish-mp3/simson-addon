@@ -31,6 +31,7 @@ const defaults = {
     block_while_call_active: true,
     persistent_notifications: true,
     notify_services: "",
+    dashboard_path: "/lovelace/default_view",
     triggers: [],
   },
 };
@@ -361,7 +362,7 @@ function renderRouting() {
         <div class="card-head">
           <div>
             <div class="card-title">Routing policy</div>
-            <div class="card-sub">Decide how long Simson rings each target before trying a fallback.</div>
+            <div class="card-sub">Controls incoming gateway/PSTN calls after the HAOS card has rung. This does not edit door-camera flows.</div>
           </div>
         </div>
         <div class="form-grid">
@@ -373,32 +374,42 @@ function renderRouting() {
             </select>
           </div>
           <div class="field">
-            <label>Ring before next target</label>
+            <label>Ring HAOS before fallback</label>
             <input type="number" min="5" max="300" data-path="routing.ring_seconds" value="${esc(settings.routing.ring_seconds)}">
+            <div class="hint">Gateway calls ring this dashboard first for this many seconds.</div>
           </div>
           <div class="field">
             <label>Max attempts</label>
             <input type="number" min="1" max="20" data-path="routing.max_attempts" value="${esc(settings.routing.max_attempts)}">
           </div>
           <div class="field">
-            <label>Final fallback target</label>
-            <input data-path="routing.final_fallback_target" value="${esc(settings.routing.final_fallback_target)}" placeholder="security_desk">
+            <label>Gateway fallback target</label>
+            <input data-path="routing.final_fallback_target" value="${esc(settings.routing.final_fallback_target)}" placeholder="1025 or security_desk">
+            <div class="hint">Only this explicit target, or a gateway route's fallback list, receives missed gateway calls.</div>
           </div>
           <div class="field full">
             <label><input type="checkbox" data-path="routing.skip_unavailable" ${settings.routing.skip_unavailable ? "checked" : ""}> Skip busy/offline targets</label>
           </div>
         </div>
+        <div class="flow-preview route-preview">
+          <strong>Gateway call path</strong>
+          <span>PSTN/GSM gateway call</span>
+          <b>→</b>
+          <span>HAOS card for ${esc(settings.routing.ring_seconds)}s</span>
+          <b>→</b>
+          <span>${esc(settings.routing.final_fallback_target || "no automatic SIP fallback")}</span>
+        </div>
       </div>
       <div class="card">
         <div class="card-title">Quick add route</div>
-        <div class="card-sub">Create HAOS, SIP, or outside gateway targets without hunting through a long form.</div>
+        <div class="card-sub">Create named destinations. SIP/HAOS routes can receive calls; gateway routes are for outside outbound dialing.</div>
         <div class="form-grid" style="margin-top:14px">
           <div class="field">
             <label>Kind</label>
             <select id="quick-kind">
               <option value="node">HAOS node</option>
               <option value="sip">SIP phone</option>
-              <option value="gateway">Outside via gateway</option>
+              <option value="gateway">Outside-number route</option>
             </select>
           </div>
           <div class="field">
@@ -406,12 +417,12 @@ function renderRouting() {
             <input id="quick-label" placeholder="Dining phone">
           </div>
           <div class="field">
-            <label>Node / extension / number</label>
-            <input id="quick-value" list="node-list" placeholder="1025 or office2">
+            <label>Destination</label>
+            <input id="quick-value" list="node-list" placeholder="1025, office2, or outside number">
           </div>
           <div class="field">
-            <label>Fallback IDs</label>
-            <input id="quick-fallbacks" placeholder="security, office2">
+            <label>Fallback IDs for this route</label>
+            <input id="quick-fallbacks" placeholder="1025, security, office2">
           </div>
         </div>
         <div style="margin-top:14px"><button class="btn orange" data-action="add-route">Add Route</button></div>
@@ -422,7 +433,7 @@ function renderRouting() {
       <div class="card-head">
         <div>
           <div class="card-title">Routing targets</div>
-          <div class="card-sub">Mark availability, set fallbacks, and keep targets site-scoped.</div>
+          <div class="card-sub">Each row shows exactly what it is: HAOS node, SIP extension, or outbound gateway route.</div>
         </div>
       </div>
       <div class="list" id="target-list">
@@ -449,12 +460,13 @@ function targetRowReadonly(t) {
 function targetRow(t) {
   const idx = getSettings().call_targets.indexOf(t);
   const mode = getSettings().route_overrides?.[t.id]?.mode || "available";
+  const descriptor = targetFlowDescription(t);
   return `
     <div class="row" data-target-index="${idx}">
       <div class="row-main">
         <div>
           <div class="row-title">${esc(t.label || t.id)}</div>
-          <div class="row-sub">${esc(t.type)} · ${esc(t.node_id || t.extension || t.trunk || "")}</div>
+          <div class="row-sub">${esc(descriptor)}</div>
         </div>
         <div class="row-actions">
           <span class="pill ${mode === "available" ? "ok" : mode === "busy" ? "warn" : "bad"}">${esc(mode)}</span>
@@ -474,11 +486,11 @@ function targetRow(t) {
           <input data-target="${idx}" data-key="label" value="${esc(t.label)}">
         </div>
         <div class="field">
-          <label>Node ID</label>
+          <label>HAOS node ID</label>
           <input data-target="${idx}" data-key="node_id" list="node-list" value="${esc(t.node_id)}">
         </div>
         <div class="field">
-          <label>Extension / number</label>
+          <label>SIP extension / outside number</label>
           <input data-target="${idx}" data-key="extension" value="${esc(t.extension)}">
         </div>
         <div class="field full">
@@ -488,6 +500,14 @@ function targetRow(t) {
       </div>
     </div>
   `;
+}
+
+function targetFlowDescription(t) {
+  if (!t) return "";
+  if (["sip", "asterisk"].includes(t.type)) return `Incoming target: SIP extension ${t.extension || t.id}`;
+  if (["node", "device"].includes(t.type)) return `Incoming target: HAOS node ${t.node_id || t.id}`;
+  if (t.type === "gateway") return `Outbound only: dial ${t.extension || "number"} via trunk ${t.trunk || "default"}`;
+  return `${t.type || "target"} · ${t.node_id || t.extension || t.trunk || ""}`;
 }
 
 function renderSip() {
@@ -651,6 +671,11 @@ function renderAutomation() {
             <input data-path="automation.notify_services" value="${esc(auto.notify_services || "")}" placeholder="notify.23090ra98i, notify.mobile_app_your_phone">
             <div class="hint">Use the notify entity/service that works in HA automations. Modern notify entities like notify.23090ra98i are sent through notify.send_message.</div>
           </div>
+          <div class="field full">
+            <label>Notification opens this HA dashboard path</label>
+            <input data-path="automation.dashboard_path" value="${esc(auto.dashboard_path || "/lovelace/default_view")}" placeholder="/lovelace/sip_webrtc">
+            <div class="hint">Tap a call notification to open this dashboard/card. Use the path after your Home Assistant host.</div>
+          </div>
         </div>
         <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
           <button class="btn secondary" data-action="generate-webhook">Generate credentials</button>
@@ -660,7 +685,7 @@ function renderAutomation() {
       </div>
       <div class="card">
         <div class="card-title">Door camera flow</div>
-        <div class="card-sub">Source is the outdoor camera station. SIP-only flows keep native H.264 video. HAOS-only flows ring browser cards. Mixed SIP + HAOS flows use one shared audio bridge so every selected device can actually ring without double-calling the door station.</div>
+        <div class="card-sub">Door flows are separate from gateway fallback. Choose one outdoor source, then choose every SIP monitor or HAOS card that should be notified/ring.</div>
         <div class="door-flow multi" style="margin-top:14px">
           <div class="door-step">
             <label>1 · Outdoor source</label>
@@ -712,9 +737,9 @@ function renderAutomation() {
           <div class="field full">
             <div class="flow-preview">
               <strong>Current saved flow</strong>
-              <span>${esc(sourceSipLabel(selectedSource))}</span>
+              <span>Source: ${esc(sourceSipLabel(selectedSource))}</span>
               <b>→</b>
-              <span>${esc(targetListText(existingTargetIds))}</span>
+              <span>Destinations: ${esc(targetListText(existingTargetIds) || "none")}</span>
             </div>
           </div>
         </div>

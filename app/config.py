@@ -169,6 +169,9 @@ class Config:
             "webhook_secret": str(automation.get("webhook_secret", "")).strip(),
             "cooldown_seconds": _safe_int(automation.get("cooldown_seconds", 90), 90, 1, 3600),
             "block_while_call_active": bool(automation.get("block_while_call_active", True)),
+            "persistent_notifications": bool(automation.get("persistent_notifications", True)),
+            "notify_services": str(automation.get("notify_services", "")).strip(),
+            "dashboard_path": str(automation.get("dashboard_path", "/lovelace/default_view")).strip(),
             "triggers": automation.get("triggers", []) or [],
         }
 

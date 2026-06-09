@@ -64,6 +64,7 @@ DEFAULT_SETTINGS: dict = {
         "block_while_call_active": True,
         "persistent_notifications": True,
         "notify_services": "",
+        "dashboard_path": "/lovelace/default_view",
         "triggers": [],
     },
 }
@@ -291,6 +292,9 @@ def validate_settings(data: dict) -> list[str]:
             if not ASTERISK_NAME_RE.match(domain) or not ASTERISK_NAME_RE.match(service):
                 errors.append("Automation: notify services may only contain letters, numbers, dash, and underscore")
                 break
+    dashboard_path = str(automation.get("dashboard_path", "")).strip()
+    if dashboard_path and not dashboard_path.startswith("/"):
+        errors.append("Automation: dashboard path must start with /, for example /lovelace/sip_webrtc")
 
     valid_target_ids = {
         str(target.get("id", "")).strip()

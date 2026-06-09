@@ -159,6 +159,9 @@ class SimsonAddon:
         )
         direction = str(payload.get("direction") or "").strip()
         call_type = str(payload.get("call_type") or "call").strip()
+        dashboard_path = str(automation.get("dashboard_path", "/lovelace/default_view") or "/lovelace/default_view").strip()
+        if not dashboard_path.startswith("/"):
+            dashboard_path = "/" + dashboard_path
         title_map = {
             "incoming": "Simson Incoming Call",
             "outgoing": "Simson Outgoing Call",
@@ -189,8 +192,27 @@ class SimsonAddon:
             "tag": f"simson-call-{call_id or event}",
             "group": "simson-calls",
             "notification_icon": "mdi:phone",
+            "clickAction": dashboard_path,
+            "url": dashboard_path,
             "simson": payload,
         }
+        if event == "incoming" and call_id:
+            data["actions"] = [
+                {
+                    "action": f"SIMSON_OPEN_{call_id}",
+                    "title": "Open Call",
+                    "uri": dashboard_path,
+                },
+                {
+                    "action": f"SIMSON_ANSWER_{call_id}",
+                    "title": "Answer",
+                },
+                {
+                    "action": f"SIMSON_DECLINE_{call_id}",
+                    "title": "Decline",
+                    "destructive": True,
+                },
+            ]
         for service_ref in notify_services:
             await self.ha.send_notify_message(service_ref, message, title=title, data=data)
 
@@ -550,36 +572,26 @@ class SimsonAddon:
             return
 
         source_ext = str(call.metadata.get("sip_extension", "")).strip()
-        for target in self.cfg.call_targets:
-            target_type = str(target.get("type", "node")).strip()
-            if target_type not in ("node", "device", "asterisk", "sip"):
-                continue
-            if target_type in ("asterisk", "sip") and str(target.get("trunk", "")).strip():
-                # Do not auto-dial external gateway targets on incoming calls.
-                continue
+        candidates = self._incoming_sip_fallback_candidates(source_ext)
+        if not candidates:
+            logger.info(
+                "No explicit gateway/SIP fallback configured for call %s from %s; keeping HAOS card ringing only",
+                call.call_id,
+                source_ext or call.remote_node_id,
+            )
+            return
 
-            target_id = str(target.get("id", "")).strip()
-            if not target_id:
+        for candidate in candidates:
+            target_id, transfer_target, forwarded_ref = self._resolve_incoming_sip_forward_target(
+                candidate,
+                source_ext,
+            )
+            if not transfer_target:
+                logger.info("Skipping unresolved incoming SIP fallback candidate %s", candidate)
                 continue
             if self._target_route_blocked(target_id):
-                logger.info("Skipping unavailable route target %s", target_id)
+                logger.info("Skipping unavailable incoming SIP fallback target %s", target_id)
                 continue
-
-            if target_type in ("asterisk", "sip"):
-                ext = str(target.get("extension", "")).strip()
-                if not ext:
-                    continue
-                if ext == source_ext:
-                    logger.info("Skipping SIP route %s because it matches caller extension", ext)
-                    continue
-                transfer_target = f"sip:{ext}"
-                forwarded_ref = ext
-            else:
-                node_id = str(target.get("node_id", "")).strip() or target_id
-                if not node_id or node_id == self.cfg.node_id:
-                    continue
-                transfer_target = node_id
-                forwarded_ref = node_id
 
             msg = make_call_transfer(call.call_id, self.cfg.node_id, transfer_target)
             try:
@@ -594,7 +606,67 @@ class SimsonAddon:
                     "Failed to route incoming SIP call %s to %s (%s): %s",
                     call.call_id, target_id, transfer_target, exc,
                 )
+                continue
             return
+
+    def _incoming_sip_fallback_candidates(self, source_ext: str) -> list[str]:
+        """Return explicit fallback candidates for an incoming gateway/SIP call.
+
+        Older builds used "first saved route target wins", which made unrelated
+        targets such as a door monitor (1601) receive gateway calls.  Incoming
+        PSTN/GSM calls now route only through source-specific fallbacks or the
+        clearly labelled global gateway fallback.
+        """
+        candidates: list[str] = []
+
+        def add(value: object) -> None:
+            text = str(value or "").strip()
+            if text and text not in candidates:
+                candidates.append(text)
+
+        for target in self.cfg.call_targets:
+            target_ext = str(target.get("extension", "")).strip()
+            target_trunk = str(target.get("trunk", "")).strip()
+            target_id = str(target.get("id", "")).strip()
+            if source_ext and source_ext in {target_ext, target_trunk, target_id}:
+                for fallback in target.get("fallback_targets") or []:
+                    add(fallback)
+
+        add((self.cfg.routing_policy or {}).get("final_fallback_target", ""))
+        return candidates
+
+    def _resolve_incoming_sip_forward_target(
+        self,
+        candidate: str,
+        source_ext: str,
+    ) -> tuple[str, str, str]:
+        """Resolve a fallback id/raw extension into a VPS transfer target."""
+        target_id = str(candidate or "").strip()
+        if not target_id:
+            return "", "", ""
+
+        routing = self.target_dir.resolve_routing(target_id) if self.target_dir else None
+        if routing:
+            target_id = routing.target_id or target_id
+            if routing.target_type in ("asterisk", "sip"):
+                ext = str(routing.extension or "").strip()
+                if not ext or ext == source_ext or str(routing.trunk or "").strip():
+                    return target_id, "", ""
+                return target_id, f"sip:{ext}", ext
+            if routing.target_type in ("node", "device"):
+                node_id = self.target_dir.resolve_node_id(target_id) if self.target_dir else routing.target_id
+                node_id = str(node_id or "").strip()
+                if not node_id or node_id == self.cfg.node_id:
+                    return target_id, "", ""
+                return target_id, node_id, node_id
+            # Gateway targets are outbound PSTN routes, not inbound ring targets.
+            return target_id, "", ""
+
+        if target_id.isdigit() and target_id != source_ext:
+            return target_id, f"sip:{target_id}", target_id
+        if target_id != self.cfg.node_id:
+            return target_id, target_id, target_id
+        return target_id, "", ""
 
     async def _mark_incoming_sip_forwarded(self, call: CallInfo, target_id: str, ext: str):
         """Clear this HAOS ringing UI after the call has been handed to SIP fallback.
