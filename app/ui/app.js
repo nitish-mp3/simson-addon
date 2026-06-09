@@ -857,6 +857,10 @@ function setByPath(path, value) {
 
 function onInput(event) {
   const el = event.target;
+  if (el.matches("[data-sip-id][data-sip-key]")) {
+    setDirty("SIP device edited. Save Settings or Save Device to apply it.");
+    return;
+  }
   if (el.matches("[data-path]")) {
     let value = el.type === "checkbox" ? el.checked : el.type === "number" ? Number(el.value) : el.value;
     if (el.dataset.path === "automation.cooldown_seconds") {
@@ -970,19 +974,44 @@ function sipFieldValue(endpointId, key) {
   return el.type === "checkbox" ? el.checked : el.value.trim();
 }
 
+function renderedSipEndpointIds() {
+  return Array.from(document.querySelectorAll("[data-sip-id][data-sip-key]"))
+    .map((el) => el.dataset.sipId)
+    .filter(Boolean)
+    .filter((id, index, all) => all.indexOf(id) === index);
+}
+
+function sipUpdatePayload(endpointId) {
+  const payload = {
+    description: sipFieldValue(endpointId, "description"),
+    route_to: sipFieldValue(endpointId, "route_to"),
+    video_enabled: Boolean(sipFieldValue(endpointId, "video_enabled")),
+    enabled: Boolean(sipFieldValue(endpointId, "enabled")),
+  };
+  const password = sipFieldValue(endpointId, "password");
+  if (password) payload.password = password;
+  return payload;
+}
+
+async function saveRenderedSipEdits() {
+  const ids = renderedSipEndpointIds();
+  if (!ids.length) return 0;
+  for (const endpointId of ids) {
+    await api(`api/sip-endpoints/${encodeURIComponent(endpointId)}`, {
+      method: "PUT",
+      body: JSON.stringify(sipUpdatePayload(endpointId)),
+    });
+  }
+  return ids.length;
+}
+
 async function saveSip(endpointId) {
   if (!endpointId) {
     toast("Missing SIP endpoint ID.");
     return;
   }
-  const payload = {
-    description: sipFieldValue(endpointId, "description"),
-    route_to: sipFieldValue(endpointId, "route_to"),
-    video_enabled: sipFieldValue(endpointId, "video_enabled"),
-    enabled: sipFieldValue(endpointId, "enabled"),
-  };
-  const password = sipFieldValue(endpointId, "password");
-  if (password) payload.password = password;
+  const payload = sipUpdatePayload(endpointId);
+  const password = Boolean(payload.password);
   await api(`api/sip-endpoints/${encodeURIComponent(endpointId)}`, {
     method: "PUT",
     body: JSON.stringify(payload),
@@ -1123,6 +1152,7 @@ async function provision() {
 
 async function saveSettings() {
   setSaveState("Saving...");
+  const sipSaved = await saveRenderedSipEdits();
   const payload = getSettings();
   payload.automation.cooldown_seconds = effectiveDoorCooldown(payload.automation.cooldown_seconds);
   payload.automation.triggers = (payload.automation.triggers || []).map((trigger) => {
@@ -1138,7 +1168,7 @@ async function saveSettings() {
   await api("api/settings", { method: "POST", body: JSON.stringify(payload) });
   state.dirty = false;
   setSaveState("Saved", "ok");
-  toast("Settings saved.");
+  toast(sipSaved ? `Settings saved. ${sipSaved} SIP device(s) updated.` : "Settings saved.");
   await refresh();
 }
 
