@@ -830,7 +830,47 @@ function triggerRow(t) {
 }
 
 function renderAdvanced() {
+  const s = state.status || {};
   $("content").innerHTML = `
+    <div class="grid cols-2">
+      <div class="card">
+        <div class="card-title">Site identity</div>
+        <div class="card-sub">Move this addon to a different VPS account/node only when you have the correct install token. Restart the addon after saving so the websocket reconnects cleanly.</div>
+        <div class="form-grid" style="margin-top:16px">
+          <div class="field">
+            <label>Account ID</label>
+            <input id="identity-account" value="${esc(s.account_id || "")}" placeholder="site account id">
+          </div>
+          <div class="field">
+            <label>Node ID</label>
+            <input id="identity-node" value="${esc(s.node_id || "")}" placeholder="this HAOS node id">
+          </div>
+          <div class="field full">
+            <label>Install token</label>
+            <input id="identity-token" type="password" placeholder="paste token only when changing identity">
+          </div>
+          <div class="field full">
+            <label>Node label optional</label>
+            <input id="identity-label" value="${esc(s.node_label || "")}" placeholder="friendly name">
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn secondary" data-action="save-identity">Save Identity</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Operational note</div>
+        <div class="card-sub">Changing identity affects which site receives calls and routing events. SIP phones and gateway trunks are still managed from SIP Phones and the VPS account.</div>
+        <div class="row">
+          <div class="row-title">${esc(s.server_url || "No VPS URL")}</div>
+          <div class="row-sub">Current VPS endpoint</div>
+        </div>
+        <div class="row">
+          <div class="row-title">${s.vps_connected ? "Online" : "Offline"}</div>
+          <div class="row-sub">Connection state</div>
+        </div>
+      </div>
+    </div>
     <div class="card">
       <div class="card-title">Raw settings snapshot</div>
       <div class="card-sub">For support/debugging. Editing here is intentionally disabled so accidental raw JSON changes do not break live routing.</div>
@@ -896,6 +936,7 @@ async function onClick(event) {
   try {
     if (action === "refresh") await refresh();
     if (action === "save") await saveSettings();
+    if (action === "save-identity") await saveIdentity();
     if (action === "provision") await provision();
     if (action === "add-route") addRoute();
     if (action === "delete-target") deleteTarget(btn.dataset.index);
@@ -1148,6 +1189,22 @@ async function provision() {
   await api("api/provision", { method: "POST", body: JSON.stringify(payload) });
   toast("Provisioned. Reloading...");
   setTimeout(() => location.reload(), 900);
+}
+
+async function saveIdentity() {
+  const payload = {
+    account_id: $("identity-account")?.value.trim() || "",
+    node_id: $("identity-node")?.value.trim() || "",
+    install_token: $("identity-token")?.value.trim() || "",
+    node_label: $("identity-label")?.value.trim() || "",
+  };
+  if (!payload.account_id || !payload.node_id || !payload.install_token) {
+    toast("Account ID, Node ID, and install token are required to change identity.");
+    return;
+  }
+  await api("api/identity", { method: "POST", body: JSON.stringify(payload) });
+  toast("Identity saved. Restart the addon to reconnect with the new account.");
+  await refresh();
 }
 
 async function saveSettings() {

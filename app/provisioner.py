@@ -63,6 +63,12 @@ def _save_credentials(account_id: str, node_id: str, install_token: str,
     logger.info("Saved credentials to %s", CREDENTIALS_FILE)
 
 
+def save_credentials(account_id: str, node_id: str, install_token: str,
+                     node_label: str = "", capabilities: list | None = None) -> None:
+    """Persist manually supplied credentials from the local admin UI."""
+    _save_credentials(account_id, node_id, install_token, node_label, capabilities)
+
+
 def _admin_url(server_url: str) -> str:
     """Convert wss://host/ws to https://host for admin API calls."""
     if not server_url:

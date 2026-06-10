@@ -13,12 +13,12 @@ from aiohttp import ClientSession, ClientTimeout, web
 from call_manager import CallManager, CallState, RoutingIntent
 from config import Config
 from protocol import make_call_request, make_call_accept, make_call_reject, make_call_end, make_call_transfer, make_webrtc_signal
-from provisioner import auto_provision, clear_saved_credentials
+from provisioner import auto_provision, clear_saved_credentials, save_credentials
 from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.3.15"
+ADDON_VERSION = "4.3.16"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -117,6 +117,7 @@ class LocalAPI:
         self.app.router.add_get("/api/health", self.handle_health)
         self.app.router.add_get("/api/targets", self.handle_targets)
         self.app.router.add_post("/api/provision", self.handle_provision)
+        self.app.router.add_post("/api/identity", self.handle_update_identity)
         self.app.router.add_post("/api/reset", self.handle_reset)
         self.app.router.add_get("/api/events", self.handle_sse)
         self.app.router.add_post("/api/webrtc/signal", self.handle_webrtc_signal)
@@ -218,6 +219,7 @@ class LocalAPI:
         vps_connected = self.wss_client.connected if self.wss_client else False
         status = {
             "node_id": self.cfg.node_id,
+            "node_label": getattr(self.cfg, "node_label", ""),
             "account_id": self.cfg.account_id,
             "server_url": self.cfg.server_url,
             "vps_connected": vps_connected,
@@ -326,6 +328,57 @@ class LocalAPI:
         self.cfg.install_token = ""
         logger.warning("Credentials reset via web UI — setup wizard will show on next load")
         return web.json_response({"reset": True})
+
+    async def handle_update_identity(self, request: web.Request) -> web.Response:
+        """Save account/node credentials from the guarded advanced UI."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"error": "json object required"}, status=400)
+
+        account_id = str(body.get("account_id", "")).strip()
+        node_id = str(body.get("node_id", "")).strip()
+        install_token = str(body.get("install_token", "")).strip()
+        node_label = str(body.get("node_label", "")).strip()
+
+        missing = [
+            label for label, value in (
+                ("account_id", account_id),
+                ("node_id", node_id),
+                ("install_token", install_token),
+            )
+            if not value
+        ]
+        if missing:
+            return web.json_response(
+                {"error": f"Missing required field(s): {', '.join(missing)}"},
+                status=422,
+            )
+
+        save_credentials(
+            account_id=account_id,
+            node_id=node_id,
+            install_token=install_token,
+            node_label=node_label,
+            capabilities=self.cfg.capabilities,
+        )
+        self.cfg.account_id = account_id
+        self.cfg.node_id = node_id
+        self.cfg.install_token = install_token
+        self.cfg.node_label = node_label
+        logger.warning(
+            "Credentials updated via web UI: account=%s node=%s; addon restart recommended",
+            account_id,
+            node_id,
+        )
+        return web.json_response({
+            "account_id": account_id,
+            "node_id": node_id,
+            "node_label": node_label,
+            "restart_required": True,
+        })
 
     async def handle_get_settings(self, request: web.Request) -> web.Response:
         """Return current addon settings as JSON."""
