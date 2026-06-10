@@ -18,7 +18,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.3.16"
+ADDON_VERSION = "4.3.17"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -330,7 +330,14 @@ class LocalAPI:
         return web.json_response({"reset": True})
 
     async def handle_update_identity(self, request: web.Request) -> web.Response:
-        """Save account/node credentials from the guarded advanced UI."""
+        """Save account/node credentials from the guarded advanced UI.
+
+        Changing only account_id while keeping the old install token leaves the
+        addon unable to authenticate. Treat identity changes as a guarded
+        operation: either validate a supplied token against the VPS before
+        saving, or create a fresh node token with the admin API when the token
+        field is left blank.
+        """
         try:
             body = await request.json()
         except Exception:
@@ -347,7 +354,6 @@ class LocalAPI:
             label for label, value in (
                 ("account_id", account_id),
                 ("node_id", node_id),
-                ("install_token", install_token),
             )
             if not value
         ]
@@ -356,6 +362,68 @@ class LocalAPI:
                 {"error": f"Missing required field(s): {', '.join(missing)}"},
                 status=422,
             )
+
+        if install_token:
+            ok, reason = await self._validate_identity_credentials(
+                account_id,
+                node_id,
+                install_token,
+            )
+            if not ok:
+                logger.warning(
+                    "Rejected identity update for account=%s node=%s: %s",
+                    account_id,
+                    node_id,
+                    reason,
+                )
+                return web.json_response(
+                    {
+                        "error": (
+                            "These credentials were rejected by the VPS. "
+                            "Check the account ID, node ID, and install token; "
+                            "nothing was saved."
+                        ),
+                        "detail": reason,
+                    },
+                    status=401,
+                )
+            action = "validated"
+        else:
+            if not self.cfg.admin_token:
+                return web.json_response(
+                    {
+                        "error": (
+                            "Install token is required unless the addon has an "
+                            "admin token configured to create a fresh node token."
+                        )
+                    },
+                    status=422,
+                )
+            try:
+                install_token = await self._provision_identity_node(
+                    account_id,
+                    node_id,
+                    node_label or node_id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Could not provision identity account=%s node=%s: %s",
+                    account_id,
+                    node_id,
+                    exc,
+                )
+                return web.json_response(
+                    {
+                        "error": (
+                            "Could not create this node on the VPS. If the node "
+                            "already exists, paste its install token instead or "
+                            "delete/recreate it from the VPS admin side."
+                        ),
+                        "detail": str(exc),
+                    },
+                    status=409,
+                )
+            action = "provisioned"
 
         save_credentials(
             account_id=account_id,
@@ -369,7 +437,8 @@ class LocalAPI:
         self.cfg.install_token = install_token
         self.cfg.node_label = node_label
         logger.warning(
-            "Credentials updated via web UI: account=%s node=%s; addon restart recommended",
+            "Credentials %s via web UI: account=%s node=%s; addon restart recommended",
+            action,
             account_id,
             node_id,
         )
@@ -377,8 +446,88 @@ class LocalAPI:
             "account_id": account_id,
             "node_id": node_id,
             "node_label": node_label,
+            "action": action,
             "restart_required": True,
         })
+
+    async def _validate_identity_credentials(
+        self,
+        account_id: str,
+        node_id: str,
+        install_token: str,
+    ) -> tuple[bool, str]:
+        """Return whether a candidate identity is accepted by the VPS."""
+        if not self.cfg.server_url:
+            return False, "server_url is not configured"
+        base = self._ws_to_http_url(self.cfg.server_url)
+        if not base:
+            return False, "could not derive VPS HTTP URL from server_url"
+
+        headers = {
+            "X-Simson-Account-ID": account_id,
+            "X-Simson-Node-ID": node_id,
+            "X-Simson-Install-Token": install_token,
+        }
+        timeout = ClientTimeout(total=8)
+        try:
+            async with ClientSession(timeout=timeout) as session:
+                async with session.get(f"{base}/node/webrtc-config", headers=headers) as resp:
+                    if resp.status == 200:
+                        return True, "ok"
+                    text = await resp.text()
+                    return False, f"VPS returned HTTP {resp.status}: {text[:240]}"
+        except Exception as exc:
+            return False, f"VPS validation request failed: {exc}"
+
+    async def _provision_identity_node(
+        self,
+        account_id: str,
+        node_id: str,
+        node_label: str,
+    ) -> str:
+        """Create/reuse an account and create a node, returning its fresh token."""
+        if not self.cfg.server_url:
+            raise RuntimeError("server_url is not configured")
+        base = self._ws_to_http_url(self.cfg.server_url)
+        if not base:
+            raise RuntimeError("could not derive VPS HTTP URL from server_url")
+
+        headers = {
+            "Authorization": f"Bearer {self.cfg.admin_token}",
+            "Content-Type": "application/json",
+        }
+        timeout = ClientTimeout(total=15)
+        async with ClientSession(timeout=timeout) as session:
+            async with session.post(
+                f"{base}/admin/accounts",
+                headers=headers,
+                json={"id": account_id, "name": node_label or account_id},
+            ) as resp:
+                if resp.status not in (201, 409):
+                    text = await resp.text()
+                    raise RuntimeError(f"account create returned HTTP {resp.status}: {text[:240]}")
+
+            async with session.post(
+                f"{base}/admin/accounts/{account_id}/nodes",
+                headers=headers,
+                json={
+                    "id": node_id,
+                    "label": node_label or node_id,
+                    "node_type": "haos",
+                    "capabilities": self.cfg.capabilities or ["haos", "voice"],
+                },
+            ) as resp:
+                payload_text = await resp.text()
+                if resp.status != 201:
+                    raise RuntimeError(f"node create returned HTTP {resp.status}: {payload_text[:240]}")
+                try:
+                    payload = json.loads(payload_text)
+                except Exception as exc:
+                    raise RuntimeError(f"node create returned invalid JSON: {exc}") from exc
+                token = str(payload.get("install_token", "")).strip()
+                if not token:
+                    raise RuntimeError("node create response did not include install_token")
+                return token
 
     async def handle_get_settings(self, request: web.Request) -> web.Response:
         """Return current addon settings as JSON."""

@@ -835,7 +835,7 @@ function renderAdvanced() {
     <div class="grid cols-2">
       <div class="card">
         <div class="card-title">Site identity</div>
-        <div class="card-sub">Move this addon to a different VPS account/node only when you have the correct install token. Restart the addon after saving so the websocket reconnects cleanly.</div>
+        <div class="card-sub">Move this addon only through this guarded form. Leave install token blank to create a fresh node on the selected account, or paste the exact token for an existing node. Nothing is saved unless the VPS accepts it.</div>
         <div class="form-grid" style="margin-top:16px">
           <div class="field">
             <label>Account ID</label>
@@ -846,8 +846,8 @@ function renderAdvanced() {
             <input id="identity-node" value="${esc(s.node_id || "")}" placeholder="this HAOS node id">
           </div>
           <div class="field full">
-            <label>Install token</label>
-            <input id="identity-token" type="password" placeholder="paste token only when changing identity">
+            <label>Install token optional</label>
+            <input id="identity-token" type="password" placeholder="blank = create fresh node token with admin access">
           </div>
           <div class="field full">
             <label>Node label optional</label>
@@ -855,12 +855,12 @@ function renderAdvanced() {
           </div>
         </div>
         <div class="actions">
-          <button class="btn secondary" data-action="save-identity">Save Identity</button>
+          <button class="btn secondary" data-action="save-identity">Validate & Save Identity</button>
         </div>
       </div>
       <div class="card">
         <div class="card-title">Operational note</div>
-        <div class="card-sub">Changing identity affects which site receives calls and routing events. SIP phones and gateway trunks are still managed from SIP Phones and the VPS account.</div>
+        <div class="card-sub">Changing identity affects which site receives calls and routing events. SIP phones and gateway trunks are scoped to the selected VPS account.</div>
         <div class="row">
           <div class="row-title">${esc(s.server_url || "No VPS URL")}</div>
           <div class="row-sub">Current VPS endpoint</div>
@@ -1198,12 +1198,13 @@ async function saveIdentity() {
     install_token: $("identity-token")?.value.trim() || "",
     node_label: $("identity-label")?.value.trim() || "",
   };
-  if (!payload.account_id || !payload.node_id || !payload.install_token) {
-    toast("Account ID, Node ID, and install token are required to change identity.");
+  if (!payload.account_id || !payload.node_id) {
+    toast("Account ID and Node ID are required.");
     return;
   }
-  await api("api/identity", { method: "POST", body: JSON.stringify(payload) });
-  toast("Identity saved. Restart the addon to reconnect with the new account.");
+  const result = await api("api/identity", { method: "POST", body: JSON.stringify(payload) });
+  const verb = result.action === "provisioned" ? "created and saved" : "validated and saved";
+  toast(`Identity ${verb}. Restart the addon to reconnect with the new account.`);
   await refresh();
 }
 
