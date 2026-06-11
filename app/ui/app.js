@@ -122,6 +122,18 @@ function stableDoorCallbackUrl() {
   return `${externalBaseUrl()}${stableDoorCallbackPath()}`;
 }
 
+function randomHex(bytes = 24) {
+  const values = new Uint8Array(bytes);
+  if (window.crypto && typeof window.crypto.getRandomValues === "function") {
+    window.crypto.getRandomValues(values);
+  } else {
+    for (let i = 0; i < values.length; i += 1) {
+      values[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  return Array.from(values, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 function effectiveDoorCooldown(value) {
   const parsed = Number(value);
   const safe = Number.isFinite(parsed) && parsed > 0 ? parsed : 90;
@@ -779,13 +791,29 @@ function webhookPreview(auto) {
   if (!auto.webhook_id) {
     return `<div class="empty" style="margin-top:14px">Generate credentials to get device callback URLs.</div>`;
   }
+  const doorTriggers = (getSettings().automation.triggers || []).filter(
+    (item) => item.mode === "door_station" && String(item.id || "").trim()
+  );
+  if (doorTriggers.length === 1) {
+    return `
+      <div class="row" style="margin-top:14px">
+        <div class="row-title">Door panel callback URL</div>
+        <div class="row-sub">Paste this single full URL into the outdoor device. Change destinations below without changing the device URL.</div>
+        <input class="mono" readonly value="${esc(stableDoorCallbackUrl())}">
+        <div class="row-sub">POST with secret also works: ${esc(stableDoorCallbackPath())}. Advanced per-trigger URL: ${esc(deviceCallbackPath("TRIGGER_ID"))}</div>
+      </div>
+    `;
+  }
   return `
-    <div class="row" style="margin-top:14px">
-      <div class="row-title">Door panel callback URL</div>
-      <div class="row-sub">Paste this single full URL into the outdoor device. Change destinations below without changing the device URL.</div>
-      <input class="mono" readonly value="${esc(stableDoorCallbackUrl())}">
-      <div class="row-sub">POST with secret also works: ${esc(stableDoorCallbackPath())}. Advanced per-trigger URL: ${esc(deviceCallbackPath("TRIGGER_ID"))}</div>
-    </div>
+    <div class="field-hint" style="margin-top:14px"><strong>${doorTriggers.length} saved door flow(s)</strong></div>
+    <div class="field-hint" style="margin-top:7px">Use a per-trigger callback URL for each outdoor device. Legacy stable callback requires exactly one enabled door flow.</div>
+    ${doorTriggers.map((trigger) => `
+      <div class="row" style="margin-top:12px">
+        <div class="row-title">${esc(trigger.label || trigger.id)}</div>
+        <div class="row-sub">Trigger ID: ${esc(trigger.id)}</div>
+        <input class="mono" readonly value="${esc(deviceCallbackUrl(trigger.id))}">
+      </div>
+    `).join("")}
   `;
 }
 
@@ -1107,8 +1135,8 @@ async function testNotification() {
 function generateWebhook() {
   const auto = getSettings().automation;
   auto.webhook_enabled = true;
-  auto.webhook_id = auto.webhook_id || `site_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
-  auto.webhook_secret = crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "");
+  auto.webhook_id = auto.webhook_id || `site_${randomHex(16)}`;
+  auto.webhook_secret = randomHex(24) + randomHex(24);
   setDirty("Webhook credentials generated. Save to activate.");
   renderAutomation();
 }
@@ -1144,8 +1172,13 @@ function createDoorFlow() {
     $("door-cooldown").value = cooldown;
     toast(`Door cooldown raised to ${cooldown}s minimum to prevent spam.`);
   }
+  const automation = getSettings().automation;
+  const existingDoor = (automation.triggers || []).find((item) =>
+    item.mode === "door_station" && String(item.source_extension || "").trim() === String(source).trim()
+  );
+  const triggerId = String(existingDoor?.id || "").trim() || `door_${randomHex(10)}`;
   const trigger = {
-    id: "unknown_face_door",
+    id: triggerId,
     label,
     enabled: true,
     mode: "door_station",
@@ -1157,15 +1190,23 @@ function createDoorFlow() {
     timeout: Number($("door-timeout").value) || 30,
     cooldown_seconds: cooldown,
   };
-  const automation = getSettings().automation;
-  automation.triggers = (automation.triggers || []).filter((item) => item.mode !== "door_station");
-  automation.triggers.push(trigger);
+  automation.triggers = automation.triggers || [];
+  if (existingDoor) {
+    const existingIndex = automation.triggers.indexOf(existingDoor);
+    if (existingIndex >= 0) {
+      automation.triggers[existingIndex] = trigger;
+    } else {
+      automation.triggers.push(trigger);
+    }
+  } else {
+    automation.triggers.push(trigger);
+  }
   if (!automation.webhook_id || !automation.webhook_secret || automation.webhook_secret.length < 24) {
     automation.webhook_enabled = true;
-    automation.webhook_id = automation.webhook_id || `site_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
+    automation.webhook_id = automation.webhook_id || `site_${randomHex(16)}`;
     automation.webhook_secret = automation.webhook_secret && automation.webhook_secret.length >= 24
       ? automation.webhook_secret
-      : crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "");
+      : randomHex(24) + randomHex(24);
   }
   const modeText = sipCount && haosCount
     ? "shared bridge fanout"
