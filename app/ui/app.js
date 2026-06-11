@@ -775,7 +775,7 @@ function renderAutomation() {
             </div>
           </div>
         </div>
-        <div style="margin-top:14px"><button class="btn orange" data-action="create-door-flow">Update Door Flow</button></div>
+        <div style="margin-top:14px"><button class="btn orange" data-action="create-door-flow">${selectedDoorTriggerId ? "Update Door Flow" : "Create Door Flow"}</button></div>
       </div>
     </div>
     <div class="card" style="margin-top:16px">
@@ -1195,9 +1195,14 @@ function createDoorFlow() {
     toast(`Door cooldown raised to ${cooldown}s minimum to prevent spam.`);
   }
   const automation = getSettings().automation;
-  const existingDoor = selectedTriggerId
-    ? (automation.triggers || []).find((item) => String(item.id || "") === String(selectedTriggerId))
-    : null;
+  let existingDoor = null;
+  if (selectedTriggerId) {
+    existingDoor = (automation.triggers || []).find((item) => String(item.id || "") === String(selectedTriggerId));
+    // If outdoor source changed from what's saved, create new trigger instead of updating
+    if (existingDoor && existingDoor.source_extension !== source) {
+      existingDoor = null;
+    }
+  }
   const triggerId = String(existingDoor?.id || "").trim() || `door_${randomHex(10)}`;
   const trigger = {
     id: triggerId,
