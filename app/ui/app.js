@@ -9,6 +9,7 @@ const state = {
   routing: null,
   dirty: false,
   loaded: false,
+  selectedDoorTriggerId: null,
 };
 
 const defaults = {
@@ -132,6 +133,12 @@ function randomHex(bytes = 24) {
     }
   }
   return Array.from(values, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function syncDoorFlowForm() {
+  const selected = $("door-trigger-select")?.value || "";
+  state.selectedDoorTriggerId = selected;
+  renderAutomation();
 }
 
 function effectiveDoorCooldown(value) {
@@ -638,13 +645,15 @@ function renderAutomation() {
   const globalCooldown = effectiveDoorCooldown(auto.cooldown_seconds);
   const videoSip = state.sip.map(normalizeSipEndpoint).filter((ep) => ep && ep.enabled !== false && ep.video_enabled);
   const doorTargets = settings.call_targets.filter((t) => ["sip", "asterisk", "node", "device"].includes(t.type));
-  const existingDoor = (auto.triggers || []).find((item) => item.mode === "door_station") || {};
-  const existingTargetIds = Array.isArray(existingDoor.target_ids) && existingDoor.target_ids.length
-    ? existingDoor.target_ids
-    : [existingDoor.target_id].filter(Boolean);
+  const doorTriggers = (auto.triggers || []).filter((item) => item.mode === "door_station");
+  const selectedDoorTriggerId = state.selectedDoorTriggerId === null ? (doorTriggers[0]?.id || "") : state.selectedDoorTriggerId;
+  const selectedDoor = doorTriggers.find((item) => item.id === selectedDoorTriggerId) || {};
+  const existingTargetIds = Array.isArray(selectedDoor.target_ids) && selectedDoor.target_ids.length
+    ? selectedDoor.target_ids
+    : [selectedDoor.target_id].filter(Boolean);
   const selectedDoorTargets = new Set(existingTargetIds.map(String));
-  const selectedSource = existingDoor.source_extension || videoSip[0]?.extension || "";
-  const selectedFanout = existingDoor.fanout_mode || "parallel";
+  const selectedSource = selectedDoor.source_extension || videoSip[0]?.extension || "";
+  const selectedFanout = selectedDoor.fanout_mode || "parallel";
   $("content").innerHTML = `
     <div class="automation-grid">
       <div class="card glow">
@@ -701,7 +710,7 @@ function renderAutomation() {
         <div class="door-flow multi" style="margin-top:14px">
           <div class="door-step">
             <label>1 · Outdoor source</label>
-            <select id="door-source">${videoSip.map((ep) => option(ep.extension, `${ep.extension} · ${ep.description || ep.username}`, selectedSource)).join("")}</select>
+            <select id="door-source" onchange="syncDoorFlowForm()">${videoSip.map((ep) => option(ep.extension, `${ep.extension} · ${ep.description || ep.username}`, selectedSource)).join("")}</select>
             <div class="hint">This SIP device is called first so it can publish live audio + H.264 video.</div>
           </div>
           <div class="door-arrow">→</div>
@@ -721,22 +730,33 @@ function renderAutomation() {
           </div>
         </div>
         <div class="form-grid" style="margin-top:14px">
+          <div class="field full">
+            <label>Saved door flow</label>
+            <select id="door-trigger-select" onchange="syncDoorFlowForm()">
+              <option value="">Create new door flow</option>
+              ${doorTriggers.length ? doorTriggers.map((t) => option(
+                t.id,
+                `${t.label || t.id} — ${sourceSipLabel(t.source_extension || selectedSource)} → ${targetListText(Array.isArray(t.target_ids) ? t.target_ids : [t.target_id].filter(Boolean))}`,
+                t.id === selectedDoorTriggerId
+              )).join("") : ``}
+            </select>
+          </div>
           <div class="field">
             <label>Flow name</label>
-            <input id="door-label" value="${esc(existingDoor.label || "Unknown visitor at front door")}">
+            <input id="door-label" value="${esc(selectedDoor.label || "Unknown visitor at front door")}">
           </div>
           <div class="field">
             <label>Ring time seconds</label>
-            <input id="door-timeout" type="number" min="5" max="120" value="${esc(existingDoor.timeout || 30)}">
+            <input id="door-timeout" type="number" min="5" max="120" value="${esc(selectedDoor.timeout || 30)}">
           </div>
           <div class="field">
             <label>Trigger cooldown seconds</label>
-            <input id="door-cooldown" type="number" min="20" max="3600" value="${esc(effectiveDoorCooldown(existingDoor.cooldown_seconds || globalCooldown))}">
+            <input id="door-cooldown" type="number" min="20" max="3600" value="${esc(effectiveDoorCooldown(selectedDoor.cooldown_seconds || globalCooldown))}">
             <div class="hint">Minimum 20s to prevent repeated face-detection calls.</div>
           </div>
           <div class="field">
             <label>Caller ID</label>
-            <input id="door-caller" value="${esc(existingDoor.caller_id || "")}" placeholder="Unknown visitor">
+            <input id="door-caller" value="${esc(selectedDoor.caller_id || "")}" placeholder="Unknown visitor">
           </div>
           <div class="field full">
             <label>Fan-out mode</label>
@@ -748,7 +768,7 @@ function renderAutomation() {
           </div>
           <div class="field full">
             <div class="flow-preview">
-              <strong>Current saved flow</strong>
+              <strong>Current selected flow</strong>
               <span>Source: ${esc(sourceSipLabel(selectedSource))}</span>
               <b>→</b>
               <span>Destinations: ${esc(targetListText(existingTargetIds) || "none")}</span>
@@ -1145,6 +1165,8 @@ function createDoorFlow() {
   const source = $("door-source").value;
   const targets = Array.from(document.querySelectorAll(".door-target-check:checked")).map((el) => el.value);
   const label = $("door-label").value.trim() || "Unknown visitor";
+  const triggerSelect = $("door-trigger-select");
+  const selectedTriggerId = triggerSelect ? triggerSelect.value : "";
   const rawCooldown = Number($("door-cooldown").value);
   const cooldown = effectiveDoorCooldown(rawCooldown || getSettings().automation.cooldown_seconds);
   if (!source || !targets.length) {
@@ -1173,9 +1195,9 @@ function createDoorFlow() {
     toast(`Door cooldown raised to ${cooldown}s minimum to prevent spam.`);
   }
   const automation = getSettings().automation;
-  const existingDoor = (automation.triggers || []).find((item) =>
-    item.mode === "door_station" && String(item.source_extension || "").trim() === String(source).trim()
-  );
+  const existingDoor = selectedTriggerId
+    ? (automation.triggers || []).find((item) => String(item.id || "") === String(selectedTriggerId))
+    : null;
   const triggerId = String(existingDoor?.id || "").trim() || `door_${randomHex(10)}`;
   const trigger = {
     id: triggerId,
@@ -1201,6 +1223,7 @@ function createDoorFlow() {
   } else {
     automation.triggers.push(trigger);
   }
+  state.selectedDoorTriggerId = triggerId;
   if (!automation.webhook_id || !automation.webhook_secret || automation.webhook_secret.length < 24) {
     automation.webhook_enabled = true;
     automation.webhook_id = automation.webhook_id || `site_${randomHex(16)}`;
