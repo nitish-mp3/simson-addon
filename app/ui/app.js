@@ -9,7 +9,7 @@ const state = {
   routing: null,
   dirty: false,
   loaded: false,
-  selectedDoorTriggerId: null,
+  selectedDoorTriggerId: "",
 };
 
 const defaults = {
@@ -646,7 +646,7 @@ function renderAutomation() {
   const videoSip = state.sip.map(normalizeSipEndpoint).filter((ep) => ep && ep.enabled !== false && ep.video_enabled);
   const doorTargets = settings.call_targets.filter((t) => ["sip", "asterisk", "node", "device"].includes(t.type));
   const doorTriggers = (auto.triggers || []).filter((item) => item.mode === "door_station");
-  const selectedDoorTriggerId = state.selectedDoorTriggerId === null ? (doorTriggers[0]?.id || "") : state.selectedDoorTriggerId;
+  const selectedDoorTriggerId = state.selectedDoorTriggerId || "";
   const selectedDoor = doorTriggers.find((item) => item.id === selectedDoorTriggerId) || {};
   const existingTargetIds = Array.isArray(selectedDoor.target_ids) && selectedDoor.target_ids.length
     ? selectedDoor.target_ids
