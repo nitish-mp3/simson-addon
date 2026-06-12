@@ -869,7 +869,7 @@ function triggerRow(t) {
       ${isDoor && getSettings().automation.webhook_id ? `
         <div class="callback-box">
           <label>Single device callback URL for this full flow</label>
-          <input class="mono" readonly value="${esc(stableDoorCallbackUrl())}">
+          <input class="mono" readonly value="${esc(deviceCallbackUrl(t.id))}">
           <div class="row-sub">Paste this one URL into the outdoor panel. It runs the saved source and every selected destination above.</div>
         </div>
       ` : ""}
