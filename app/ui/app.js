@@ -297,7 +297,13 @@ function normalizeSipEndpoint(ep) {
     description: ep.description ?? ep.Description ?? "",
     route_to: ep.route_to ?? ep.RouteTo ?? "",
     video_enabled: Boolean(ep.video_enabled ?? ep.VideoEnabled ?? ep.video ?? false),
+    auto_answer: Boolean(ep.auto_answer ?? ep.AutoAnswer ?? false),
     enabled: ep.enabled ?? ep.Enabled ?? true,
+    registered: Boolean(ep.registered ?? ep.Registered ?? false),
+    contact_status: ep.contact_status ?? ep.ContactStatus ?? "",
+    contact_uri: ep.contact_uri ?? ep.ContactURI ?? "",
+    contact_address: ep.contact_address ?? ep.ContactAddress ?? "",
+    contact_latency_ms: ep.contact_latency_ms ?? ep.ContactLatencyMS ?? "",
   };
 }
 
@@ -566,6 +572,10 @@ function renderSip() {
           <div class="field full">
             <label><input id="sip-video" type="checkbox"> Video capable H.264 device</label>
           </div>
+          <div class="field full">
+            <label><input id="sip-auto-answer" type="checkbox"> Auto-answer incoming SIP calls</label>
+            <div class="hint">Use only for door stations or monitors that should pick up instantly. Normal desk phones should stay off.</div>
+          </div>
         </div>
         <div style="margin-top:14px"><button class="btn" data-action="create-sip">Create SIP Phone</button></div>
       </div>
@@ -601,15 +611,21 @@ function sipRow(raw) {
   const enabled = ep.enabled !== false;
   const endpointId = ep.id || ep.extension || ep.username;
   const isGateway = isGatewaySip(ep);
+  const registered = Boolean(ep.registered);
+  const contactText = ep.contact_address
+    ? `${ep.contact_address}${ep.contact_latency_ms ? ` · ${ep.contact_latency_ms}` : ""}`
+    : (ep.contact_status || "no live contact");
   return `
     <div class="sip-manage-row ${isGateway ? "protected" : ""}">
       <div class="sip-main">
         <div>
           <div class="row-title">${esc(ep.extension || "-")} ${ep.description ? `<span>${esc(ep.description)}</span>` : ""}</div>
-          <div class="row-sub">User ${esc(ep.username || "-")} · ${esc(ep.route_to || "any available node")} · ${ep.video_enabled ? "Audio + H.264" : "Audio only"}</div>
+          <div class="row-sub">User ${esc(ep.username || "-")} · ${esc(ep.route_to || "any available node")} · ${ep.video_enabled ? "Audio + H.264" : "Audio only"}${ep.auto_answer ? " · auto-answer" : ""}</div>
+          <div class="row-sub">Live contact: ${esc(contactText)}</div>
         </div>
         <div class="row-actions">
           <span class="pill ${enabled ? "ok" : "bad"}">${enabled ? "enabled" : "disabled"}</span>
+          <span class="pill ${registered ? "ok" : "warn"}">${registered ? "registered" : "offline"}</span>
           ${isGateway ? `<span class="pill warn">gateway protected</span>` : ""}
         </div>
       </div>
@@ -629,6 +645,7 @@ function sipRow(raw) {
         <div class="sip-checks">
           <label><input data-sip-id="${esc(endpointId)}" data-sip-key="enabled" type="checkbox" ${enabled ? "checked" : ""}> Enabled</label>
           <label><input data-sip-id="${esc(endpointId)}" data-sip-key="video_enabled" type="checkbox" ${ep.video_enabled ? "checked" : ""}> H.264 video</label>
+          <label><input data-sip-id="${esc(endpointId)}" data-sip-key="auto_answer" type="checkbox" ${ep.auto_answer ? "checked" : ""}> Auto-answer</label>
         </div>
       </div>
       <div class="sip-actions">
@@ -1057,6 +1074,7 @@ async function createSip() {
     description: $("sip-desc").value.trim(),
     route_to: $("sip-route").value.trim(),
     video_enabled: $("sip-video").checked,
+    auto_answer: $("sip-auto-answer").checked,
     enabled: true,
   };
   await api("api/sip-endpoints", { method: "POST", body: JSON.stringify(payload) });
@@ -1082,6 +1100,7 @@ function sipUpdatePayload(endpointId) {
     description: sipFieldValue(endpointId, "description"),
     route_to: sipFieldValue(endpointId, "route_to"),
     video_enabled: Boolean(sipFieldValue(endpointId, "video_enabled")),
+    auto_answer: Boolean(sipFieldValue(endpointId, "auto_answer")),
     enabled: Boolean(sipFieldValue(endpointId, "enabled")),
   };
   const password = sipFieldValue(endpointId, "password");
