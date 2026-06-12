@@ -137,7 +137,14 @@ function randomHex(bytes = 24) {
 
 function syncDoorFlowForm() {
   const selected = $("door-trigger-select")?.value || "";
-  state.selectedDoorTriggerId = selected;
+  const selectedDoor = selected ? (getSettings().automation.triggers || []).find((t) => t.id === selected) : null;
+  const currentSource = $("door-source")?.value || "";
+  // If outdoor source changed from what's saved in the selected flow, auto-switch to "Create new"
+  if (selectedDoor && selectedDoor.source_extension && selectedDoor.source_extension !== currentSource) {
+    state.selectedDoorTriggerId = "";
+  } else {
+    state.selectedDoorTriggerId = selected;
+  }
   renderAutomation();
 }
 
