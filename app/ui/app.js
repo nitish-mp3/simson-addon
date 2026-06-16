@@ -1,3 +1,8 @@
+/* =========================================================
+   Simson Dashboard — Core Logic (Preserved)
+   UI Generation & Event Handling (Rewritten for Premium UX)
+   ========================================================= */
+
 const boot = window.__SIMSON__ || {};
 
 const state = {
@@ -85,15 +90,16 @@ function setSaveState(text, tone = "") {
   const el = $("save-state");
   if (!el) return;
   el.textContent = text || "Everything saved";
-  el.style.color = tone === "bad" ? "var(--red)" : tone === "ok" ? "var(--green)" : "var(--muted)";
+  el.style.color = tone === "bad" ? "var(--danger)" : tone === "ok" ? "var(--success)" : "var(--text-secondary)";
 }
 
 function toast(text) {
   const el = $("toast");
+  if (!el) return;
   el.textContent = text;
   el.classList.add("show");
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => el.classList.remove("show"), 2600);
+  toast._t = setTimeout(() => el.classList.remove("show"), 2800);
 }
 
 function externalBaseUrl() {
@@ -115,6 +121,13 @@ function deviceCallbackUrl(triggerId = "TRIGGER_ID") {
 }
 
 function stableDoorCallbackPath() {
+
+
+
+
+
+
+
   const auto = getSettings().automation;
   return `/api/automation/webhook/${auto.webhook_id || "WEBHOOK_ID"}`;
 }
@@ -139,13 +152,18 @@ function syncDoorFlowForm() {
   const selected = $("door-trigger-select")?.value || "";
   const selectedDoor = selected ? (getSettings().automation.triggers || []).find((t) => t.id === selected) : null;
   const currentSource = $("door-source")?.value || "";
-  // If outdoor source changed from what's saved in the selected flow, auto-switch to "Create new"
+  const previousId = state.selectedDoorTriggerId;
+
   if (selectedDoor && selectedDoor.source_extension && selectedDoor.source_extension !== currentSource) {
     state.selectedDoorTriggerId = "";
   } else {
     state.selectedDoorTriggerId = selected;
   }
-  renderAutomation();
+
+  // Only re-render if the selection actually changed — prevents choppy DOM thrash
+  if (state.selectedDoorTriggerId !== previousId) {
+    renderAutomation();
+  }
 }
 
 function effectiveDoorCooldown(value) {
@@ -195,6 +213,10 @@ async function api(path, options = {}) {
   return data;
 }
 
+/* =========================================================
+   Shell & Layout
+   ========================================================= */
+
 function shell() {
   document.body.innerHTML = `
     <div class="shell">
@@ -211,11 +233,11 @@ function shell() {
           <div class="sidebar-footer">
             <div class="mini-card">
               <div class="mini-label">Node</div>
-              <div class="mini-value" id="side-node">loading...</div>
+              <div class="mini-value" id="side-node">loading…</div>
             </div>
             <div class="mini-card">
               <div class="mini-label">Connection</div>
-              <div class="mini-value" id="side-conn">checking...</div>
+              <div class="mini-value" id="side-conn">checking…</div>
             </div>
           </div>
         </aside>
@@ -234,7 +256,7 @@ function shell() {
         </main>
       </div>
       <div class="save-bar">
-        <div class="save-state" id="save-state">Loading settings...</div>
+        <div class="save-state" id="save-state">Loading settings…</div>
         <button class="btn secondary" data-action="refresh">Reload</button>
         <button class="btn" data-action="save">Save Settings</button>
       </div>
@@ -272,7 +294,10 @@ function render() {
   $("page-title").textContent = page[1];
   $("page-kicker").textContent = page[2];
   $("side-node").textContent = state.status?.node_id || "not provisioned";
-  $("side-conn").innerHTML = state.status?.vps_connected ? "Online" : "Offline";
+  $("side-conn").innerHTML = state.status?.vps_connected
+    ? '<span style="color:var(--success)">Online</span>'
+    : '<span style="color:var(--danger)">Offline</span>';
+
   if (!boot.provisioned) {
     renderSetup();
     return;
@@ -286,6 +311,10 @@ function render() {
   }[state.page] || renderOverview;
   renderer();
 }
+
+/* =========================================================
+   Data Helpers
+   ========================================================= */
 
 function normalizeSipEndpoint(ep) {
   if (!ep || typeof ep !== "object") return null;
@@ -306,6 +335,10 @@ function normalizeSipEndpoint(ep) {
     contact_latency_ms: ep.contact_latency_ms ?? ep.ContactLatencyMS ?? "",
   };
 }
+
+/* =========================================================
+   Setup
+   ========================================================= */
 
 function renderSetup() {
   $("content").innerHTML = `
@@ -335,6 +368,10 @@ function renderSetup() {
   `;
 }
 
+/* =========================================================
+   Overview
+   ========================================================= */
+
 function renderOverview() {
   const s = state.status || {};
   const settings = getSettings();
@@ -355,7 +392,7 @@ function renderOverview() {
           <span class="pill ${active ? "warn" : "ok"}">${active ? active.state : "idle"}</span>
         </div>
         ${active ? `
-          <div class="row">
+          <div class="row" style="background:transparent;border:0;padding:8px 0;">
             <div class="row-title">${esc(active.caller_name || active.caller_id || active.call_id)}</div>
             <div class="row-sub">${esc(active.direction || "call")} · ${esc(active.call_type || "")}</div>
           </div>
@@ -381,10 +418,14 @@ function stat(title, value, sub, tone) {
     <div class="stat">
       <span>${esc(title)}</span>
       <b>${esc(value)}</b>
-      <span class="${tone === "bad" ? "pill bad" : tone === "warn" ? "pill warn" : "pill ok"}">${esc(sub)}</span>
+      <span class="pill ${tone === "bad" ? "bad" : tone === "warn" ? "warn" : "ok"}">${esc(sub)}</span>
     </div>
   `;
 }
+
+/* =========================================================
+   Routing
+   ========================================================= */
 
 function renderRouting() {
   const settings = getSettings();
@@ -423,7 +464,7 @@ function renderRouting() {
             <label><input type="checkbox" data-path="routing.skip_unavailable" ${settings.routing.skip_unavailable ? "checked" : ""}> Skip busy/offline targets</label>
           </div>
         </div>
-        <div class="flow-preview route-preview">
+        <div class="flow-preview route-preview" style="margin-top:14px;">
           <strong>Gateway call path</strong>
           <span>PSTN/GSM gateway call</span>
           <b>→</b>
@@ -477,7 +518,7 @@ function renderRouting() {
 
 function targetRowReadonly(t) {
   return `
-    <div class="row">
+    <div class="row" style="padding:10px 14px;">
       <div class="row-main">
         <div>
           <div class="row-title">${esc(t.label || t.id)}</div>
@@ -496,7 +537,7 @@ function targetRow(t) {
   return `
     <div class="row" data-target-index="${idx}">
       <div class="row-main">
-        <div>
+        <div style="min-width:0;">
           <div class="row-title">${esc(t.label || t.id)}</div>
           <div class="row-sub">${esc(descriptor)}</div>
         </div>
@@ -508,7 +549,7 @@ function targetRow(t) {
           <button class="btn small red" data-action="delete-target" data-index="${idx}">Delete</button>
         </div>
       </div>
-      <div class="form-grid">
+      <div class="form-grid" style="margin-top:10px;">
         <div class="field">
           <label>Route ID</label>
           <input data-target="${idx}" data-key="id" value="${esc(t.id)}">
@@ -541,6 +582,10 @@ function targetFlowDescription(t) {
   if (t.type === "gateway") return `Outbound only: dial ${t.extension || "number"} via trunk ${t.trunk || "default"}`;
   return `${t.type || "target"} · ${t.node_id || t.extension || t.trunk || ""}`;
 }
+
+/* =========================================================
+   SIP
+   ========================================================= */
 
 function renderSip() {
   $("content").innerHTML = `
@@ -613,12 +658,12 @@ function sipRow(raw) {
   const isGateway = isGatewaySip(ep);
   const registered = Boolean(ep.registered);
   const contactText = ep.contact_address
-    ? `${ep.contact_address}${ep.contact_latency_ms ? ` · ${ep.contact_latency_ms}` : ""}`
+    ? `${ep.contact_address}${ep.contact_latency_ms ? ` · ${ep.contact_latency_ms}ms` : ""}`
     : (ep.contact_status || "no live contact");
   return `
     <div class="sip-manage-row ${isGateway ? "protected" : ""}">
       <div class="sip-main">
-        <div>
+        <div style="min-width:0;">
           <div class="row-title">${esc(ep.extension || "-")} ${ep.description ? `<span>${esc(ep.description)}</span>` : ""}</div>
           <div class="row-sub">User ${esc(ep.username || "-")} · ${esc(ep.route_to || "any available node")} · ${ep.video_enabled ? "Audio + H.264" : "Audio only"}${ep.auto_answer ? " · auto-answer" : ""}</div>
           <div class="row-sub">Live contact: ${esc(contactText)}</div>
@@ -663,6 +708,10 @@ function isGatewaySip(ep) {
   return /^700[0-9]/.test(String(ep.extension || "")) || text.includes("gateway") || text.includes("gsm") || text.includes("fxo") || text.includes("landline");
 }
 
+/* =========================================================
+   Automation
+   ========================================================= */
+
 function renderAutomation() {
   const settings = getSettings();
   const auto = settings.automation;
@@ -678,6 +727,7 @@ function renderAutomation() {
   const selectedDoorTargets = new Set(existingTargetIds.map(String));
   const selectedSource = selectedDoor.source_extension || videoSip[0]?.extension || "";
   const selectedFanout = selectedDoor.fanout_mode || "parallel";
+
   $("content").innerHTML = `
     <div class="automation-grid">
       <div class="card glow">
@@ -734,7 +784,7 @@ function renderAutomation() {
         <div class="door-flow multi" style="margin-top:14px">
           <div class="door-step">
             <label>1 · Outdoor source</label>
-            <select id="door-source" onchange="syncDoorFlowForm()">${videoSip.map((ep) => option(ep.extension, `${ep.extension} · ${ep.description || ep.username}`, selectedSource)).join("")}</select>
+            <select id="door-source">${videoSip.map((ep) => option(ep.extension, `${ep.extension} · ${ep.description || ep.username}`, selectedSource)).join("")}</select>
             <div class="hint">This SIP device is called first so it can publish live audio + H.264 video.</div>
           </div>
           <div class="door-arrow">→</div>
@@ -756,7 +806,7 @@ function renderAutomation() {
         <div class="form-grid" style="margin-top:14px">
           <div class="field full">
             <label>Saved door flow</label>
-            <select id="door-trigger-select" onchange="syncDoorFlowForm()">
+            <select id="door-trigger-select">
               <option value="">Create new door flow</option>
               ${doorTriggers.length ? doorTriggers.map((t) => option(
                 t.id,
@@ -843,8 +893,8 @@ function webhookPreview(auto) {
       <div class="row" style="margin-top:14px">
         <div class="row-title">Door panel callback URL</div>
         <div class="row-sub">Paste this single full URL into the outdoor device. Change destinations below without changing the device URL.</div>
-        <input class="mono" readonly value="${esc(stableDoorCallbackUrl())}">
-        <div class="row-sub">POST with secret also works: ${esc(stableDoorCallbackPath())}. Advanced per-trigger URL: ${esc(deviceCallbackPath("TRIGGER_ID"))}</div>
+        <input class="mono" readonly value="${esc(stableDoorCallbackUrl())}" style="margin-top:8px;">
+        <div class="row-sub" style="margin-top:6px;">POST with secret also works: ${esc(stableDoorCallbackPath())}. Advanced per-trigger URL: ${esc(deviceCallbackPath("TRIGGER_ID"))}</div>
       </div>
     `;
   }
@@ -855,7 +905,7 @@ function webhookPreview(auto) {
       <div class="row" style="margin-top:12px">
         <div class="row-title">${esc(trigger.label || trigger.id)}</div>
         <div class="row-sub">Trigger ID: ${esc(trigger.id)}</div>
-        <input class="mono" readonly value="${esc(deviceCallbackUrl(trigger.id))}">
+        <input class="mono" readonly value="${esc(deviceCallbackUrl(trigger.id))}" style="margin-top:6px;">
       </div>
     `).join("")}
   `;
@@ -872,7 +922,7 @@ function triggerRow(t) {
   return `
     <div class="row ${isDoor ? "door-trigger-row" : ""}">
       <div class="row-main">
-        <div>
+        <div style="min-width:0;">
           <div class="row-title">${esc(t.label || t.id)}</div>
           ${isDoor ? `
             <div class="route-line">
@@ -901,6 +951,10 @@ function triggerRow(t) {
   `;
 }
 
+/* =========================================================
+   Advanced
+   ========================================================= */
+
 function renderAdvanced() {
   const s = state.status || {};
   $("content").innerHTML = `
@@ -926,27 +980,27 @@ function renderAdvanced() {
             <input id="identity-label" value="${esc(s.node_label || "")}" placeholder="friendly name">
           </div>
         </div>
-        <div class="actions">
+        <div class="actions" style="margin-top:16px;">
           <button class="btn secondary" data-action="save-identity">Validate & Save Identity</button>
         </div>
       </div>
       <div class="card">
         <div class="card-title">Operational note</div>
         <div class="card-sub">Changing identity affects which site receives calls and routing events. SIP phones and gateway trunks are scoped to the selected VPS account.</div>
-        <div class="row">
+        <div class="row" style="margin-top:12px;">
           <div class="row-title">${esc(s.server_url || "No VPS URL")}</div>
           <div class="row-sub">Current VPS endpoint</div>
         </div>
-        <div class="row">
+        <div class="row" style="margin-top:8px;">
           <div class="row-title">${s.vps_connected ? "Online" : "Offline"}</div>
           <div class="row-sub">Connection state</div>
         </div>
       </div>
     </div>
-    <div class="card">
+    <div class="card" style="margin-top:16px">
       <div class="card-title">Raw settings snapshot</div>
       <div class="card-sub">For support/debugging. Editing here is intentionally disabled so accidental raw JSON changes do not break live routing.</div>
-      <textarea rows="24" readonly>${esc(JSON.stringify(getSettings(), null, 2))}</textarea>
+      <textarea rows="24" readonly style="margin-top:12px;">${esc(JSON.stringify(getSettings(), null, 2))}</textarea>
     </div>
   `;
 }
@@ -967,8 +1021,19 @@ function setByPath(path, value) {
   obj[parts[0]] = value;
 }
 
+/* =========================================================
+   Event Handling (Robust)
+   ========================================================= */
+
 function onInput(event) {
   const el = event.target;
+
+  // Handle door flow selects via delegation instead of inline onchange
+  if (el.id === "door-source" || el.id === "door-trigger-select") {
+    syncDoorFlowForm();
+    return;
+  }
+
   if (el.matches("[data-sip-id][data-sip-key]")) {
     setDirty("SIP device edited. Save Settings or Save Device to apply it.");
     return;
@@ -997,15 +1062,23 @@ function onInput(event) {
 async function onClick(event) {
   const btn = event.target.closest("button");
   if (!btn) return;
+
   if (btn.dataset.page) {
     state.page = btn.dataset.page;
     render();
     return;
   }
+
   const action = btn.dataset.action;
   if (!action) return;
   event.preventDefault();
+
+  // Prevent double-clicks
+  if (btn.dataset.loading === "true") return;
+  const setLoading = (v) => { btn.dataset.loading = v ? "true" : ""; btn.disabled = v; };
+
   try {
+    setLoading(true);
     if (action === "refresh") await refresh();
     if (action === "save") await saveSettings();
     if (action === "save-identity") await saveIdentity();
@@ -1026,8 +1099,14 @@ async function onClick(event) {
       : err.data?.error || err.message || "Action failed";
     toast(detail);
     setSaveState(detail, "bad");
+  } finally {
+    setLoading(false);
   }
 }
+
+/* =========================================================
+   Actions
+   ========================================================= */
 
 function addRoute() {
   const kind = $("quick-kind").value;
@@ -1161,7 +1240,7 @@ async function deleteSip(endpointId, extension) {
 }
 
 async function testNotification() {
-  setSaveState("Testing notification...");
+  setSaveState("Testing notification…");
   const result = await api("api/notification/test", {
     method: "POST",
     body: JSON.stringify({
@@ -1224,7 +1303,6 @@ function createDoorFlow() {
   let existingDoor = null;
   if (selectedTriggerId) {
     existingDoor = (automation.triggers || []).find((item) => String(item.id || "") === String(selectedTriggerId));
-    // If outdoor source changed from what's saved, create new trigger instead of updating
     if (existingDoor && existingDoor.source_extension !== source) {
       existingDoor = null;
     }
@@ -1282,7 +1360,7 @@ async function provision() {
   const form = $("setup-form");
   const payload = Object.fromEntries(new FormData(form).entries());
   await api("api/provision", { method: "POST", body: JSON.stringify(payload) });
-  toast("Provisioned. Reloading...");
+  toast("Provisioned. Reloading…");
   setTimeout(() => location.reload(), 900);
 }
 
@@ -1304,7 +1382,7 @@ async function saveIdentity() {
 }
 
 async function saveSettings() {
-  setSaveState("Saving...");
+  setSaveState("Saving…");
   const sipSaved = await saveRenderedSipEdits();
   const payload = getSettings();
   payload.automation.cooldown_seconds = effectiveDoorCooldown(payload.automation.cooldown_seconds);
@@ -1326,7 +1404,7 @@ async function saveSettings() {
 }
 
 async function refresh() {
-  setSaveState("Refreshing...");
+  setSaveState("Refreshing…");
   const [status, settings, nodes, sip, routing] = await Promise.all([
     api("api/status").catch(() => null),
     api("api/settings").catch(() => null),
