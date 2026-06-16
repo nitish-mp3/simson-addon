@@ -18,7 +18,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.4.3"
+ADDON_VERSION = "4.4.5"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -734,6 +734,8 @@ class LocalAPI:
                     "route_to": body.get("route_to", ""),
                     "video_enabled": bool(body.get("video_enabled", False)),
                     "auto_answer": bool(body.get("auto_answer", False)),
+                    "auto_answer_callers": str(body.get("auto_answer_callers", "") or ""),
+                    "auto_speaker": bool(body.get("auto_speaker", False)),
                     "enabled": body.get("enabled", True),
                 }
                 async with session.post(url, json=payload, headers=headers, ssl=False) as resp:
@@ -784,6 +786,10 @@ class LocalAPI:
             payload["video_enabled"] = bool(body.get("video_enabled"))
         if "auto_answer" in body:
             payload["auto_answer"] = bool(body.get("auto_answer"))
+        if "auto_answer_callers" in body:
+            payload["auto_answer_callers"] = str(body.get("auto_answer_callers", "") or "")
+        if "auto_speaker" in body:
+            payload["auto_speaker"] = bool(body.get("auto_speaker"))
         if "enabled" in body:
             payload["enabled"] = bool(body.get("enabled"))
 
@@ -2440,6 +2446,8 @@ class LocalAPI:
                 "route_to": item.get("route_to", item.get("RouteTo", "")),
                 "video_enabled": bool(item.get("video_enabled", item.get("VideoEnabled", False))),
                 "auto_answer": bool(item.get("auto_answer", item.get("AutoAnswer", False))),
+                "auto_answer_callers": item.get("auto_answer_callers", item.get("AutoAnswerCallers", "")),
+                "auto_speaker": bool(item.get("auto_speaker", item.get("AutoSpeaker", False))),
                 "enabled": bool(item.get("enabled", item.get("Enabled", True))),
                 "registered": bool(item.get("registered", item.get("Registered", False))),
                 "contact_status": item.get("contact_status", item.get("ContactStatus", "")),

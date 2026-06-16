@@ -327,6 +327,8 @@ function normalizeSipEndpoint(ep) {
     route_to: ep.route_to ?? ep.RouteTo ?? "",
     video_enabled: Boolean(ep.video_enabled ?? ep.VideoEnabled ?? ep.video ?? false),
     auto_answer: Boolean(ep.auto_answer ?? ep.AutoAnswer ?? false),
+    auto_answer_callers: ep.auto_answer_callers ?? ep.AutoAnswerCallers ?? "",
+    auto_speaker: Boolean(ep.auto_speaker ?? ep.AutoSpeaker ?? false),
     enabled: ep.enabled ?? ep.Enabled ?? true,
     registered: Boolean(ep.registered ?? ep.Registered ?? false),
     contact_status: ep.contact_status ?? ep.ContactStatus ?? "",
@@ -621,6 +623,15 @@ function renderSip() {
             <label><input id="sip-auto-answer" type="checkbox"> Auto-answer incoming SIP calls</label>
             <div class="hint">Use only for door stations or monitors that should pick up instantly. Normal desk phones should stay off.</div>
           </div>
+          <div class="field full">
+            <label><input id="sip-auto-speaker" type="checkbox"> Request speaker/intercom mode when auto-answering</label>
+            <div class="hint">Phone support varies; Simson sends the standard SIP auto-answer/intercom headers.</div>
+          </div>
+          <div class="field full">
+            <label>Only auto-answer calls from optional</label>
+            <input id="sip-auto-answer-callers" placeholder="1025, 1602">
+            <div class="hint">Leave blank for any caller. For route-specific pickup, put the caller extension here, e.g. <b>1025</b>.</div>
+          </div>
         </div>
         <div style="margin-top:14px"><button class="btn" data-action="create-sip">Create SIP Phone</button></div>
       </div>
@@ -660,12 +671,15 @@ function sipRow(raw) {
   const contactText = ep.contact_address
     ? `${ep.contact_address}${ep.contact_latency_ms ? ` · ${ep.contact_latency_ms}ms` : ""}`
     : (ep.contact_status || "no live contact");
+  const autoAnswerText = ep.auto_answer
+    ? (ep.auto_answer_callers ? `auto-answer from ${ep.auto_answer_callers}` : "auto-answer from anyone")
+    : "manual answer";
   return `
     <div class="sip-manage-row ${isGateway ? "protected" : ""}">
       <div class="sip-main">
         <div style="min-width:0;">
           <div class="row-title">${esc(ep.extension || "-")} ${ep.description ? `<span>${esc(ep.description)}</span>` : ""}</div>
-          <div class="row-sub">User ${esc(ep.username || "-")} · ${esc(ep.route_to || "any available node")} · ${ep.video_enabled ? "Audio + H.264" : "Audio only"}${ep.auto_answer ? " · auto-answer" : ""}</div>
+          <div class="row-sub">User ${esc(ep.username || "-")} · ${esc(ep.route_to || "any available node")} · ${ep.video_enabled ? "Audio + H.264" : "Audio only"} · ${esc(autoAnswerText)}${ep.auto_speaker ? " · speaker" : ""}</div>
           <div class="row-sub">Live contact: ${esc(contactText)}</div>
         </div>
         <div class="row-actions">
@@ -691,6 +705,12 @@ function sipRow(raw) {
           <label><input data-sip-id="${esc(endpointId)}" data-sip-key="enabled" type="checkbox" ${enabled ? "checked" : ""}> Enabled</label>
           <label><input data-sip-id="${esc(endpointId)}" data-sip-key="video_enabled" type="checkbox" ${ep.video_enabled ? "checked" : ""}> H.264 video</label>
           <label><input data-sip-id="${esc(endpointId)}" data-sip-key="auto_answer" type="checkbox" ${ep.auto_answer ? "checked" : ""}> Auto-answer</label>
+          <label><input data-sip-id="${esc(endpointId)}" data-sip-key="auto_speaker" type="checkbox" ${ep.auto_speaker ? "checked" : ""}> Speaker</label>
+        </div>
+        <div class="field full">
+          <label>Only auto-answer from caller extension(s)</label>
+          <input data-sip-id="${esc(endpointId)}" data-sip-key="auto_answer_callers" value="${esc(ep.auto_answer_callers || "")}" placeholder="1025, 1602">
+          <div class="hint">Blank means any caller. For precise behavior like <b>1025 → ${esc(ep.extension || "this phone")}</b>, put <b>1025</b> here.</div>
         </div>
       </div>
       <div class="sip-actions">
@@ -1154,6 +1174,8 @@ async function createSip() {
     route_to: $("sip-route").value.trim(),
     video_enabled: $("sip-video").checked,
     auto_answer: $("sip-auto-answer").checked,
+    auto_answer_callers: $("sip-auto-answer-callers").value.trim(),
+    auto_speaker: $("sip-auto-speaker").checked,
     enabled: true,
   };
   await api("api/sip-endpoints", { method: "POST", body: JSON.stringify(payload) });
@@ -1180,6 +1202,8 @@ function sipUpdatePayload(endpointId) {
     route_to: sipFieldValue(endpointId, "route_to"),
     video_enabled: Boolean(sipFieldValue(endpointId, "video_enabled")),
     auto_answer: Boolean(sipFieldValue(endpointId, "auto_answer")),
+    auto_answer_callers: sipFieldValue(endpointId, "auto_answer_callers"),
+    auto_speaker: Boolean(sipFieldValue(endpointId, "auto_speaker")),
     enabled: Boolean(sipFieldValue(endpointId, "enabled")),
   };
   const password = sipFieldValue(endpointId, "password");
