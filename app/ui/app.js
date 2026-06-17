@@ -625,7 +625,7 @@ function renderSip() {
           </div>
           <div class="field full">
             <label><input id="sip-auto-speaker" type="checkbox"> Request speaker/intercom mode when auto-answering</label>
-            <div class="hint">Phone support varies; Simson sends the standard SIP auto-answer/intercom headers.</div>
+            <div class="hint">Speaker follows the same caller allowlist below. Phone support varies; Simson sends standard SIP auto-answer/intercom headers.</div>
           </div>
           <div class="field full">
             <label>Only auto-answer calls from optional</label>
@@ -705,12 +705,12 @@ function sipRow(raw) {
           <label><input data-sip-id="${esc(endpointId)}" data-sip-key="enabled" type="checkbox" ${enabled ? "checked" : ""}> Enabled</label>
           <label><input data-sip-id="${esc(endpointId)}" data-sip-key="video_enabled" type="checkbox" ${ep.video_enabled ? "checked" : ""}> H.264 video</label>
           <label><input data-sip-id="${esc(endpointId)}" data-sip-key="auto_answer" type="checkbox" ${ep.auto_answer ? "checked" : ""}> Auto-answer</label>
-          <label><input data-sip-id="${esc(endpointId)}" data-sip-key="auto_speaker" type="checkbox" ${ep.auto_speaker ? "checked" : ""}> Speaker</label>
+          <label><input data-sip-id="${esc(endpointId)}" data-sip-key="auto_speaker" type="checkbox" ${ep.auto_speaker ? "checked" : ""}> Speaker on auto-answer</label>
         </div>
         <div class="field full">
           <label>Only auto-answer from caller extension(s)</label>
           <input data-sip-id="${esc(endpointId)}" data-sip-key="auto_answer_callers" value="${esc(ep.auto_answer_callers || "")}" placeholder="1025, 1602">
-          <div class="hint">Blank means any caller. For precise behavior like <b>1025 → ${esc(ep.extension || "this phone")}</b>, put <b>1025</b> here.</div>
+          <div class="hint">Blank means any caller. For precise behavior like <b>1025 → ${esc(ep.extension || "this phone")}</b>, put <b>1025</b> here. Speaker mode uses this same match.</div>
         </div>
       </div>
       <div class="sip-actions">
