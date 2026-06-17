@@ -737,6 +737,10 @@ class LocalAPI:
                     "auto_answer_callers": str(body.get("auto_answer_callers", "") or ""),
                     "auto_speaker": bool(body.get("auto_speaker", False)),
                     "auto_speaker_callers": str(body.get("auto_speaker_callers", "") or ""),
+                    "callback_bridge": bool(body.get("callback_bridge", False)),
+                    "callback_bridge_callers": str(body.get("callback_bridge_callers", "") or ""),
+                    "callback_caller_auto_answer": bool(body.get("callback_caller_auto_answer", False)),
+                    "callback_caller_auto_speaker": bool(body.get("callback_caller_auto_speaker", False)),
                     "enabled": body.get("enabled", True),
                 }
                 async with session.post(url, json=payload, headers=headers, ssl=False) as resp:
@@ -793,6 +797,14 @@ class LocalAPI:
             payload["auto_speaker"] = bool(body.get("auto_speaker"))
         if "auto_speaker_callers" in body:
             payload["auto_speaker_callers"] = str(body.get("auto_speaker_callers", "") or "")
+        if "callback_bridge" in body:
+            payload["callback_bridge"] = bool(body.get("callback_bridge"))
+        if "callback_bridge_callers" in body:
+            payload["callback_bridge_callers"] = str(body.get("callback_bridge_callers", "") or "")
+        if "callback_caller_auto_answer" in body:
+            payload["callback_caller_auto_answer"] = bool(body.get("callback_caller_auto_answer"))
+        if "callback_caller_auto_speaker" in body:
+            payload["callback_caller_auto_speaker"] = bool(body.get("callback_caller_auto_speaker"))
         if "enabled" in body:
             payload["enabled"] = bool(body.get("enabled"))
 
@@ -2452,6 +2464,10 @@ class LocalAPI:
                 "auto_answer_callers": item.get("auto_answer_callers", item.get("AutoAnswerCallers", "")),
                 "auto_speaker": bool(item.get("auto_speaker", item.get("AutoSpeaker", False))),
                 "auto_speaker_callers": item.get("auto_speaker_callers", item.get("AutoSpeakerCallers", "")),
+                "callback_bridge": bool(item.get("callback_bridge", item.get("CallbackBridge", False))),
+                "callback_bridge_callers": item.get("callback_bridge_callers", item.get("CallbackBridgeCallers", "")),
+                "callback_caller_auto_answer": bool(item.get("callback_caller_auto_answer", item.get("CallbackCallerAutoAnswer", False))),
+                "callback_caller_auto_speaker": bool(item.get("callback_caller_auto_speaker", item.get("CallbackCallerAutoSpeaker", False))),
                 "enabled": bool(item.get("enabled", item.get("Enabled", True))),
                 "registered": bool(item.get("registered", item.get("Registered", False))),
                 "contact_status": item.get("contact_status", item.get("ContactStatus", "")),

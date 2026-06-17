@@ -330,6 +330,10 @@ function normalizeSipEndpoint(ep) {
     auto_answer_callers: ep.auto_answer_callers ?? ep.AutoAnswerCallers ?? "",
     auto_speaker: Boolean(ep.auto_speaker ?? ep.AutoSpeaker ?? false),
     auto_speaker_callers: ep.auto_speaker_callers ?? ep.AutoSpeakerCallers ?? "",
+    callback_bridge: Boolean(ep.callback_bridge ?? ep.CallbackBridge ?? false),
+    callback_bridge_callers: ep.callback_bridge_callers ?? ep.CallbackBridgeCallers ?? "",
+    callback_caller_auto_answer: Boolean(ep.callback_caller_auto_answer ?? ep.CallbackCallerAutoAnswer ?? false),
+    callback_caller_auto_speaker: Boolean(ep.callback_caller_auto_speaker ?? ep.CallbackCallerAutoSpeaker ?? false),
     enabled: ep.enabled ?? ep.Enabled ?? true,
     registered: Boolean(ep.registered ?? ep.Registered ?? false),
     contact_status: ep.contact_status ?? ep.ContactStatus ?? "",
@@ -638,6 +642,21 @@ function renderSip() {
             <input id="sip-auto-speaker-callers" placeholder="1025, 1602">
             <div class="hint">Leave blank to reuse the auto-answer caller list. This controls the called phone only; caller-side speaker must be configured on that phone itself.</div>
           </div>
+          <div class="field full feature-box">
+            <label><input id="sip-callback-bridge" type="checkbox"> Caller callback bridge for speaker/intercom</label>
+            <div class="hint">For cases like <b>1025 → ${esc("this phone")}</b>: Simson briefly releases the original caller leg, calls the caller phone back with auto-answer/speaker hints, then bridges to this target.</div>
+          </div>
+          <div class="field full">
+            <label>Only use caller callback bridge from</label>
+            <input id="sip-callback-callers" placeholder="1025, 1026">
+            <div class="hint">Required allowlist. Leave blank to keep callback bridge disabled even if checked.</div>
+          </div>
+          <div class="field full">
+            <label><input id="sip-callback-caller-auto-answer" type="checkbox"> Caller phone auto-answers the callback</label>
+          </div>
+          <div class="field full">
+            <label><input id="sip-callback-caller-auto-speaker" type="checkbox"> Caller phone requests speaker/intercom on callback</label>
+          </div>
         </div>
         <div style="margin-top:14px"><button class="btn" data-action="create-sip">Create SIP Phone</button></div>
       </div>
@@ -683,12 +702,15 @@ function sipRow(raw) {
   const speakerText = ep.auto_speaker
     ? (ep.auto_speaker_callers ? `speaker from ${ep.auto_speaker_callers}` : "speaker follows auto-answer")
     : "speaker off";
+  const callbackText = ep.callback_bridge
+    ? `caller callback from ${ep.callback_bridge_callers || "no allowlist"}${ep.callback_caller_auto_speaker ? " with caller speaker" : ep.callback_caller_auto_answer ? " with caller auto-answer" : ""}`
+    : "caller callback off";
   return `
     <div class="sip-manage-row ${isGateway ? "protected" : ""}">
       <div class="sip-main">
         <div style="min-width:0;">
           <div class="row-title">${esc(ep.extension || "-")} ${ep.description ? `<span>${esc(ep.description)}</span>` : ""}</div>
-          <div class="row-sub">User ${esc(ep.username || "-")} · ${esc(ep.route_to || "any available node")} · ${ep.video_enabled ? "Audio + H.264" : "Audio only"} · ${esc(autoAnswerText)} · ${esc(speakerText)}</div>
+          <div class="row-sub">User ${esc(ep.username || "-")} · ${esc(ep.route_to || "any available node")} · ${ep.video_enabled ? "Audio + H.264" : "Audio only"} · ${esc(autoAnswerText)} · ${esc(speakerText)} · ${esc(callbackText)}</div>
           <div class="row-sub">Live contact: ${esc(contactText)}</div>
         </div>
         <div class="row-actions">
@@ -725,6 +747,19 @@ function sipRow(raw) {
           <label>Only request speaker/intercom from caller extension(s)</label>
           <input data-sip-id="${esc(endpointId)}" data-sip-key="auto_speaker_callers" value="${esc(ep.auto_speaker_callers || "")}" placeholder="${esc(ep.auto_answer_callers || "1025, 1602")}">
           <div class="hint">Blank reuses the auto-answer caller list. This sends intercom/speaker hints to the <b>called</b> phone; Asterisk cannot force the original caller handset into speaker after it has already placed a call.</div>
+        </div>
+        <div class="field full feature-box">
+          <label><input data-sip-id="${esc(endpointId)}" data-sip-key="callback_bridge" type="checkbox" ${ep.callback_bridge ? "checked" : ""}> Caller callback bridge</label>
+          <div class="hint">Use when the <b>caller</b> phone also needs auto-answer/speaker. Simson replaces the original dial attempt with a fresh callback to the caller, then bridges to this target.</div>
+        </div>
+        <div class="field full">
+          <label>Only callback-bridge these caller extension(s)</label>
+          <input data-sip-id="${esc(endpointId)}" data-sip-key="callback_bridge_callers" value="${esc(ep.callback_bridge_callers || "")}" placeholder="1025, 1026">
+          <div class="hint">Required allowlist. Example: set this on target <b>${esc(ep.extension || "1603")}</b> to <b>1025</b> for only 1025 → ${esc(ep.extension || "1603")}.</div>
+        </div>
+        <div class="sip-checks full">
+          <label><input data-sip-id="${esc(endpointId)}" data-sip-key="callback_caller_auto_answer" type="checkbox" ${ep.callback_caller_auto_answer ? "checked" : ""}> Caller callback auto-answer</label>
+          <label><input data-sip-id="${esc(endpointId)}" data-sip-key="callback_caller_auto_speaker" type="checkbox" ${ep.callback_caller_auto_speaker ? "checked" : ""}> Caller callback speaker/intercom</label>
         </div>
       </div>
       <div class="sip-actions">
@@ -1191,6 +1226,10 @@ async function createSip() {
     auto_answer_callers: $("sip-auto-answer-callers").value.trim(),
     auto_speaker: $("sip-auto-speaker").checked,
     auto_speaker_callers: $("sip-auto-speaker-callers").value.trim(),
+    callback_bridge: $("sip-callback-bridge").checked,
+    callback_bridge_callers: $("sip-callback-callers").value.trim(),
+    callback_caller_auto_answer: $("sip-callback-caller-auto-answer").checked,
+    callback_caller_auto_speaker: $("sip-callback-caller-auto-speaker").checked,
     enabled: true,
   };
   await api("api/sip-endpoints", { method: "POST", body: JSON.stringify(payload) });
@@ -1220,6 +1259,10 @@ function sipUpdatePayload(endpointId) {
     auto_answer_callers: sipFieldValue(endpointId, "auto_answer_callers"),
     auto_speaker: Boolean(sipFieldValue(endpointId, "auto_speaker")),
     auto_speaker_callers: sipFieldValue(endpointId, "auto_speaker_callers"),
+    callback_bridge: Boolean(sipFieldValue(endpointId, "callback_bridge")),
+    callback_bridge_callers: sipFieldValue(endpointId, "callback_bridge_callers"),
+    callback_caller_auto_answer: Boolean(sipFieldValue(endpointId, "callback_caller_auto_answer")),
+    callback_caller_auto_speaker: Boolean(sipFieldValue(endpointId, "callback_caller_auto_speaker")),
     enabled: Boolean(sipFieldValue(endpointId, "enabled")),
   };
   const password = sipFieldValue(endpointId, "password");
