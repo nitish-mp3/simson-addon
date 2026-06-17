@@ -736,6 +736,7 @@ class LocalAPI:
                     "auto_answer": bool(body.get("auto_answer", False)),
                     "auto_answer_callers": str(body.get("auto_answer_callers", "") or ""),
                     "auto_speaker": bool(body.get("auto_speaker", False)),
+                    "auto_speaker_callers": str(body.get("auto_speaker_callers", "") or ""),
                     "enabled": body.get("enabled", True),
                 }
                 async with session.post(url, json=payload, headers=headers, ssl=False) as resp:
@@ -790,6 +791,8 @@ class LocalAPI:
             payload["auto_answer_callers"] = str(body.get("auto_answer_callers", "") or "")
         if "auto_speaker" in body:
             payload["auto_speaker"] = bool(body.get("auto_speaker"))
+        if "auto_speaker_callers" in body:
+            payload["auto_speaker_callers"] = str(body.get("auto_speaker_callers", "") or "")
         if "enabled" in body:
             payload["enabled"] = bool(body.get("enabled"))
 
@@ -2448,6 +2451,7 @@ class LocalAPI:
                 "auto_answer": bool(item.get("auto_answer", item.get("AutoAnswer", False))),
                 "auto_answer_callers": item.get("auto_answer_callers", item.get("AutoAnswerCallers", "")),
                 "auto_speaker": bool(item.get("auto_speaker", item.get("AutoSpeaker", False))),
+                "auto_speaker_callers": item.get("auto_speaker_callers", item.get("AutoSpeakerCallers", "")),
                 "enabled": bool(item.get("enabled", item.get("Enabled", True))),
                 "registered": bool(item.get("registered", item.get("Registered", False))),
                 "contact_status": item.get("contact_status", item.get("ContactStatus", "")),

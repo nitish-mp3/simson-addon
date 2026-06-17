@@ -329,6 +329,7 @@ function normalizeSipEndpoint(ep) {
     auto_answer: Boolean(ep.auto_answer ?? ep.AutoAnswer ?? false),
     auto_answer_callers: ep.auto_answer_callers ?? ep.AutoAnswerCallers ?? "",
     auto_speaker: Boolean(ep.auto_speaker ?? ep.AutoSpeaker ?? false),
+    auto_speaker_callers: ep.auto_speaker_callers ?? ep.AutoSpeakerCallers ?? "",
     enabled: ep.enabled ?? ep.Enabled ?? true,
     registered: Boolean(ep.registered ?? ep.Registered ?? false),
     contact_status: ep.contact_status ?? ep.ContactStatus ?? "",
@@ -625,12 +626,17 @@ function renderSip() {
           </div>
           <div class="field full">
             <label><input id="sip-auto-speaker" type="checkbox"> Request speaker/intercom mode when auto-answering</label>
-            <div class="hint">Speaker follows the same caller allowlist below. Phone support varies; Simson sends standard SIP auto-answer/intercom headers.</div>
+            <div class="hint">Phone support varies; Simson sends standard SIP auto-answer/intercom headers to the called phone.</div>
           </div>
           <div class="field full">
             <label>Only auto-answer calls from optional</label>
             <input id="sip-auto-answer-callers" placeholder="1025, 1602">
             <div class="hint">Leave blank for any caller. For route-specific pickup, put the caller extension here, e.g. <b>1025</b>.</div>
+          </div>
+          <div class="field full">
+            <label>Only request speaker from optional</label>
+            <input id="sip-auto-speaker-callers" placeholder="1025, 1602">
+            <div class="hint">Leave blank to reuse the auto-answer caller list. This controls the called phone only; caller-side speaker must be configured on that phone itself.</div>
           </div>
         </div>
         <div style="margin-top:14px"><button class="btn" data-action="create-sip">Create SIP Phone</button></div>
@@ -674,12 +680,15 @@ function sipRow(raw) {
   const autoAnswerText = ep.auto_answer
     ? (ep.auto_answer_callers ? `auto-answer from ${ep.auto_answer_callers}` : "auto-answer from anyone")
     : "manual answer";
+  const speakerText = ep.auto_speaker
+    ? (ep.auto_speaker_callers ? `speaker from ${ep.auto_speaker_callers}` : "speaker follows auto-answer")
+    : "speaker off";
   return `
     <div class="sip-manage-row ${isGateway ? "protected" : ""}">
       <div class="sip-main">
         <div style="min-width:0;">
           <div class="row-title">${esc(ep.extension || "-")} ${ep.description ? `<span>${esc(ep.description)}</span>` : ""}</div>
-          <div class="row-sub">User ${esc(ep.username || "-")} · ${esc(ep.route_to || "any available node")} · ${ep.video_enabled ? "Audio + H.264" : "Audio only"} · ${esc(autoAnswerText)}${ep.auto_speaker ? " · speaker" : ""}</div>
+          <div class="row-sub">User ${esc(ep.username || "-")} · ${esc(ep.route_to || "any available node")} · ${ep.video_enabled ? "Audio + H.264" : "Audio only"} · ${esc(autoAnswerText)} · ${esc(speakerText)}</div>
           <div class="row-sub">Live contact: ${esc(contactText)}</div>
         </div>
         <div class="row-actions">
@@ -710,7 +719,12 @@ function sipRow(raw) {
         <div class="field full">
           <label>Only auto-answer from caller extension(s)</label>
           <input data-sip-id="${esc(endpointId)}" data-sip-key="auto_answer_callers" value="${esc(ep.auto_answer_callers || "")}" placeholder="1025, 1602">
-          <div class="hint">Blank means any caller. For precise behavior like <b>1025 → ${esc(ep.extension || "this phone")}</b>, put <b>1025</b> here. Speaker mode uses this same match.</div>
+          <div class="hint">Blank means any caller. For precise behavior like <b>1025 → ${esc(ep.extension || "this phone")}</b>, put <b>1025</b> here.</div>
+        </div>
+        <div class="field full">
+          <label>Only request speaker/intercom from caller extension(s)</label>
+          <input data-sip-id="${esc(endpointId)}" data-sip-key="auto_speaker_callers" value="${esc(ep.auto_speaker_callers || "")}" placeholder="${esc(ep.auto_answer_callers || "1025, 1602")}">
+          <div class="hint">Blank reuses the auto-answer caller list. This sends intercom/speaker hints to the <b>called</b> phone; Asterisk cannot force the original caller handset into speaker after it has already placed a call.</div>
         </div>
       </div>
       <div class="sip-actions">
@@ -1176,6 +1190,7 @@ async function createSip() {
     auto_answer: $("sip-auto-answer").checked,
     auto_answer_callers: $("sip-auto-answer-callers").value.trim(),
     auto_speaker: $("sip-auto-speaker").checked,
+    auto_speaker_callers: $("sip-auto-speaker-callers").value.trim(),
     enabled: true,
   };
   await api("api/sip-endpoints", { method: "POST", body: JSON.stringify(payload) });
@@ -1204,6 +1219,7 @@ function sipUpdatePayload(endpointId) {
     auto_answer: Boolean(sipFieldValue(endpointId, "auto_answer")),
     auto_answer_callers: sipFieldValue(endpointId, "auto_answer_callers"),
     auto_speaker: Boolean(sipFieldValue(endpointId, "auto_speaker")),
+    auto_speaker_callers: sipFieldValue(endpointId, "auto_speaker_callers"),
     enabled: Boolean(sipFieldValue(endpointId, "enabled")),
   };
   const password = sipFieldValue(endpointId, "password");
