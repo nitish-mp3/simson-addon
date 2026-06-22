@@ -25,6 +25,9 @@ const defaults = {
     max_attempts: 4,
     skip_unavailable: true,
     final_fallback_target: "",
+    gateway_inbound_mode: "haos_then_fallback",
+    gateway_direct_target: "",
+    default_gateway_trunk: "",
   },
   availability: { mode: "available", reason: "" },
   route_overrides: {},
@@ -121,13 +124,6 @@ function deviceCallbackUrl(triggerId = "TRIGGER_ID") {
 }
 
 function stableDoorCallbackPath() {
-
-
-
-
-
-
-
   const auto = getSettings().automation;
   return `/api/automation/webhook/${auto.webhook_id || "WEBHOOK_ID"}`;
 }
@@ -325,6 +321,7 @@ function normalizeSipEndpoint(ep) {
     username: ep.username ?? ep.Username ?? "",
     description: ep.description ?? ep.Description ?? "",
     route_to: ep.route_to ?? ep.RouteTo ?? "",
+    default_outbound: Boolean(ep.default_outbound ?? ep.DefaultOutbound ?? false),
     video_enabled: Boolean(ep.video_enabled ?? ep.VideoEnabled ?? ep.video ?? false),
     auto_answer: Boolean(ep.auto_answer ?? ep.AutoAnswer ?? false),
     auto_answer_callers: ep.auto_answer_callers ?? ep.AutoAnswerCallers ?? "",
@@ -341,6 +338,45 @@ function normalizeSipEndpoint(ep) {
     contact_address: ep.contact_address ?? ep.ContactAddress ?? "",
     contact_latency_ms: ep.contact_latency_ms ?? ep.ContactLatencyMS ?? "",
   };
+}
+
+function gatewayEndpoints() {
+  return state.sip.map(normalizeSipEndpoint).filter((ep) => ep && isGatewaySip(ep));
+}
+
+function defaultGatewayTrunk() {
+  const settings = getSettings();
+  const configured = String(settings.routing.default_gateway_trunk || "").trim();
+  if (configured) return configured;
+  const marked = gatewayEndpoints().find((ep) => ep.default_outbound);
+  if (marked?.extension) return marked.extension;
+  return gatewayEndpoints()[0]?.extension || "";
+}
+
+function targetSelectOptions(selected = "", includeBlank = true) {
+  const values = [];
+  const add = (value, label) => {
+    const text = String(value || "").trim();
+    if (!text || values.some((item) => item.value === text)) return;
+    values.push({ value: text, label: label || text });
+  };
+  if (includeBlank) values.push({ value: "", label: "None" });
+  getSettings().call_targets.forEach((target) => add(target.id, `${target.label || target.id} (${target.type || "target"})`));
+  state.sip.map(normalizeSipEndpoint).filter(Boolean).forEach((ep) => add(ep.extension, `${ep.extension} · ${ep.description || ep.username || "SIP"}`));
+  state.nodes.forEach((node) => add(node.id, `${node.label || node.id} · HAOS node`));
+  return values.map((item) => option(item.value, item.label, selected)).join("");
+}
+
+function gatewaySelectOptions(selected = "") {
+  const gateways = gatewayEndpoints();
+  const current = String(selected || "").trim();
+  const rows = gateways.length ? gateways : state.sip.map(normalizeSipEndpoint).filter(Boolean);
+  const opts = [`<option value="">Auto-select best registered gateway</option>`];
+  rows.forEach((ep) => {
+    const label = `${ep.extension} · ${ep.description || ep.username || "gateway"}${ep.default_outbound ? " · current default" : ""}`;
+    opts.push(option(ep.extension, label, current));
+  });
+  return opts.join("");
 }
 
 /* =========================================================
@@ -436,6 +472,9 @@ function stat(title, value, sub, tone) {
 
 function renderRouting() {
   const settings = getSettings();
+  const defaultTrunk = defaultGatewayTrunk();
+  const inboundMode = settings.routing.gateway_inbound_mode || "haos_then_fallback";
+  const directTarget = settings.routing.gateway_direct_target || "";
   $("content").innerHTML = `
     <div class="grid cols-2">
       <div class="card glow">
@@ -446,6 +485,28 @@ function renderRouting() {
           </div>
         </div>
         <div class="form-grid">
+          <div class="field full">
+            <label>Default outside gateway for SIP phones</label>
+            <select data-path="routing.default_gateway_trunk">
+              ${gatewaySelectOptions(settings.routing.default_gateway_trunk || "")}
+            </select>
+            <div class="hint">SIP phones can dial outside numbers directly. Use a gateway prefix only when forcing a specific line.</div>
+          </div>
+          <div class="field">
+            <label>Inbound gateway behavior</label>
+            <select data-path="routing.gateway_inbound_mode">
+              ${option("haos_then_fallback", "Ring HAOS first, then fallback", inboundMode)}
+              ${option("direct_target", "Send directly to selected target", inboundMode)}
+            </select>
+            <div class="hint">Use direct mode for landline/GSM gateways that should always ring a SIP phone or route immediately.</div>
+          </div>
+          <div class="field">
+            <label>Direct inbound target</label>
+            <select data-path="routing.gateway_direct_target">
+              ${targetSelectOptions(directTarget, true)}
+            </select>
+            <div class="hint">Only used when inbound behavior is direct. Pick a SIP phone, route target, or HAOS node.</div>
+          </div>
           <div class="field">
             <label>Strategy</label>
             <select data-path="routing.strategy">
@@ -475,9 +536,15 @@ function renderRouting() {
           <strong>Gateway call path</strong>
           <span>PSTN/GSM gateway call</span>
           <b>→</b>
-          <span>HAOS card for ${esc(settings.routing.ring_seconds)}s</span>
+          ${inboundMode === "direct_target"
+            ? `<span>direct transfer</span><b>→</b><span>${esc(directTarget || "no target selected")}</span>`
+            : `<span>HAOS card for ${esc(settings.routing.ring_seconds)}s</span><b>→</b><span>${esc(settings.routing.final_fallback_target || "no automatic SIP fallback")}</span>`}
+        </div>
+        <div class="flow-preview route-preview" style="margin-top:10px;">
+          <strong>Outside dial path</strong>
+          <span>SIP phone dials number</span>
           <b>→</b>
-          <span>${esc(settings.routing.final_fallback_target || "no automatic SIP fallback")}</span>
+          <span>${esc(defaultTrunk || "auto gateway")}</span>
         </div>
       </div>
       <div class="card">
@@ -625,6 +692,10 @@ function renderSip() {
             <label><input id="sip-video" type="checkbox"> Video capable H.264 device</label>
           </div>
           <div class="field full">
+            <label><input id="sip-default-outbound" type="checkbox"> Make this the default outside gateway</label>
+            <div class="hint">Only use this for FXO/GSM/PSTN gateway accounts. Normal SIP phones should leave it off.</div>
+          </div>
+          <div class="field full">
             <label><input id="sip-auto-answer" type="checkbox"> Auto-answer incoming SIP calls</label>
             <div class="hint">Use only for door stations or monitors that should pick up instantly. Normal desk phones should stay off.</div>
           </div>
@@ -716,6 +787,7 @@ function sipRow(raw) {
         <div class="row-actions">
           <span class="pill ${enabled ? "ok" : "bad"}">${enabled ? "enabled" : "disabled"}</span>
           <span class="pill ${registered ? "ok" : "warn"}">${registered ? "registered" : "offline"}</span>
+          ${ep.default_outbound ? `<span class="pill ok">default outside gateway</span>` : ""}
           ${isGateway ? `<span class="pill warn">gateway protected</span>` : ""}
         </div>
       </div>
@@ -735,6 +807,7 @@ function sipRow(raw) {
         <div class="sip-checks">
           <label><input data-sip-id="${esc(endpointId)}" data-sip-key="enabled" type="checkbox" ${enabled ? "checked" : ""}> Enabled</label>
           <label><input data-sip-id="${esc(endpointId)}" data-sip-key="video_enabled" type="checkbox" ${ep.video_enabled ? "checked" : ""}> H.264 video</label>
+          ${isGateway ? `<label><input data-sip-id="${esc(endpointId)}" data-sip-key="default_outbound" type="checkbox" ${ep.default_outbound ? "checked" : ""}> Default outside gateway</label>` : ""}
           <label><input data-sip-id="${esc(endpointId)}" data-sip-key="auto_answer" type="checkbox" ${ep.auto_answer ? "checked" : ""}> Auto-answer</label>
           <label><input data-sip-id="${esc(endpointId)}" data-sip-key="auto_speaker" type="checkbox" ${ep.auto_speaker ? "checked" : ""}> Speaker on auto-answer</label>
         </div>
@@ -924,6 +997,45 @@ function renderAutomation() {
     <div class="card" style="margin-top:16px">
       <div class="card-head">
         <div>
+          <div class="card-title">HTTP intercom URL builder</div>
+          <div class="card-sub">Generate a full URL for a phone shortcut, wall panel, or automation. It calls one SIP/source phone and bridges it to another SIP phone or HAOS node with optional auto-answer/speaker hints.</div>
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="field">
+          <label>Source SIP extension</label>
+          <select id="intercom-source">${state.sip.map(normalizeSipEndpoint).filter(Boolean).map((ep) => option(ep.extension, `${ep.extension} · ${ep.description || ep.username}`, "")).join("")}</select>
+        </div>
+        <div class="field">
+          <label>Target SIP/node</label>
+          <select id="intercom-target">${targetSelectOptions("", false)}</select>
+        </div>
+        <div class="field">
+          <label>Source mode</label>
+          <select id="intercom-source-mode">
+            ${option("speaker", "Auto-answer + speaker/intercom", "speaker")}
+            ${option("answer", "Auto-answer only", "")}
+            ${option("manual", "Manual answer", "")}
+          </select>
+        </div>
+        <div class="field">
+          <label>Target mode</label>
+          <select id="intercom-target-mode">
+            ${option("speaker", "Auto-answer + speaker/intercom", "speaker")}
+            ${option("answer", "Auto-answer only", "")}
+            ${option("manual", "Manual answer", "")}
+          </select>
+        </div>
+        <div class="field full">
+          <label>Generated full URL</label>
+          <input id="intercom-url" class="mono" readonly value="${esc(intercomUrlPreview())}">
+          <div class="hint">If this is empty, provision the addon first so account ID, node ID, and install token are available.</div>
+        </div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <div class="card-head">
+        <div>
           <div class="card-title">Automation triggers</div>
           <div class="card-sub">Each trigger can call one or more saved targets. Door triggers show the exact device callback URL.</div>
         </div>
@@ -933,6 +1045,44 @@ function renderAutomation() {
       </div>
     </div>
   `;
+}
+
+function vpsHttpBase() {
+  const raw = String(state.status?.server_url || boot.server_url || "").trim();
+  if (!raw) return "";
+  if (raw.startsWith("wss://")) return `https://${raw.slice(6).replace(/\/ws\/?$/, "")}`;
+  if (raw.startsWith("ws://")) return `http://${raw.slice(5).replace(/\/ws\/?$/, "")}`;
+  return raw.replace(/\/ws\/?$/, "").replace(/\/$/, "");
+}
+
+function intercomUrlPreview() {
+  const source = $("intercom-source")?.value || state.sip.map(normalizeSipEndpoint).filter(Boolean)[0]?.extension || "";
+  const firstTarget = getSettings().call_targets[0]?.id
+    || state.sip.map(normalizeSipEndpoint).filter(Boolean).find((ep) => ep.extension !== source)?.extension
+    || "";
+  const target = $("intercom-target")?.value || firstTarget;
+  const sourceMode = $("intercom-source-mode")?.value || "speaker";
+  const targetMode = $("intercom-target-mode")?.value || "speaker";
+  const base = vpsHttpBase();
+  const accountID = state.status?.account_id || "";
+  const nodeID = state.status?.node_id || "";
+  const token = state.status?.install_token || "";
+  if (!base || !accountID || !nodeID || !token || !source || !target) return "";
+  const url = new URL("/node/sip-intercom", base);
+  url.searchParams.set("account_id", accountID);
+  url.searchParams.set("node_id", nodeID);
+  url.searchParams.set("install_token", token);
+  url.searchParams.set("source", source);
+  url.searchParams.set("target", target);
+  url.searchParams.set("source_auto_mode", sourceMode);
+  url.searchParams.set("target_auto_mode", targetMode);
+  url.searchParams.set("timeout_sec", "30");
+  return url.toString();
+}
+
+function refreshIntercomUrl() {
+  const el = $("intercom-url");
+  if (el) el.value = intercomUrlPreview();
 }
 
 function targetDescriptor(target) {
@@ -1103,6 +1253,11 @@ function onInput(event) {
     return;
   }
 
+  if (el.id && el.id.startsWith("intercom-")) {
+    refreshIntercomUrl();
+    return;
+  }
+
   if (el.matches("[data-sip-id][data-sip-key]")) {
     setDirty("SIP device edited. Save Settings or Save Device to apply it.");
     return;
@@ -1192,7 +1347,7 @@ function addRoute() {
     type: kind,
     node_id: kind === "node" ? value : "",
     extension: kind !== "node" ? value : "",
-    trunk: kind === "gateway" ? "7009" : "",
+    trunk: kind === "gateway" ? defaultGatewayTrunk() : "",
     timeout: getSettings().routing.ring_seconds || 25,
     fallback_targets: splitList($("quick-fallbacks").value),
   };
@@ -1221,6 +1376,7 @@ async function createSip() {
     password: $("sip-pass").value.trim(),
     description: $("sip-desc").value.trim(),
     route_to: $("sip-route").value.trim(),
+    default_outbound: $("sip-default-outbound").checked,
     video_enabled: $("sip-video").checked,
     auto_answer: $("sip-auto-answer").checked,
     auto_answer_callers: $("sip-auto-answer-callers").value.trim(),
@@ -1254,6 +1410,7 @@ function sipUpdatePayload(endpointId) {
   const payload = {
     description: sipFieldValue(endpointId, "description"),
     route_to: sipFieldValue(endpointId, "route_to"),
+    default_outbound: Boolean(sipFieldValue(endpointId, "default_outbound")),
     video_enabled: Boolean(sipFieldValue(endpointId, "video_enabled")),
     auto_answer: Boolean(sipFieldValue(endpointId, "auto_answer")),
     auto_answer_callers: sipFieldValue(endpointId, "auto_answer_callers"),

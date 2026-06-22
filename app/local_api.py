@@ -222,6 +222,7 @@ class LocalAPI:
             "node_label": getattr(self.cfg, "node_label", ""),
             "account_id": self.cfg.account_id,
             "server_url": self.cfg.server_url,
+            "install_token": self.cfg.install_token,
             "vps_connected": vps_connected,
             "provisioned": bool(self.cfg.install_token),
             "active_call": _call_to_dict(active) if active else None,
@@ -588,6 +589,9 @@ class LocalAPI:
             "max_attempts": int(routing.get("max_attempts", 4)),
             "skip_unavailable": bool(routing.get("skip_unavailable", True)),
             "final_fallback_target": routing.get("final_fallback_target", ""),
+            "gateway_inbound_mode": routing.get("gateway_inbound_mode", "haos_then_fallback"),
+            "gateway_direct_target": routing.get("gateway_direct_target", ""),
+            "default_gateway_trunk": routing.get("default_gateway_trunk", ""),
         }
         availability = body.get("availability", {})
         self.cfg.availability = {
@@ -741,6 +745,7 @@ class LocalAPI:
                     "callback_bridge_callers": str(body.get("callback_bridge_callers", "") or ""),
                     "callback_caller_auto_answer": bool(body.get("callback_caller_auto_answer", False)),
                     "callback_caller_auto_speaker": bool(body.get("callback_caller_auto_speaker", False)),
+                    "default_outbound": bool(body.get("default_outbound", False)),
                     "enabled": body.get("enabled", True),
                 }
                 async with session.post(url, json=payload, headers=headers, ssl=False) as resp:
@@ -805,6 +810,8 @@ class LocalAPI:
             payload["callback_caller_auto_answer"] = bool(body.get("callback_caller_auto_answer"))
         if "callback_caller_auto_speaker" in body:
             payload["callback_caller_auto_speaker"] = bool(body.get("callback_caller_auto_speaker"))
+        if "default_outbound" in body:
+            payload["default_outbound"] = bool(body.get("default_outbound"))
         if "enabled" in body:
             payload["enabled"] = bool(body.get("enabled"))
 
@@ -1055,7 +1062,8 @@ class LocalAPI:
         # instead of requiring a saved target for every outside phone number.
         if phone_number:
             digits = "".join(ch for ch in str(phone_number) if ch.isdigit())
-            trunk = "".join(ch for ch in str(trunk or DEFAULT_PSTN_TRUNK).strip()
+            preferred_trunk = (self.cfg.routing_policy or {}).get("default_gateway_trunk", "")
+            trunk = "".join(ch for ch in str(trunk or preferred_trunk or DEFAULT_PSTN_TRUNK).strip()
                             if ch.isalnum() or ch in ("-", "_"))
             dial_digits = _normalize_pstn_digits(digits, trunk)
             if not (2 <= len(digits) <= 15):
@@ -1088,8 +1096,9 @@ class LocalAPI:
                     inferred_trunk = ""
                     digits = "".join(ch for ch in str(ext) if ch.isdigit())
                     if str(ext).strip().startswith("+") or len(digits) >= 7:
+                        preferred_trunk = (self.cfg.routing_policy or {}).get("default_gateway_trunk", "")
                         inferred_trunk = "".join(
-                            ch for ch in str(trunk or DEFAULT_PSTN_TRUNK).strip()
+                            ch for ch in str(trunk or preferred_trunk or DEFAULT_PSTN_TRUNK).strip()
                             if ch.isalnum() or ch in ("-", "_")
                         )
                         ext = _normalize_pstn_digits(digits, inferred_trunk)
@@ -2468,6 +2477,7 @@ class LocalAPI:
                 "callback_bridge_callers": item.get("callback_bridge_callers", item.get("CallbackBridgeCallers", "")),
                 "callback_caller_auto_answer": bool(item.get("callback_caller_auto_answer", item.get("CallbackCallerAutoAnswer", False))),
                 "callback_caller_auto_speaker": bool(item.get("callback_caller_auto_speaker", item.get("CallbackCallerAutoSpeaker", False))),
+                "default_outbound": bool(item.get("default_outbound", item.get("DefaultOutbound", False))),
                 "enabled": bool(item.get("enabled", item.get("Enabled", True))),
                 "registered": bool(item.get("registered", item.get("Registered", False))),
                 "contact_status": item.get("contact_status", item.get("ContactStatus", "")),

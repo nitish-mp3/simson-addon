@@ -155,6 +155,9 @@ class Config:
             "max_attempts": _safe_int(routing.get("max_attempts", 4), 4, 1, 10),
             "skip_unavailable": bool(routing.get("skip_unavailable", True)),
             "final_fallback_target": routing.get("final_fallback_target", ""),
+            "gateway_inbound_mode": routing.get("gateway_inbound_mode", "haos_then_fallback"),
+            "gateway_direct_target": routing.get("gateway_direct_target", ""),
+            "default_gateway_trunk": routing.get("default_gateway_trunk", ""),
         }
         availability = s.get("availability", {})
         self.availability: dict = {

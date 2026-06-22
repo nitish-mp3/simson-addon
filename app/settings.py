@@ -49,6 +49,9 @@ DEFAULT_SETTINGS: dict = {
         "max_attempts": 4,
         "skip_unavailable": True,
         "final_fallback_target": "",
+        "gateway_inbound_mode": "haos_then_fallback",
+        "gateway_direct_target": "",
+        "default_gateway_trunk": "",
     },
     "availability": {
         "mode": "available",
@@ -192,6 +195,15 @@ def validate_settings(data: dict) -> list[str]:
             errors.append("Routing: max attempts must be between 1 and 20")
     except (TypeError, ValueError):
         errors.append("Routing: max attempts must be a valid integer")
+    if str(routing.get("gateway_inbound_mode", "haos_then_fallback")).strip() not in (
+        "haos_then_fallback",
+        "direct_target",
+    ):
+        errors.append("Routing: gateway inbound mode must be HAOS first or direct target")
+    for field_name in ("gateway_direct_target", "default_gateway_trunk"):
+        value = str(routing.get(field_name, "") or "").strip()
+        if value and len(value) > 128:
+            errors.append(f"Routing: {field_name} is too long")
 
     availability = data.get("availability") or {}
     if str(availability.get("mode", "available")).strip() not in ("available", "busy", "offline"):

@@ -192,9 +192,19 @@ class SimsonAddon:
             "tag": f"simson-call-{call_id or event}",
             "group": "simson-calls",
             "notification_icon": "mdi:phone",
+            "channel": "Simson Calls",
+            "priority": "high",
+            "ttl": 0,
             "clickAction": dashboard_path,
             "url": dashboard_path,
             "simson": payload,
+        }
+        if event in ("incoming", "active"):
+            data["sticky"] = True
+        if event in ("ended", "failed", "missed", "declined", "timeout"):
+            data["clear_notification"] = f"simson-call-{call_id or event}"
+        data["push"] = {
+            "interruption-level": "time-sensitive",
         }
         if event == "incoming" and call_id:
             data["actions"] = [
@@ -632,6 +642,11 @@ class SimsonAddon:
                 for fallback in target.get("fallback_targets") or []:
                     add(fallback)
 
+        policy = self.cfg.routing_policy or {}
+        if str(policy.get("gateway_inbound_mode", "")).strip() == "direct_target":
+            add(policy.get("gateway_direct_target", ""))
+            return candidates
+
         add((self.cfg.routing_policy or {}).get("final_fallback_target", ""))
         return candidates
 
@@ -704,14 +719,18 @@ class SimsonAddon:
         if call.call_type != "sip" or not call.metadata.get("sip_bridge_id"):
             return
 
-        delay = int((self.cfg.routing_policy or {}).get("ring_seconds", 25) or 25)
-        delay = max(1, delay)
+        policy = self.cfg.routing_policy or {}
+        if str(policy.get("gateway_inbound_mode", "")).strip() == "direct_target":
+            delay = 0
+        else:
+            delay = int(policy.get("ring_seconds", 25) or 25)
+            delay = max(1, delay)
         self._cancel_sip_route_timer(call.call_id)
         self._sip_route_timers[call.call_id] = asyncio.create_task(
             self._delayed_incoming_sip_route(call.call_id, delay)
         )
         logging.getLogger("simson.routing").info(
-            "Scheduled SIP fallback route for call %s after %ds",
+            "Scheduled incoming SIP route for call %s after %ds",
             call.call_id,
             delay,
         )
@@ -756,6 +775,19 @@ class SimsonAddon:
                 "Ignoring post-forward status %s for %s", status, call_id
             )
             return
+
+        if not existing_call and sip_bridge_id and status in ("ringing", "active"):
+            existing_call = await self.call_mgr.incoming_invite(
+                call_id,
+                "sip",
+                "Observed SIP call",
+                "sip",
+                metadata={
+                    "sip_bridge_id": sip_bridge_id,
+                    "target_type": "sip",
+                    "observed_only": True,
+                },
+            )
 
         call = await self.call_mgr.update_status(call_id, status, reason)
         if not call:
