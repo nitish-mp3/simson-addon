@@ -603,8 +603,100 @@ class LocalAPI:
         if self.target_dir:
             self.target_dir.reload()
 
+        sync_result = await self._sync_default_outbound_gateway(
+            self.cfg.routing_policy.get("default_gateway_trunk", "")
+        )
+
         logger.info("Settings updated via UI (restart_required=%s)", restart_required)
-        return web.json_response({"saved": True, "restart_required": restart_required})
+        return web.json_response({
+            "saved": True,
+            "restart_required": restart_required,
+            "gateway_default_sync": sync_result,
+        })
+
+    async def _sync_default_outbound_gateway(self, selected_trunk: str) -> dict:
+        """Mirror the local default gateway setting to the VPS SIP endpoint table.
+
+        SIP phones dial through the VPS directly, not through this addon process.
+        Keeping the selected trunk on the VPS prevents the UI from saying "7013"
+        while Asterisk still picks an older gateway such as 7009.
+        """
+        trunk = str(selected_trunk or "").strip()
+        if not trunk or trunk == "auto":
+            return {"ok": True, "skipped": True, "reason": "auto"}
+        if not self.cfg.account_id or not self.cfg.admin_token or not self.cfg.server_url:
+            return {"ok": False, "skipped": True, "reason": "not provisioned"}
+
+        http_url = self._ws_to_http_url(self.cfg.server_url)
+        headers = {
+            "Authorization": f"Bearer {self.cfg.admin_token}",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with ClientSession(timeout=ClientTimeout(total=10)) as session:
+                list_url = f"{http_url}/admin/accounts/{self.cfg.account_id}/sip-endpoints"
+                async with session.get(list_url, headers=headers, ssl=False) as resp:
+                    payload_text = await resp.text()
+                    if resp.status != 200:
+                        logger.warning(
+                            "Could not list SIP endpoints while syncing default gateway: %s %s",
+                            resp.status,
+                            payload_text[:240],
+                        )
+                        return {"ok": False, "reason": f"list failed: HTTP {resp.status}"}
+                    try:
+                        payload = json.loads(payload_text) if payload_text else []
+                    except Exception as exc:
+                        logger.warning("Invalid SIP endpoint list while syncing default gateway: %s", exc)
+                        return {"ok": False, "reason": "invalid endpoint list"}
+
+                endpoints = self._normalize_sip_endpoints_payload(payload)
+                gateway_ids: list[tuple[str, str, bool]] = []
+                target_found = False
+                for endpoint in endpoints:
+                    ext = str(endpoint.get("extension") or "").strip()
+                    endpoint_id = str(endpoint.get("id") or "").strip()
+                    if not ext or not endpoint_id or not _is_gateway_trunk(ext):
+                        continue
+                    desired = ext == trunk
+                    target_found = target_found or desired
+                    gateway_ids.append((endpoint_id, ext, desired))
+
+                if not target_found:
+                    logger.warning(
+                        "Default gateway %s is not a gateway endpoint in account %s",
+                        trunk,
+                        self.cfg.account_id,
+                    )
+                    return {"ok": False, "reason": f"gateway {trunk} not found"}
+
+                updated = 0
+                for endpoint_id, ext, desired in gateway_ids:
+                    update_url = f"{http_url}/admin/sip-endpoints/{endpoint_id}"
+                    async with session.put(
+                        update_url,
+                        json={"default_outbound": desired},
+                        headers=headers,
+                        ssl=False,
+                    ) as resp:
+                        payload_text = await resp.text()
+                        if resp.status != 200:
+                            logger.warning(
+                                "Could not set default_outbound=%s on SIP endpoint %s/%s: %s %s",
+                                desired,
+                                ext,
+                                endpoint_id,
+                                resp.status,
+                                payload_text[:240],
+                            )
+                            return {"ok": False, "reason": f"update {ext} failed: HTTP {resp.status}"}
+                        updated += 1
+
+                logger.info("Default outbound gateway synced to VPS: %s (%d endpoint updates)", trunk, updated)
+                return {"ok": True, "trunk": trunk, "updated": updated}
+        except Exception as exc:
+            logger.warning("Default outbound gateway sync failed: %s", exc)
+            return {"ok": False, "reason": str(exc)}
 
     async def handle_list_sip_endpoints(self, request: web.Request) -> web.Response:
         """List SIP endpoints for this account by calling VPS admin API."""

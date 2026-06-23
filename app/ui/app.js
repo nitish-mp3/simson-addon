@@ -1636,10 +1636,15 @@ async function saveSettings() {
         : [trigger.target_id].filter(Boolean),
     };
   });
-  await api("api/settings", { method: "POST", body: JSON.stringify(payload) });
+  const saved = await api("api/settings", { method: "POST", body: JSON.stringify(payload) });
   state.dirty = false;
   setSaveState("Saved", "ok");
-  toast(sipSaved ? `Settings saved. ${sipSaved} SIP device(s) updated.` : "Settings saved.");
+  const gatewaySync = saved?.gateway_default_sync;
+  if (gatewaySync && gatewaySync.ok === false && !gatewaySync.skipped) {
+    toast(`Settings saved, but VPS default gateway did not sync: ${gatewaySync.reason || "unknown error"}`);
+  } else {
+    toast(sipSaved ? `Settings saved. ${sipSaved} SIP device(s) updated.` : "Settings saved.");
+  }
   await refresh();
 }
 
