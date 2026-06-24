@@ -107,6 +107,7 @@ class LocalAPI:
         self.app.router.add_post("/api/notification/test", self.handle_notification_test)
         self.app.router.add_get("/api/calls", self.handle_list_calls)
         self.app.router.add_post("/api/call", self.handle_make_call)
+        self.app.router.add_post("/api/sip-intercom", self.handle_sip_intercom)
         self.app.router.add_get("/api/routing", self.handle_routing)
         self.app.router.add_post("/api/availability", self.handle_availability)
         self.app.router.add_post("/api/target-availability", self.handle_target_availability)
@@ -1136,6 +1137,99 @@ class LocalAPI:
             return web.json_response({"error": "json body must be an object"}, status=400)
 
         return await self._initiate_call(body)
+
+    async def handle_sip_intercom(self, request: web.Request) -> web.Response:
+        """Start a source SIP phone -> target SIP phone callback/intercom bridge.
+
+        This is the automation-friendly path for "make phone A call phone B"
+        without requiring the source handset to place a visible failed call first.
+        The VPS still enforces account scoping, registration, and per-endpoint
+        callback-bridge allowlists.
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"error": "json body must be an object"}, status=400)
+
+        source_extension = str(body.get("source_extension") or body.get("source") or "").strip()
+        target_extension = str(body.get("target_extension") or body.get("target") or "").strip()
+        if not source_extension.isdigit() or not target_extension.isdigit():
+            return web.json_response(
+                {"error": "source_extension and target_extension must be numeric SIP extensions"},
+                status=400,
+            )
+        if source_extension == target_extension:
+            return web.json_response(
+                {"error": "source_extension and target_extension must be different"},
+                status=400,
+            )
+
+        def clean_mode(value: str, default: str) -> str:
+            mode = str(value or default).strip().lower()
+            aliases = {
+                "answer": "normal",
+                "auto": "normal",
+                "auto_answer": "normal",
+                "auto-answer": "normal",
+                "intercom": "speaker",
+                "speakerphone": "speaker",
+                "none": "normal",
+                "off": "normal",
+                "disabled": "normal",
+            }
+            mode = aliases.get(mode, mode)
+            return mode if mode in ("", "normal", "speaker") else default
+
+        timeout_sec = _safe_int(body.get("timeout_sec", 30), 30, 5, 120)
+        payload = {
+            "source_extension": source_extension,
+            "target_extension": target_extension,
+            "source_auto_mode": clean_mode(body.get("source_auto_mode", "speaker"), "speaker"),
+            "target_auto_mode": clean_mode(body.get("target_auto_mode", "speaker"), "speaker"),
+            "caller_id": str(body.get("caller_id", "") or "").strip(),
+            "timeout_sec": timeout_sec,
+        }
+
+        if not self.cfg.account_id or not self.cfg.node_id or not self.cfg.install_token or not self.cfg.server_url:
+            return web.json_response(
+                {"error": "SIP intercom requires a provisioned addon node"},
+                status=400,
+            )
+
+        base = self._ws_to_http_url(self.cfg.server_url)
+        headers = {
+            "X-Simson-Account-ID": self.cfg.account_id,
+            "X-Simson-Node-ID": self.cfg.node_id,
+            "X-Simson-Install-Token": self.cfg.install_token,
+            "Content-Type": "application/json",
+        }
+        timeout = ClientTimeout(total=10)
+        try:
+            async with ClientSession(timeout=timeout) as session:
+                async with session.post(f"{base}/node/sip-intercom", json=payload, headers=headers, ssl=False) as resp:
+                    try:
+                        data = await resp.json(content_type=None)
+                    except Exception:
+                        data = {"error": await resp.text()}
+                    if resp.status not in (200, 201, 202):
+                        logger.error("VPS SIP intercom failed: %s %s", resp.status, data)
+                        return web.json_response(data, status=resp.status)
+        except Exception as exc:
+            logger.error("SIP intercom request error: %s", exc)
+            return web.json_response({"error": f"SIP intercom request failed: {exc}"}, status=502)
+
+        if self.addon and getattr(self.addon, "ha", None):
+            await self.addon.ha.publish_automation_event("simson_sip_intercom", {
+                "status": data.get("status", "calling"),
+                "call_id": data.get("call_id", ""),
+                "source_extension": source_extension,
+                "target_extension": target_extension,
+                "source_auto_mode": payload["source_auto_mode"],
+                "target_auto_mode": payload["target_auto_mode"],
+            })
+        return web.json_response(data, status=202)
 
     async def _initiate_call(self, body: dict, source: str = "api") -> web.Response:
         """Initiate a call through the existing validated outbound path."""
