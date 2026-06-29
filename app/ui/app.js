@@ -557,6 +557,7 @@ function renderRouting() {
               <option value="node">HAOS node</option>
               <option value="sip">SIP phone</option>
               <option value="gateway">Outside-number route</option>
+              <option value="intercom">Building/intercom extension via gateway</option>
             </select>
           </div>
           <div class="field">
@@ -565,7 +566,7 @@ function renderRouting() {
           </div>
           <div class="field">
             <label>Destination</label>
-            <input id="quick-value" list="node-list" placeholder="1025, office2, or outside number">
+            <input id="quick-value" list="node-list" placeholder="1025, office2, outside number, or apartment code">
           </div>
           <div class="field">
             <label>Fallback IDs for this route</label>
@@ -608,6 +609,7 @@ function targetRow(t) {
   const idx = getSettings().call_targets.indexOf(t);
   const mode = getSettings().route_overrides?.[t.id]?.mode || "available";
   const descriptor = targetFlowDescription(t);
+  const isGateway = t.type === "gateway";
   return `
     <div class="row" data-target-index="${idx}">
       <div class="row-main">
@@ -640,6 +642,15 @@ function targetRow(t) {
           <label>SIP extension / outside number</label>
           <input data-target="${idx}" data-key="extension" value="${esc(t.extension)}">
         </div>
+        ${isGateway ? `
+          <div class="field">
+            <label>Gateway trunk</label>
+            <select data-target="${idx}" data-key="trunk">
+              ${gatewaySelectOptions(t.trunk || defaultGatewayTrunk())}
+            </select>
+            <div class="hint">Short residence/intercom codes are dialed through this gateway; they do not need to be registered.</div>
+          </div>
+        ` : ""}
         <div class="field full">
           <label>Fallback target IDs</label>
           <input data-target="${idx}" data-key="fallback_targets_text" value="${esc((t.fallback_targets || []).join(", "))}">
@@ -653,7 +664,11 @@ function targetFlowDescription(t) {
   if (!t) return "";
   if (["sip", "asterisk"].includes(t.type)) return `Incoming target: SIP extension ${t.extension || t.id}`;
   if (["node", "device"].includes(t.type)) return `Incoming target: HAOS node ${t.node_id || t.id}`;
-  if (t.type === "gateway") return `Outbound only: dial ${t.extension || "number"} via trunk ${t.trunk || "default"}`;
+  if (t.type === "gateway") {
+    const digits = String(t.extension || "").replace(/\D/g, "");
+    const kind = digits && digits.length < 7 ? "Building/intercom extension" : "Outside number";
+    return `${kind}: dial ${t.extension || "number"} via gateway ${t.trunk || defaultGatewayTrunk() || "auto"}`;
+  }
   return `${t.type || "target"} · ${t.node_id || t.extension || t.trunk || ""}`;
 }
 
@@ -847,7 +862,7 @@ function sipRow(raw) {
 
 function isGatewaySip(ep) {
   const text = `${ep.extension || ""} ${ep.username || ""} ${ep.description || ""}`.toLowerCase();
-  return /^700[0-9]/.test(String(ep.extension || "")) || text.includes("gateway") || text.includes("gsm") || text.includes("fxo") || text.includes("landline");
+  return /^70[0-9]{2}$/.test(String(ep.extension || "")) || text.includes("gateway") || text.includes("gsm") || text.includes("fxo") || text.includes("landline");
 }
 
 /* =========================================================
@@ -1341,13 +1356,14 @@ function addRoute() {
     return;
   }
   const id = slug(label || value);
+  const targetType = kind === "intercom" ? "gateway" : kind;
   const target = {
     id,
     label,
-    type: kind,
-    node_id: kind === "node" ? value : "",
-    extension: kind !== "node" ? value : "",
-    trunk: kind === "gateway" ? defaultGatewayTrunk() : "",
+    type: targetType,
+    node_id: targetType === "node" ? value : "",
+    extension: targetType !== "node" ? value : "",
+    trunk: targetType === "gateway" ? defaultGatewayTrunk() : "",
     timeout: getSettings().routing.ring_seconds || 25,
     fallback_targets: splitList($("quick-fallbacks").value),
   };
@@ -1463,7 +1479,7 @@ async function deleteSip(endpointId, extension) {
   const endpoint = state.sip
     .map(normalizeSipEndpoint)
     .find((ep) => String(ep.id || ep.extension || ep.username) === String(endpointId));
-  const gateway = endpoint ? isGatewaySip(endpoint) : /^700[0-9]/.test(String(label || ""));
+  const gateway = endpoint ? isGatewaySip(endpoint) : /^70[0-9]{2}$/.test(String(label || ""));
   if (gateway) {
     const typed = prompt(`Gateway ${label} is protected because deleting it can break live PSTN/GSM/FXO calling.\n\nType ${label} to confirm deletion.`);
     if (typed !== String(label)) {
