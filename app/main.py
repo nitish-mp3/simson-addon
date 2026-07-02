@@ -718,6 +718,12 @@ class SimsonAddon:
         """Schedule configured SIP fallback only after the site ring delay."""
         if call.call_type != "sip" or not call.metadata.get("sip_bridge_id"):
             return
+        if str(call.metadata.get("sip_haos_ring_code", "")).lower() == "true":
+            logging.getLogger("simson.routing").info(
+                "Skipping SIP fallback for HAOS ring-code call %s",
+                call.call_id,
+            )
+            return
 
         policy = self.cfg.routing_policy or {}
         if str(policy.get("gateway_inbound_mode", "")).strip() == "direct_target":
