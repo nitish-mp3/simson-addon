@@ -1144,6 +1144,7 @@ class LocalAPI:
         if not isinstance(body, dict):
             return web.json_response({"error": "json body must be an object"}, status=400)
 
+        body = self._normalize_make_call_body(body)
         if (
             body.get("source_extension") or body.get("source")
         ) and (
@@ -1152,6 +1153,21 @@ class LocalAPI:
             return await self._start_sip_intercom(body)
 
         return await self._initiate_call(body)
+
+    def _normalize_make_call_body(self, body: dict) -> dict:
+        """Smooth over common HA service-field mistakes without guessing wildly."""
+        normalized = dict(body)
+        target_id = str(normalized.get("target_id", "") or "").strip()
+        target_extension = str(normalized.get("target_extension", "") or normalized.get("target", "") or "").strip()
+        has_source = bool(str(normalized.get("source_extension", "") or normalized.get("source", "") or "").strip())
+
+        # Users often read "target_id" as "the SIP phone I am calling from" when
+        # creating a two-phone intercom service call.  If target_extension is
+        # present and target_id is just digits, treat it as source_extension.
+        if target_extension and not has_source and target_id.isdigit():
+            normalized["source_extension"] = target_id
+            normalized.pop("target_id", None)
+        return normalized
 
     async def handle_sip_intercom(self, request: web.Request) -> web.Response:
         """Start a source SIP phone -> target SIP phone callback/intercom bridge.
