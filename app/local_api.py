@@ -18,7 +18,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.4.7"
+ADDON_VERSION = "4.5.7"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -215,6 +215,12 @@ class LocalAPI:
             "addon_version": ADDON_VERSION,
             "node_id": self.cfg.node_id,
             "provisioned": bool(self.cfg.install_token),
+            "capabilities": {
+                "call_api": True,
+                "call_endpoints": ["/api/call", "/api/make-call", "POST /api/calls"],
+                "sip_intercom": True,
+                "automation_webhooks": True,
+            },
         })
 
     async def handle_status(self, request: web.Request) -> web.Response:
@@ -1138,6 +1144,13 @@ class LocalAPI:
         if not isinstance(body, dict):
             return web.json_response({"error": "json body must be an object"}, status=400)
 
+        if (
+            body.get("source_extension") or body.get("source")
+        ) and (
+            body.get("target_extension") or body.get("target")
+        ):
+            return await self._start_sip_intercom(body)
+
         return await self._initiate_call(body)
 
     async def handle_sip_intercom(self, request: web.Request) -> web.Response:
@@ -1155,6 +1168,10 @@ class LocalAPI:
         if not isinstance(body, dict):
             return web.json_response({"error": "json body must be an object"}, status=400)
 
+        return await self._start_sip_intercom(body)
+
+    async def _start_sip_intercom(self, body: dict) -> web.Response:
+        """Validated local wrapper for the VPS SIP intercom/callback endpoint."""
         source_extension = str(body.get("source_extension") or body.get("source") or "").strip()
         target_extension = str(body.get("target_extension") or body.get("target") or "").strip()
         if not source_extension.isdigit() or not target_extension.isdigit():
@@ -2272,6 +2289,7 @@ class LocalAPI:
             body = {}
 
         call_id = body.get("call_id", "")
+        explicit_hangup = bool(body.get("explicit") or body.get("user_initiated"))
 
         if not call_id:
             active = self.call_mgr.active_call
@@ -2290,7 +2308,9 @@ class LocalAPI:
         # after the call is established, and VPS/Asterisk still ends the call
         # when the outside caller really disconnects.
         if (
-            call.call_type == "sip"
+            not explicit_hangup
+            and not body
+            and call.call_type == "sip"
             and call.state == CallState.ACTIVE
             and call.answered_at
             and (time.time() - call.answered_at) < 4
