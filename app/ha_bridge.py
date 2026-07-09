@@ -161,11 +161,15 @@ class HABridge:
         if data:
             payload["data"] = data
 
+        clearing_only = bool(data and data.get("clear_notification")) and not data.get("actions")
+
         # Modern HA notify entities use action notify.send_message with a
         # target entity_id. The REST API accepts entity_id in service data.
         if ref.startswith("notify."):
             if await self.call_service("notify", "send_message", {"entity_id": ref, **payload}):
                 return True
+            if clearing_only:
+                return False
             if (title or data) and await self.call_service(
                 "notify",
                 "send_message",
