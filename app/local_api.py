@@ -18,7 +18,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.5.7"
+ADDON_VERSION = "4.5.8"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -48,6 +48,13 @@ def _normalize_pstn_digits(digits: str, trunk: str) -> str:
     if _is_gateway_trunk(trunk) and len(digits) == 12 and digits.startswith("91"):
         return digits[2:]
     return digits
+
+
+def _is_safe_sip_username(username: str) -> bool:
+    value = str(username or "").strip()
+    if len(value) < 2 or len(value) > 64:
+        return False
+    return all(ch.isalnum() or ch in "._-" for ch in value)
 
 logger = logging.getLogger("simson.api")
 
@@ -116,6 +123,12 @@ class LocalAPI:
         self.app.router.add_post("/api/answer", self.handle_answer)
         self.app.router.add_post("/api/reject", self.handle_reject)
         self.app.router.add_post("/api/hangup", self.handle_hangup)
+        self.app.router.add_post("/api/call/answer", self.handle_answer)
+        self.app.router.add_post("/api/call/reject", self.handle_reject)
+        self.app.router.add_post("/api/call/decline", self.handle_reject)
+        self.app.router.add_post("/api/call/hangup", self.handle_hangup)
+        self.app.router.add_post("/api/end", self.handle_hangup)
+        self.app.router.add_post("/api/cancel", self.handle_hangup)
         self.app.router.add_post("/api/transfer", self.handle_transfer)
         self.app.router.add_get("/api/health", self.handle_health)
         self.app.router.add_get("/api/targets", self.handle_targets)
@@ -218,6 +231,14 @@ class LocalAPI:
             "capabilities": {
                 "call_api": True,
                 "call_endpoints": ["/api/call", "/api/make-call", "POST /api/calls"],
+                "call_control_endpoints": [
+                    "/api/answer",
+                    "/api/reject",
+                    "/api/hangup",
+                    "/api/call/answer",
+                    "/api/call/reject",
+                    "/api/call/hangup",
+                ],
                 "sip_intercom": True,
                 "automation_webhooks": True,
             },
@@ -814,10 +835,26 @@ class LocalAPI:
         except Exception:
             return web.json_response({"error": "invalid json"}, status=400)
         
+        extension = str(body.get("extension", "") or "").strip()
+        username = str(body.get("username", "") or "").strip() or extension
+        password = str(body.get("password", "") or "").strip()
+        if username and not _is_safe_sip_username(username):
+            logger.warning(
+                "Unsafe SIP username %r for extension %s; using extension as auth username",
+                username,
+                extension,
+            )
+            username = extension
+
         # Validate required fields
-        if not body.get("extension") or not body.get("username") or not body.get("password"):
+        if not extension or not password:
             return web.json_response(
-                {"error": "extension, username, and password are required"},
+                {"error": "extension and password are required"},
+                status=400,
+            )
+        if not username or not _is_safe_sip_username(username):
+            return web.json_response(
+                {"error": "username/auth user must be 2-64 letters/numbers/dot/underscore/dash; for normal phones use the same value as extension"},
                 status=400,
             )
         
@@ -832,9 +869,9 @@ class LocalAPI:
                     "Content-Type": "application/json",
                 }
                 payload = {
-                    "extension": body.get("extension"),
-                    "username": body.get("username"),
-                    "password": body.get("password"),
+                    "extension": extension,
+                    "username": username,
+                    "password": password,
                     "description": body.get("description", ""),
                     "route_to": body.get("route_to", ""),
                     "video_enabled": bool(body.get("video_enabled", False)),
@@ -847,6 +884,10 @@ class LocalAPI:
                     "callback_caller_auto_answer": bool(body.get("callback_caller_auto_answer", False)),
                     "callback_caller_auto_speaker": bool(body.get("callback_caller_auto_speaker", False)),
                     "default_outbound": bool(body.get("default_outbound", False)),
+                    "gateway_inbound_mode": str(body.get("gateway_inbound_mode", "") or ""),
+                    "gateway_direct_target": str(body.get("gateway_direct_target", "") or ""),
+                    "gateway_ivr_enabled": bool(body.get("gateway_ivr_enabled", False)),
+                    "gateway_ivr_sound": str(body.get("gateway_ivr_sound", "") or ""),
                     "enabled": body.get("enabled", True),
                 }
                 async with session.post(url, json=payload, headers=headers, ssl=False) as resp:
@@ -913,6 +954,14 @@ class LocalAPI:
             payload["callback_caller_auto_speaker"] = bool(body.get("callback_caller_auto_speaker"))
         if "default_outbound" in body:
             payload["default_outbound"] = bool(body.get("default_outbound"))
+        if "gateway_inbound_mode" in body:
+            payload["gateway_inbound_mode"] = str(body.get("gateway_inbound_mode", "") or "")
+        if "gateway_direct_target" in body:
+            payload["gateway_direct_target"] = str(body.get("gateway_direct_target", "") or "")
+        if "gateway_ivr_enabled" in body:
+            payload["gateway_ivr_enabled"] = bool(body.get("gateway_ivr_enabled"))
+        if "gateway_ivr_sound" in body:
+            payload["gateway_ivr_sound"] = str(body.get("gateway_ivr_sound", "") or "")
         if "enabled" in body:
             payload["enabled"] = bool(body.get("enabled"))
 
@@ -1159,7 +1208,8 @@ class LocalAPI:
         normalized = dict(body)
         target_id = str(normalized.get("target_id", "") or "").strip()
         target_extension = str(normalized.get("target_extension", "") or normalized.get("target", "") or "").strip()
-        has_source = bool(str(normalized.get("source_extension", "") or normalized.get("source", "") or "").strip())
+        source_extension = str(normalized.get("source_extension", "") or normalized.get("source", "") or "").strip()
+        has_source = bool(source_extension)
 
         # Users often read "target_id" as "the SIP phone I am calling from" when
         # creating a two-phone intercom service call.  If target_extension is
@@ -1167,6 +1217,20 @@ class LocalAPI:
         if target_extension and not has_source and target_id.isdigit():
             normalized["source_extension"] = target_id
             normalized.pop("target_id", None)
+        elif source_extension and not target_extension and target_id.isdigit():
+            normalized["target_extension"] = target_id
+            normalized.pop("target_id", None)
+        elif target_extension and not has_source:
+            # A lone target_extension means "call this SIP phone from the HAOS
+            # card", not "start a two-phone intercom".  Convert it to the same
+            # synthetic target used by the card and call_sip_phone service.
+            ext = target_extension.replace("sip:", "").strip()
+            if ext.isdigit():
+                normalized["target_id"] = f"asterisk_{ext}"
+                normalized.setdefault("target_node_id", f"sip:{ext}")
+                normalized["call_type"] = "sip"
+                normalized.pop("target_extension", None)
+                normalized.pop("target", None)
         return normalized
 
     async def handle_sip_intercom(self, request: web.Request) -> web.Response:
@@ -2244,28 +2308,35 @@ class LocalAPI:
         except Exception:
             return web.json_response({"error": "invalid json"}, status=400)
 
-        call_id = body.get("call_id", "")
+        call_id = str(body.get("call_id", "") or "").strip()
         answered_by_user_id = body.get("answered_by_user_id", "")
-        if not call_id:
-            # Auto-find incoming call.
-            active = self.call_mgr.active_call
-            if active and active.state == CallState.INCOMING:
-                call_id = active.call_id
-            else:
-                return web.json_response({"error": "no incoming call"}, status=404)
+        call, fallback_used = self._resolve_call_for_control(
+            call_id,
+            allowed_states={CallState.INCOMING, CallState.RINGING, CallState.ACTIVE},
+            prefer_direction="incoming",
+        )
+        if not call:
+            return web.json_response({
+                "error": "no answerable incoming call",
+                "requested_call_id": call_id,
+                "active_call": _call_to_dict(self.call_mgr.active_call) if self.call_mgr.active_call else None,
+            }, status=404)
 
-        call = self.call_mgr.get(call_id)
-        if not call or call.state != CallState.INCOMING:
-            return web.json_response({"error": "call not found or not incoming"}, status=404)
+        if call.state == CallState.ACTIVE:
+            return web.json_response({"call_id": call.call_id, "status": "already_active"})
 
-        msg = make_call_accept(call_id, self.cfg.node_id,
+        msg = make_call_accept(call.call_id, self.cfg.node_id,
                                answered_by_user_id=answered_by_user_id)
         try:
             await self.send_fn(msg)
         except Exception as e:
             return web.json_response({"error": f"send failed: {e}"}, status=502)
 
-        return web.json_response({"call_id": call_id, "status": "accepted"})
+        return web.json_response({
+            "call_id": call.call_id,
+            "status": "accepted",
+            "fallback_used": fallback_used,
+        })
 
     async def handle_reject(self, request: web.Request) -> web.Response:
         """Reject an incoming call."""
@@ -2274,28 +2345,37 @@ class LocalAPI:
         except Exception:
             return web.json_response({"error": "invalid json"}, status=400)
 
-        call_id = body.get("call_id", "")
+        call_id = str(body.get("call_id", "") or "").strip()
         reason = body.get("reason", "declined")
+        call, fallback_used = self._resolve_call_for_control(
+            call_id,
+            allowed_states={CallState.INCOMING, CallState.RINGING, CallState.REQUESTING, CallState.ACTIVE},
+            prefer_direction="incoming",
+        )
+        if not call:
+            return web.json_response({
+                "error": "no rejectable call",
+                "requested_call_id": call_id,
+                "active_call": _call_to_dict(self.call_mgr.active_call) if self.call_mgr.active_call else None,
+            }, status=404)
 
-        if not call_id:
-            active = self.call_mgr.active_call
-            if active and active.state == CallState.INCOMING:
-                call_id = active.call_id
-            else:
-                return web.json_response({"error": "no incoming call"}, status=404)
+        was_active = call.state == CallState.ACTIVE
+        if was_active:
+            msg = make_call_end(call.call_id, self.cfg.node_id, reason or "hangup")
+        else:
+            msg = make_call_reject(call.call_id, self.cfg.node_id, reason)
 
-        call = self.call_mgr.get(call_id)
-        if not call or call.state != CallState.INCOMING:
-            return web.json_response({"error": "call not found or not incoming"}, status=404)
-
-        msg = make_call_reject(call_id, self.cfg.node_id, reason)
         try:
             await self.send_fn(msg)
         except Exception as e:
             return web.json_response({"error": f"send failed: {e}"}, status=502)
 
-        await self.call_mgr.end_call(call_id, reason)
-        return web.json_response({"call_id": call_id, "status": "rejected"})
+        await self.call_mgr.end_call(call.call_id, reason)
+        return web.json_response({
+            "call_id": call.call_id,
+            "status": "ended" if was_active else "rejected",
+            "fallback_used": fallback_used,
+        })
 
     async def handle_hangup(self, request: web.Request) -> web.Response:
         """Hang up the current call."""
@@ -2304,19 +2384,19 @@ class LocalAPI:
         except Exception:
             body = {}
 
-        call_id = body.get("call_id", "")
+        call_id = str(body.get("call_id", "") or "").strip()
         explicit_hangup = bool(body.get("explicit") or body.get("user_initiated"))
 
-        if not call_id:
-            active = self.call_mgr.active_call
-            if active:
-                call_id = active.call_id
-            else:
-                return web.json_response({"error": "no active call"}, status=404)
-
-        call = self.call_mgr.get(call_id)
+        call, fallback_used = self._resolve_call_for_control(
+            call_id,
+            allowed_states={CallState.REQUESTING, CallState.RINGING, CallState.INCOMING, CallState.ACTIVE},
+        )
         if not call:
-            return web.json_response({"error": "call not found"}, status=404)
+            return web.json_response({
+                "error": "no active call",
+                "requested_call_id": call_id,
+            }, status=404)
+        call_id = call.call_id
 
         # Some browser SIP bridge failures can produce an automatic /api/hangup
         # immediately after answer. Do not let that helper-leg failure kill the
@@ -2346,7 +2426,7 @@ class LocalAPI:
         if call.remote_node_id.startswith("asterisk:") and self.asterisk and self.asterisk.connected:
             await self.asterisk.hangup_by_call_id(call_id)
             await self.call_mgr.end_call(call_id, "hangup")
-            return web.json_response({"call_id": call_id, "status": "ended"})
+            return web.json_response({"call_id": call_id, "status": "ended", "fallback_used": fallback_used})
 
         msg = make_call_end(call_id, self.cfg.node_id, "hangup")
         try:
@@ -2355,7 +2435,45 @@ class LocalAPI:
             return web.json_response({"error": f"send failed: {e}"}, status=502)
 
         await self.call_mgr.end_call(call_id, "hangup")
-        return web.json_response({"call_id": call_id, "status": "ended"})
+        return web.json_response({"call_id": call_id, "status": "ended", "fallback_used": fallback_used})
+
+    def _resolve_call_for_control(
+        self,
+        call_id: str,
+        allowed_states: set[CallState],
+        prefer_direction: str = "",
+    ) -> tuple[object | None, bool]:
+        """Resolve a call-control target without surprising 404s.
+
+        Home Assistant actions often omit call_id, and mobile notification
+        actions can carry a stale call_id after the card has already refreshed.
+        Prefer an exact live call, then safely fall back to this node's current
+        live call so Answer/Reject/Hangup act on the thing the user sees ringing.
+        """
+        call_id = str(call_id or "").strip()
+        if call_id:
+            call = self.call_mgr.get(call_id)
+            if call and call.state in allowed_states:
+                return call, False
+            if call and call.state == CallState.ACTIVE and CallState.ACTIVE in allowed_states:
+                return call, False
+
+        active = self.call_mgr.active_call
+        if active and active.state in allowed_states:
+            if prefer_direction and active.direction != prefer_direction:
+                # For reject/answer, do not control an unrelated outgoing call
+                # unless it is the only live call and the caller provided no ID.
+                if call_id:
+                    return None, False
+            return active, bool(call_id)
+
+        for candidate in self.call_mgr.all_calls:
+            if candidate.state not in allowed_states:
+                continue
+            if prefer_direction and candidate.direction != prefer_direction:
+                continue
+            return candidate, bool(call_id)
+        return None, False
 
     async def handle_transfer(self, request: web.Request) -> web.Response:
         """Transfer an active SIP/gateway bridge call to another node/user."""
@@ -2702,6 +2820,10 @@ class LocalAPI:
                 "callback_caller_auto_answer": bool(item.get("callback_caller_auto_answer", item.get("CallbackCallerAutoAnswer", False))),
                 "callback_caller_auto_speaker": bool(item.get("callback_caller_auto_speaker", item.get("CallbackCallerAutoSpeaker", False))),
                 "default_outbound": bool(item.get("default_outbound", item.get("DefaultOutbound", False))),
+                "gateway_inbound_mode": item.get("gateway_inbound_mode", item.get("GatewayInboundMode", "")),
+                "gateway_direct_target": item.get("gateway_direct_target", item.get("GatewayDirectTarget", "")),
+                "gateway_ivr_enabled": bool(item.get("gateway_ivr_enabled", item.get("GatewayIVREnabled", False))),
+                "gateway_ivr_sound": item.get("gateway_ivr_sound", item.get("GatewayIVRSound", "")),
                 "enabled": bool(item.get("enabled", item.get("Enabled", True))),
                 "registered": bool(item.get("registered", item.get("Registered", False))),
                 "contact_status": item.get("contact_status", item.get("ContactStatus", "")),

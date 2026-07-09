@@ -596,7 +596,7 @@ class SimsonAddon:
             return
 
         source_ext = str(call.metadata.get("sip_extension", "")).strip()
-        candidates = self._incoming_sip_fallback_candidates(source_ext)
+        candidates = await self._incoming_sip_fallback_candidates(source_ext)
         if not candidates:
             logger.info(
                 "No explicit gateway/SIP fallback configured for call %s from %s; keeping HAOS card ringing only",
@@ -633,7 +633,7 @@ class SimsonAddon:
                 continue
             return
 
-    def _incoming_sip_fallback_candidates(self, source_ext: str) -> list[str]:
+    async def _incoming_sip_fallback_candidates(self, source_ext: str) -> list[str]:
         """Return explicit fallback candidates for an incoming gateway/SIP call.
 
         Older builds used "first saved route target wins", which made unrelated
@@ -656,6 +656,15 @@ class SimsonAddon:
                 for fallback in target.get("fallback_targets") or []:
                     add(fallback)
 
+        gateway_ep = await self._load_gateway_endpoint(source_ext)
+        if gateway_ep:
+            mode = str(gateway_ep.get("gateway_inbound_mode", "") or "").strip()
+            gateway_target = str(gateway_ep.get("gateway_direct_target", "") or "").strip()
+            if mode == "direct_target":
+                add(gateway_target)
+                return candidates
+            add(gateway_target)
+
         policy = self.cfg.routing_policy or {}
         if str(policy.get("gateway_inbound_mode", "")).strip() == "direct_target":
             add(policy.get("gateway_direct_target", ""))
@@ -663,6 +672,50 @@ class SimsonAddon:
 
         add((self.cfg.routing_policy or {}).get("final_fallback_target", ""))
         return candidates
+
+    async def _load_gateway_endpoint(self, source_ext: str) -> dict | None:
+        """Load per-gateway settings from VPS for source-specific fallback.
+
+        This intentionally fails soft: if admin/API access is unavailable, the
+        older route-target/global fallback behavior continues to work.
+        """
+        source_ext = str(source_ext or "").strip()
+        if not source_ext or not self.cfg.account_id or not self.cfg.admin_token or not self.cfg.server_url:
+            return None
+        try:
+            import aiohttp
+
+            if self.cfg.server_url.startswith("wss://"):
+                http_url = "https://" + self.cfg.server_url[6:]
+            elif self.cfg.server_url.startswith("ws://"):
+                http_url = "http://" + self.cfg.server_url[5:]
+            else:
+                http_url = self.cfg.server_url
+            http_url = http_url.rstrip("/")
+            if http_url.endswith("/ws"):
+                http_url = http_url[:-3]
+
+            headers = {"Authorization": f"Bearer {self.cfg.admin_token}"}
+            url = f"{http_url}/admin/accounts/{self.cfg.account_id}/sip-endpoints"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, ssl=False, timeout=aiohttp.ClientTimeout(total=4)) as resp:
+                    if resp.status != 200:
+                        return None
+                    items = await resp.json()
+            if not isinstance(items, list):
+                return None
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("extension", "") or "").strip() == source_ext:
+                    return item
+        except Exception as exc:
+            logging.getLogger("simson.routing").debug(
+                "Could not load gateway endpoint settings for %s: %s",
+                source_ext,
+                exc,
+            )
+        return None
 
     def _resolve_incoming_sip_forward_target(
         self,

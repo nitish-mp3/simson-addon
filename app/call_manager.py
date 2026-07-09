@@ -86,11 +86,16 @@ class CallManager:
         """Return active call owned by user_id. Falls back to any active call if user_id blank."""
         if not user_id:
             return self.active_call
+        print("user id state -> ", user_id)
         for c in self._calls.values():
             if c.state in (CallState.REQUESTING, CallState.RINGING,
                            CallState.INCOMING, CallState.ACTIVE):
+                if c.caller_user_id == user_id:
+                    return c
                 if not c.caller_user_id or c.caller_user_id == user_id:
                     return c
+        if self.active_call:
+            return self.active_call
         return None
 
     @property

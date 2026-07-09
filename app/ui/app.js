@@ -331,6 +331,10 @@ function normalizeSipEndpoint(ep) {
     callback_bridge_callers: ep.callback_bridge_callers ?? ep.CallbackBridgeCallers ?? "",
     callback_caller_auto_answer: Boolean(ep.callback_caller_auto_answer ?? ep.CallbackCallerAutoAnswer ?? false),
     callback_caller_auto_speaker: Boolean(ep.callback_caller_auto_speaker ?? ep.CallbackCallerAutoSpeaker ?? false),
+    gateway_inbound_mode: ep.gateway_inbound_mode ?? ep.GatewayInboundMode ?? "",
+    gateway_direct_target: ep.gateway_direct_target ?? ep.GatewayDirectTarget ?? "",
+    gateway_ivr_enabled: Boolean(ep.gateway_ivr_enabled ?? ep.GatewayIVREnabled ?? false),
+    gateway_ivr_sound: ep.gateway_ivr_sound ?? ep.GatewayIVRSound ?? "",
     enabled: ep.enabled ?? ep.Enabled ?? true,
     registered: Boolean(ep.registered ?? ep.Registered ?? false),
     contact_status: ep.contact_status ?? ep.ContactStatus ?? "",
@@ -791,6 +795,11 @@ function sipRow(raw) {
   const callbackText = ep.callback_bridge
     ? `caller callback from ${ep.callback_bridge_callers || "no allowlist"}${ep.callback_caller_auto_speaker ? " with caller speaker" : ep.callback_caller_auto_answer ? " with caller auto-answer" : ""}`
     : "caller callback off";
+  const gatewayMode = ep.gateway_inbound_mode || "inherit";
+  const gatewayTarget = ep.gateway_direct_target || "";
+  const gatewayIvrText = ep.gateway_ivr_enabled
+    ? `IVR ${ep.gateway_ivr_sound || "built-in wait prompt"}`
+    : "IVR off";
   return `
     <div class="sip-manage-row ${isGateway ? "protected" : ""}">
       <div class="sip-main">
@@ -804,6 +813,7 @@ function sipRow(raw) {
           <span class="pill ${registered ? "ok" : "warn"}">${registered ? "registered" : "offline"}</span>
           ${ep.default_outbound ? `<span class="pill ok">default outside gateway</span>` : ""}
           ${isGateway ? `<span class="pill warn">gateway protected</span>` : ""}
+          ${isGateway ? `<span class="pill">${esc(gatewayMode === "direct_target" ? "direct inbound" : gatewayMode === "haos_then_fallback" ? "card then fallback" : "inherits inbound")}</span>` : ""}
         </div>
       </div>
       <div class="sip-edit-grid">
@@ -826,6 +836,42 @@ function sipRow(raw) {
           <label><input data-sip-id="${esc(endpointId)}" data-sip-key="auto_answer" type="checkbox" ${ep.auto_answer ? "checked" : ""}> Auto-answer</label>
           <label><input data-sip-id="${esc(endpointId)}" data-sip-key="auto_speaker" type="checkbox" ${ep.auto_speaker ? "checked" : ""}> Speaker on auto-answer</label>
         </div>
+        ${isGateway ? `
+        <div class="field full gateway-policy">
+          <div class="gateway-policy-head">
+            <div>
+              <label>Inbound behavior for gateway ${esc(ep.extension)}</label>
+              <div class="hint">This applies only to calls arriving through this gateway. It will not affect other gateways.</div>
+            </div>
+            <span class="pill">${esc(gatewayIvrText)}</span>
+          </div>
+          <div class="form-grid compact">
+            <div class="field">
+              <label>Incoming call path</label>
+              <select data-sip-id="${esc(endpointId)}" data-sip-key="gateway_inbound_mode">
+                ${option("", "Use global routing policy", gatewayMode === "inherit" ? "" : gatewayMode)}
+                ${option("haos_then_fallback", "Ring HAOS card, then this fallback", gatewayMode)}
+                ${option("direct_target", "Send directly to this target", gatewayMode)}
+              </select>
+            </div>
+            <div class="field">
+              <label>Gateway target / fallback</label>
+              <select data-sip-id="${esc(endpointId)}" data-sip-key="gateway_direct_target">
+                ${targetSelectOptions(gatewayTarget, true)}
+              </select>
+              <div class="hint">For direct mode this target rings immediately. For card mode this is tried after the HAOS ring delay.</div>
+            </div>
+            <div class="field">
+              <label><input data-sip-id="${esc(endpointId)}" data-sip-key="gateway_ivr_enabled" type="checkbox" ${ep.gateway_ivr_enabled ? "checked" : ""}> Play IVR before routing</label>
+              <div class="hint">Optional. Leave off for fastest gateway handoff.</div>
+            </div>
+            <div class="field">
+              <label>IVR sound name</label>
+              <input data-sip-id="${esc(endpointId)}" data-sip-key="gateway_ivr_sound" value="${esc(ep.gateway_ivr_sound || "")}" placeholder="custom/site_welcome">
+              <div class="hint">Per account/gateway Asterisk sound. Blank uses the built-in wait prompt if IVR is enabled.</div>
+            </div>
+          </div>
+        </div>` : ""}
         <div class="field full">
           <label>Only auto-answer from caller extension(s)</label>
           <input data-sip-id="${esc(endpointId)}" data-sip-key="auto_answer_callers" value="${esc(ep.auto_answer_callers || "")}" placeholder="1025, 1602">
@@ -1436,6 +1482,10 @@ function sipUpdatePayload(endpointId) {
     callback_bridge_callers: sipFieldValue(endpointId, "callback_bridge_callers"),
     callback_caller_auto_answer: Boolean(sipFieldValue(endpointId, "callback_caller_auto_answer")),
     callback_caller_auto_speaker: Boolean(sipFieldValue(endpointId, "callback_caller_auto_speaker")),
+    gateway_inbound_mode: sipFieldValue(endpointId, "gateway_inbound_mode"),
+    gateway_direct_target: sipFieldValue(endpointId, "gateway_direct_target"),
+    gateway_ivr_enabled: Boolean(sipFieldValue(endpointId, "gateway_ivr_enabled")),
+    gateway_ivr_sound: sipFieldValue(endpointId, "gateway_ivr_sound"),
     enabled: Boolean(sipFieldValue(endpointId, "enabled")),
   };
   const password = sipFieldValue(endpointId, "password");
