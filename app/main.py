@@ -209,25 +209,24 @@ class SimsonAddon:
         if event == "incoming" and call_id:
             data["actions"] = [
                 {
-                    "action": f"SIMSON_OPEN_{call_id}",
+                    "action": "URI",
                     "title": "Open Call",
                     "uri": dashboard_path,
                 },
                 {
                     "action": f"SIMSON_ANSWER_{call_id}",
                     "title": "Answer",
-                    "uri": dashboard_path,
                 },
                 {
                     "action": f"SIMSON_DECLINE_{call_id}",
-                    "title": "Decline",
+                    "title": "Reject",
                     "destructive": True,
                 },
             ]
         elif event == "active" and call_id:
             data["actions"] = [
                 {
-                    "action": f"SIMSON_OPEN_{call_id}",
+                    "action": "URI",
                     "title": "Open Call",
                     "uri": dashboard_path,
                 },

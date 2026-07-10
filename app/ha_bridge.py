@@ -161,26 +161,59 @@ class HABridge:
         if data:
             payload["data"] = data
 
-        clearing_only = bool(data and data.get("clear_notification")) and not data.get("actions")
+        actions = data.get("actions") if isinstance(data, dict) else None
+        has_actions = bool(actions)
+        clearing_only = bool(data and data.get("clear_notification")) and not has_actions
 
-        # Modern HA notify entities use action notify.send_message with a
-        # target entity_id. The REST API accepts entity_id in service data.
+        async def call_notify_service(service_ref: str, body: dict) -> bool:
+            if "." not in service_ref:
+                return False
+            domain, service = service_ref.split(".", 1)
+            if domain != "notify":
+                return False
+            return await self.call_service(domain, service, body)
+
+        async def call_notify_entity(body: dict) -> bool:
+            return await self.call_service("notify", "send_message", {"entity_id": ref, **body})
+
+        # Action buttons are best supported by mobile-app notify services
+        # (notify.mobile_app_phone).  Users often paste a notify entity such as
+        # notify.23090ra98i, so try the direct service first, then a common
+        # mobile_app_* alias before falling back to the modern notify entity API.
         if ref.startswith("notify."):
-            if await self.call_service("notify", "send_message", {"entity_id": ref, **payload}):
+            service = ref.split(".", 1)[1]
+            direct_candidates = []
+            if not service.startswith("mobile_app_"):
+                direct_candidates.append(f"notify.mobile_app_{service}")
+            direct_candidates.append(ref)
+
+            if has_actions:
+                for candidate in direct_candidates:
+                    if await call_notify_service(candidate, payload):
+                        return True
+
+            # Modern HA notify entities use action notify.send_message with an
+            # entity_id in service data. Some installs accept rich data here.
+            if await call_notify_entity(payload):
                 return True
             if clearing_only:
                 return False
+
+            # If rich notification data was rejected, try the direct service
+            # variants once more for non-action notifications before reducing to
+            # a plain message. This keeps normal call lifecycle alerts useful.
+            if not has_actions and (title or data):
+                for candidate in direct_candidates:
+                    if await call_notify_service(candidate, payload):
+                        return True
+
             if (title or data) and await self.call_service(
                 "notify",
                 "send_message",
                 {"entity_id": ref, "message": message},
             ):
                 return True
-            if await self.call_service("notify", "send_message", {
-                "target": {"entity_id": ref},
-                "data": payload,
-            }):
-                return True
+            return False
 
         domain, service = ref.split(".", 1)
         return await self.call_service(domain, service, payload)
