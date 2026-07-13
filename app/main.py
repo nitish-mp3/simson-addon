@@ -8,6 +8,7 @@ import logging
 import signal
 import sys
 import time
+from urllib.parse import quote
 
 from config import Config
 from provisioner import auto_provision, load_saved_credentials
@@ -188,38 +189,72 @@ class SimsonAddon:
             suffix = f": {payload.get('reason')}" if payload.get("reason") else ""
             message = f"{direction or 'Call'} with {remote} is {event}{suffix}."
 
+        notification_tag = f"simson-call-{call_id or event}"
+
+        # Remove the existing ringing/active alert when the call is over rather
+        # than adding another stale notification to the user's tray.
+        if event in ("ended", "declined"):
+            for service_ref in notify_services:
+                await self.ha.send_notify_message(
+                    service_ref,
+                    "clear_notification",
+                    data={"tag": notification_tag, "group": "simson-calls"},
+                )
+            return
+
+        def call_action_uri(action: str) -> str:
+            return (
+                f"/api/simson/call-action/{quote(action, safe='')}/{quote(call_id, safe='')}"
+                f"?node_id={quote(self.cfg.node_id, safe='')}"
+                f"&redirect={quote(dashboard_path, safe='')}"
+            )
+
         data = {
-            "tag": f"simson-call-{call_id or event}",
+            "tag": notification_tag,
             "group": "simson-calls",
-            "notification_icon": "mdi:phone",
-            "channel": "Simson Calls",
+            "notification_icon": "mdi:phone-in-talk",
+            # Android channel importance is immutable. A versioned channel
+            # fixes devices that already created an older silent channel.
+            # The Companion app's alarm_stream channel is the supported way
+            # to make an incoming-call alert audible even when the normal
+            # notification stream is muted. Non-ringing updates use a quiet,
+            # dedicated channel and update the same tagged notification.
+            "channel": "alarm_stream" if event == "incoming" else "Simson Calls v4",
+            "importance": "max",
             "priority": "high",
             "ttl": 0,
             "clickAction": dashboard_path,
             "url": dashboard_path,
+            "visibility": "public",
+            "sound": "default",
+            "vibrationPattern": "100, 900, 100, 900",
+            "ledColor": "#D94841",
             "simson": payload,
         }
         if event in ("incoming", "active"):
             data["sticky"] = True
-        if event in ("ended", "failed", "missed", "declined", "timeout"):
-            data["clear_notification"] = f"simson-call-{call_id or event}"
+            data["persistent"] = True
+        if event == "active":
+            data["alert_once"] = True
         data["push"] = {
-            "interruption-level": "time-sensitive",
+            "sound": (
+                {"name": "default", "critical": 1, "volume": 1.0}
+                if event == "incoming"
+                else "default"
+            ),
+            "interruption-level": "critical" if event == "incoming" else "time-sensitive",
         }
         if event == "incoming" and call_id:
             data["actions"] = [
                 {
                     "action": "URI",
-                    "title": "Open Call",
-                    "uri": dashboard_path,
-                },
-                {
-                    "action": f"SIMSON_ANSWER_{call_id}",
                     "title": "Answer",
+                    "uri": call_action_uri("answer"),
                 },
                 {
-                    "action": f"SIMSON_DECLINE_{call_id}",
-                    "title": "Reject",
+                    "action": "URI",
+                    "title": "Decline",
+                    "uri": call_action_uri("decline"),
                     "destructive": True,
                 },
             ]
@@ -231,8 +266,9 @@ class SimsonAddon:
                     "uri": dashboard_path,
                 },
                 {
-                    "action": f"SIMSON_HANGUP_{call_id}",
+                    "action": "URI",
                     "title": "Hang Up",
+                    "uri": call_action_uri("hangup"),
                     "destructive": True,
                 },
             ]

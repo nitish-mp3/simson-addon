@@ -163,7 +163,7 @@ class HABridge:
 
         actions = data.get("actions") if isinstance(data, dict) else None
         has_actions = bool(actions)
-        clearing_only = bool(data and data.get("clear_notification")) and not has_actions
+        clearing_only = message == "clear_notification" and not has_actions
 
         async def call_notify_service(service_ref: str, body: dict) -> bool:
             if "." not in service_ref:
@@ -176,36 +176,25 @@ class HABridge:
         async def call_notify_entity(body: dict) -> bool:
             return await self.call_service("notify", "send_message", {"entity_id": ref, **body})
 
-        # Action buttons are best supported by mobile-app notify services
-        # (notify.mobile_app_phone).  Users often paste a notify entity such as
-        # notify.23090ra98i, so try the direct service first, then a common
-        # mobile_app_* alias before falling back to the modern notify entity API.
+        # Preserve the exact delivery method configured by the user. Modern
+        # notify entities must go through notify.send_message; guessing a
+        # similarly named mobile_app service can target the wrong device or
+        # silently drop rich call fields.
         if ref.startswith("notify."):
             service = ref.split(".", 1)[1]
-            direct_candidates = []
-            if not service.startswith("mobile_app_"):
-                direct_candidates.append(f"notify.mobile_app_{service}")
-            direct_candidates.append(ref)
+            if service.startswith("mobile_app_"):
+                if await call_notify_service(ref, payload):
+                    return True
+            else:
+                if await call_notify_entity(payload):
+                    return True
+                # Compatibility fallback for older Companion installs that
+                # expose only a legacy mobile_app service.
+                if await call_notify_service(f"notify.mobile_app_{service}", payload):
+                    return True
 
-            if has_actions:
-                for candidate in direct_candidates:
-                    if await call_notify_service(candidate, payload):
-                        return True
-
-            # Modern HA notify entities use action notify.send_message with an
-            # entity_id in service data. Some installs accept rich data here.
-            if await call_notify_entity(payload):
-                return True
             if clearing_only:
                 return False
-
-            # If rich notification data was rejected, try the direct service
-            # variants once more for non-action notifications before reducing to
-            # a plain message. This keeps normal call lifecycle alerts useful.
-            if not has_actions and (title or data):
-                for candidate in direct_candidates:
-                    if await call_notify_service(candidate, payload):
-                        return True
 
             if (title or data) and await self.call_service(
                 "notify",

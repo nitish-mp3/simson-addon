@@ -965,14 +965,14 @@ function renderAutomation() {
             <label><input type="checkbox" data-path="automation.persistent_notifications" ${auto.persistent_notifications !== false ? "checked" : ""}> Create Home Assistant notifications for door events</label>
           </div>
           <div class="field full">
-            <label>Mobile app notify services</label>
+            <label>Phones receiving call alerts</label>
             <input data-path="automation.notify_services" value="${esc(auto.notify_services || "")}" placeholder="notify.23090ra98i, notify.mobile_app_your_phone">
-            <div class="hint">Use the notify entity/service that works in HA automations. Modern notify entities like notify.23090ra98i are sent through notify.send_message.</div>
+            <div class="hint">Enter the same notify entity that works with notify.send_message. Incoming calls use a loud, maximum-priority channel with Answer/Decline controls.</div>
           </div>
           <div class="field full">
             <label>Notification opens this HA dashboard path</label>
             <input data-path="automation.dashboard_path" value="${esc(auto.dashboard_path || "/lovelace/default_view")}" placeholder="/lovelace/sip_webrtc">
-            <div class="hint">Tap a call notification to open this dashboard/card. Use the path after your Home Assistant host.</div>
+            <div class="hint">Tapping the alert opens this dashboard. Answer &amp; Open controls the exact call first, then redirects here.</div>
           </div>
         </div>
         <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">

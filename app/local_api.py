@@ -299,6 +299,17 @@ class LocalAPI:
                 data={
                     "tag": "simson-notification-test",
                     "notification_icon": "mdi:phone-check",
+                    "channel": "alarm_stream",
+                    "importance": "max",
+                    "priority": "high",
+                    "ttl": 0,
+                    "sound": "default",
+                    "vibrationPattern": "100, 900, 100, 900",
+                    "visibility": "public",
+                    "push": {
+                        "sound": {"name": "default", "critical": 1, "volume": 1.0},
+                        "interruption-level": "critical",
+                    },
                 },
             )
             if ok:
@@ -2310,10 +2321,12 @@ class LocalAPI:
 
         call_id = str(body.get("call_id", "") or "").strip()
         answered_by_user_id = body.get("answered_by_user_id", "")
+        strict_call_id = bool(body.get("strict_call_id"))
         call, fallback_used = self._resolve_call_for_control(
             call_id,
             allowed_states={CallState.INCOMING, CallState.RINGING, CallState.ACTIVE},
             prefer_direction="incoming",
+            allow_fallback=not strict_call_id,
         )
         if not call:
             return web.json_response({
@@ -2347,10 +2360,12 @@ class LocalAPI:
 
         call_id = str(body.get("call_id", "") or "").strip()
         reason = body.get("reason", "declined")
+        strict_call_id = bool(body.get("strict_call_id"))
         call, fallback_used = self._resolve_call_for_control(
             call_id,
             allowed_states={CallState.INCOMING, CallState.RINGING, CallState.REQUESTING, CallState.ACTIVE},
             prefer_direction="incoming",
+            allow_fallback=not strict_call_id,
         )
         if not call:
             return web.json_response({
@@ -2386,10 +2401,12 @@ class LocalAPI:
 
         call_id = str(body.get("call_id", "") or "").strip()
         explicit_hangup = bool(body.get("explicit") or body.get("user_initiated"))
+        strict_call_id = bool(body.get("strict_call_id"))
 
         call, fallback_used = self._resolve_call_for_control(
             call_id,
             allowed_states={CallState.REQUESTING, CallState.RINGING, CallState.INCOMING, CallState.ACTIVE},
+            allow_fallback=not strict_call_id,
         )
         if not call:
             return web.json_response({
@@ -2442,6 +2459,7 @@ class LocalAPI:
         call_id: str,
         allowed_states: set[CallState],
         prefer_direction: str = "",
+        allow_fallback: bool = True,
     ) -> tuple[object | None, bool]:
         """Resolve a call-control target without surprising 404s.
 
@@ -2457,6 +2475,8 @@ class LocalAPI:
                 return call, False
             if call and call.state == CallState.ACTIVE and CallState.ACTIVE in allowed_states:
                 return call, False
+            if not allow_fallback:
+                return None, False
 
         active = self.call_mgr.active_call
         if active and active.state in allowed_states:
