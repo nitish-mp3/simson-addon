@@ -899,6 +899,7 @@ class LocalAPI:
                     "gateway_direct_target": str(body.get("gateway_direct_target", "") or ""),
                     "gateway_ivr_enabled": bool(body.get("gateway_ivr_enabled", False)),
                     "gateway_ivr_sound": str(body.get("gateway_ivr_sound", "") or ""),
+                    "answer_announcement_text": str(body.get("answer_announcement_text", "") or ""),
                     "enabled": body.get("enabled", True),
                 }
                 async with session.post(url, json=payload, headers=headers, ssl=False) as resp:
@@ -973,6 +974,8 @@ class LocalAPI:
             payload["gateway_ivr_enabled"] = bool(body.get("gateway_ivr_enabled"))
         if "gateway_ivr_sound" in body:
             payload["gateway_ivr_sound"] = str(body.get("gateway_ivr_sound", "") or "")
+        if "answer_announcement_text" in body:
+            payload["answer_announcement_text"] = str(body.get("answer_announcement_text", "") or "")
         if "enabled" in body:
             payload["enabled"] = bool(body.get("enabled"))
 
@@ -2844,6 +2847,8 @@ class LocalAPI:
                 "gateway_direct_target": item.get("gateway_direct_target", item.get("GatewayDirectTarget", "")),
                 "gateway_ivr_enabled": bool(item.get("gateway_ivr_enabled", item.get("GatewayIVREnabled", False))),
                 "gateway_ivr_sound": item.get("gateway_ivr_sound", item.get("GatewayIVRSound", "")),
+                "answer_announcement": item.get("answer_announcement", item.get("AnswerAnnouncement", "")),
+                "answer_announcement_text": item.get("answer_announcement_text", item.get("AnswerAnnouncementText", "")),
                 "enabled": bool(item.get("enabled", item.get("Enabled", True))),
                 "registered": bool(item.get("registered", item.get("Registered", False))),
                 "contact_status": item.get("contact_status", item.get("ContactStatus", "")),

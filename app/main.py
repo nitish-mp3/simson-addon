@@ -202,11 +202,14 @@ class SimsonAddon:
                 )
             return
 
-        def call_action_uri(action: str) -> str:
+        def call_action_id(action: str) -> str:
+            # Native Companion actions fire mobile_app_notification_action in
+            # Home Assistant even while the app is in the background. Unlike a
+            # URI action, they don't open an authenticated API URL in a browser
+            # and therefore cannot lose the HA session and return 401.
             return (
-                f"/api/simson/call-action/{quote(action, safe='')}/{quote(call_id, safe='')}"
-                f"?node_id={quote(self.cfg.node_id, safe='')}"
-                f"&redirect={quote(dashboard_path, safe='')}"
+                f"SIMSON_{action.upper()}::"
+                f"{quote(self.cfg.node_id, safe='')}::{quote(call_id, safe='')}"
             )
 
         data = {
@@ -247,15 +250,18 @@ class SimsonAddon:
         if event == "incoming" and call_id:
             data["actions"] = [
                 {
-                    "action": "URI",
+                    "action": call_action_id("answer"),
                     "title": "Answer",
-                    "uri": call_action_uri("answer"),
+                },
+                {
+                    "action": call_action_id("decline"),
+                    "title": "Decline",
+                    "destructive": True,
                 },
                 {
                     "action": "URI",
-                    "title": "Decline",
-                    "uri": call_action_uri("decline"),
-                    "destructive": True,
+                    "title": "Open",
+                    "uri": dashboard_path,
                 },
             ]
         elif event == "active" and call_id:
@@ -266,9 +272,8 @@ class SimsonAddon:
                     "uri": dashboard_path,
                 },
                 {
-                    "action": "URI",
+                    "action": call_action_id("hangup"),
                     "title": "Hang Up",
-                    "uri": call_action_uri("hangup"),
                     "destructive": True,
                 },
             ]

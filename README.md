@@ -12,6 +12,10 @@ For SIP phones and ATAs, keep the device media profile simple:
 - Disable Opus, video, SRTP, and TLS unless the VPS trunk is explicitly configured for them.
 - Use RFC2833/RFC4733 for DTMF.
 
+### Private prompt for a receiving SIP phone
+
+The **SIP Phones** page can assign an optional spoken prompt to each endpoint. Type the sentence, for example `Call for Amit. Please wait while I connect you.` Simson generates an 8 kHz telephony WAV automatically on the VPS, caches it per customer site and phone, and removes stale versions when the text changes. Asterisk plays it only to that receiving phone after it answers; the caller is connected after playback. Leave the text blank to preserve normal call behavior.
+
 ## Installation
 
 1. Add this repository to Home Assistant: **Settings -> Add-ons -> Add-on Store -> ... -> Repositories -> Paste URL**.

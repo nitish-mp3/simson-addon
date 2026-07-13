@@ -335,6 +335,8 @@ function normalizeSipEndpoint(ep) {
     gateway_direct_target: ep.gateway_direct_target ?? ep.GatewayDirectTarget ?? "",
     gateway_ivr_enabled: Boolean(ep.gateway_ivr_enabled ?? ep.GatewayIVREnabled ?? false),
     gateway_ivr_sound: ep.gateway_ivr_sound ?? ep.GatewayIVRSound ?? "",
+    answer_announcement: ep.answer_announcement ?? ep.AnswerAnnouncement ?? "",
+    answer_announcement_text: ep.answer_announcement_text ?? ep.AnswerAnnouncementText ?? "",
     enabled: ep.enabled ?? ep.Enabled ?? true,
     registered: Boolean(ep.registered ?? ep.Registered ?? false),
     contact_status: ep.contact_status ?? ep.ContactStatus ?? "",
@@ -711,6 +713,11 @@ function renderSip() {
             <label><input id="sip-video" type="checkbox"> Video capable H.264 device</label>
           </div>
           <div class="field full">
+            <label>Prompt spoken to this phone after answer optional</label>
+            <textarea id="sip-answer-announcement-text" maxlength="300" rows="2" placeholder="Call for Amit. Please wait while I connect you."></textarea>
+            <div class="hint">Just type the sentence. Simson privately generates and caches the audio for this site and phone. The caller joins after the receiving phone hears it.</div>
+          </div>
+          <div class="field full">
             <label><input id="sip-default-outbound" type="checkbox"> Make this the default outside gateway</label>
             <div class="hint">Only use this for FXO/GSM/PSTN gateway accounts. Normal SIP phones should leave it off.</div>
           </div>
@@ -800,12 +807,15 @@ function sipRow(raw) {
   const gatewayIvrText = ep.gateway_ivr_enabled
     ? `IVR ${ep.gateway_ivr_sound || "built-in wait prompt"}`
     : "IVR off";
+  const answerPromptText = ep.answer_announcement_text
+    ? `private prompt "${ep.answer_announcement_text}"`
+    : "no private answer prompt";
   return `
     <div class="sip-manage-row ${isGateway ? "protected" : ""}">
       <div class="sip-main">
         <div style="min-width:0;">
           <div class="row-title">${esc(ep.extension || "-")} ${ep.description ? `<span>${esc(ep.description)}</span>` : ""}</div>
-          <div class="row-sub">User ${esc(ep.username || "-")} · ${esc(ep.route_to || "any available node")} · ${ep.video_enabled ? "Audio + H.264" : "Audio only"} · ${esc(autoAnswerText)} · ${esc(speakerText)} · ${esc(callbackText)}</div>
+          <div class="row-sub">User ${esc(ep.username || "-")} · ${esc(ep.route_to || "any available node")} · ${ep.video_enabled ? "Audio + H.264" : "Audio only"} · ${esc(autoAnswerText)} · ${esc(speakerText)} · ${esc(callbackText)} · ${esc(answerPromptText)}</div>
           <div class="row-sub">Live contact: ${esc(contactText)}</div>
         </div>
         <div class="row-actions">
@@ -872,6 +882,11 @@ function sipRow(raw) {
             </div>
           </div>
         </div>` : ""}
+        <div class="field full">
+          <label>Prompt spoken to this receiving phone after answer</label>
+          <textarea data-sip-id="${esc(endpointId)}" data-sip-key="answer_announcement_text" maxlength="300" rows="2" placeholder="Call for Amit. Please wait while I connect you.">${esc(ep.answer_announcement_text || "")}</textarea>
+          <div class="hint">Type only the spoken sentence. Simson generates telephony audio automatically and isolates it to this customer site and phone. Blank disables the prompt.</div>
+        </div>
         <div class="field full">
           <label>Only auto-answer from caller extension(s)</label>
           <input data-sip-id="${esc(endpointId)}" data-sip-key="auto_answer_callers" value="${esc(ep.auto_answer_callers || "")}" placeholder="1025, 1602">
@@ -1440,6 +1455,7 @@ async function createSip() {
     route_to: $("sip-route").value.trim(),
     default_outbound: $("sip-default-outbound").checked,
     video_enabled: $("sip-video").checked,
+    answer_announcement_text: $("sip-answer-announcement-text").value.trim(),
     auto_answer: $("sip-auto-answer").checked,
     auto_answer_callers: $("sip-auto-answer-callers").value.trim(),
     auto_speaker: $("sip-auto-speaker").checked,
@@ -1486,6 +1502,7 @@ function sipUpdatePayload(endpointId) {
     gateway_direct_target: sipFieldValue(endpointId, "gateway_direct_target"),
     gateway_ivr_enabled: Boolean(sipFieldValue(endpointId, "gateway_ivr_enabled")),
     gateway_ivr_sound: sipFieldValue(endpointId, "gateway_ivr_sound"),
+    answer_announcement_text: sipFieldValue(endpointId, "answer_announcement_text"),
     enabled: Boolean(sipFieldValue(endpointId, "enabled")),
   };
   const password = sipFieldValue(endpointId, "password");
