@@ -202,15 +202,18 @@ class SimsonAddon:
                 )
             return
 
-        def call_action_id(action: str) -> str:
+        def call_action_id(action: str, notify_ref: str = "") -> str:
             # Native Companion actions fire mobile_app_notification_action in
             # Home Assistant even while the app is in the background. Unlike a
             # URI action, they don't open an authenticated API URL in a browser
             # and therefore cannot lose the HA session and return 401.
-            return (
+            value = (
                 f"SIMSON_{action.upper()}::"
                 f"{quote(self.cfg.node_id, safe='')}::{quote(call_id, safe='')}"
             )
+            if notify_ref:
+                value += f"::{quote(notify_ref, safe='')}"
+            return value
 
         data = {
             "tag": notification_tag,
@@ -230,12 +233,17 @@ class SimsonAddon:
             "url": dashboard_path,
             "visibility": "public",
             "sound": "default",
-            "vibrationPattern": "100, 900, 100, 900",
+            # Keep ringing conspicuous until the call changes state. Android
+            # channel settings remain user-controlled, but this repeated
+            # pattern is applied when the incoming-call channel is created.
+            "vibrationPattern": "100, 800, 100, 800, 100, 800, 100, 800, 100, 800",
             "ledColor": "#D94841",
             "simson": payload,
         }
         if event in ("incoming", "active"):
-            data["sticky"] = True
+            # Companion documents sticky as the string "true". A bool works
+            # on some releases but is ignored by others after serialization.
+            data["sticky"] = "true"
             data["persistent"] = True
         if event == "active":
             data["alert_once"] = True
@@ -247,38 +255,47 @@ class SimsonAddon:
             ),
             "interruption-level": "critical" if event == "incoming" else "time-sensitive",
         }
-        if event == "incoming" and call_id:
-            data["actions"] = [
-                {
-                    "action": call_action_id("answer"),
-                    "title": "Answer",
-                },
-                {
-                    "action": call_action_id("decline"),
-                    "title": "Decline",
-                    "destructive": True,
-                },
-                {
-                    "action": "URI",
-                    "title": "Open",
-                    "uri": dashboard_path,
-                },
-            ]
-        elif event == "active" and call_id:
-            data["actions"] = [
-                {
-                    "action": "URI",
-                    "title": "Open Call",
-                    "uri": dashboard_path,
-                },
-                {
-                    "action": call_action_id("hangup"),
-                    "title": "Hang Up",
-                    "destructive": True,
-                },
-            ]
         for service_ref in notify_services:
-            await self.ha.send_notify_message(service_ref, message, title=title, data=data)
+            service_data = dict(data)
+            if event == "incoming" and call_id:
+                service_data["actions"] = [
+                    {
+                        "action": call_action_id("answer", service_ref),
+                        "title": "Answer and open call",
+                        # iOS foregrounds the app; Android is opened by the
+                        # targeted command_webview sent after acceptance.
+                        "activationMode": "foreground",
+                        "uri": dashboard_path,
+                    },
+                    {
+                        "action": call_action_id("decline", service_ref),
+                        "title": "Decline",
+                        "destructive": True,
+                        "authenticationRequired": True,
+                    },
+                    {
+                        "action": "URI",
+                        "title": "Open call screen",
+                        "uri": dashboard_path,
+                    },
+                ]
+            elif event == "active" and call_id:
+                service_data["actions"] = [
+                    {
+                        "action": "URI",
+                        "title": "Open Call",
+                        "uri": dashboard_path,
+                    },
+                    {
+                        "action": call_action_id("hangup", service_ref),
+                        "title": "Hang Up",
+                        "destructive": True,
+                        "authenticationRequired": True,
+                    },
+                ]
+            await self.ha.send_notify_message(
+                service_ref, message, title=title, data=service_data
+            )
 
     def track_outgoing_call_request(self, request_id: str, call_id: str):
         """Register a pending outgoing call.request envelope."""

@@ -18,7 +18,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.6.1"
+ADDON_VERSION = "4.6.6"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -304,7 +304,9 @@ class LocalAPI:
                     "priority": "high",
                     "ttl": 0,
                     "sound": "default",
-                    "vibrationPattern": "100, 900, 100, 900",
+                    "vibrationPattern": "100, 800, 100, 800, 100, 800, 100, 800, 100, 800",
+                    "sticky": "true",
+                    "persistent": True,
                     "visibility": "public",
                     "push": {
                         "sound": {"name": "default", "critical": 1, "volume": 1.0},
@@ -2325,6 +2327,8 @@ class LocalAPI:
         call_id = str(body.get("call_id", "") or "").strip()
         answered_by_user_id = body.get("answered_by_user_id", "")
         strict_call_id = bool(body.get("strict_call_id"))
+        open_dashboard = bool(body.get("open_dashboard"))
+        notify_ref = str(body.get("notify_ref", "") or "").strip()
         call, fallback_used = self._resolve_call_for_control(
             call_id,
             allowed_states={CallState.INCOMING, CallState.RINGING, CallState.ACTIVE},
@@ -2339,7 +2343,14 @@ class LocalAPI:
             }, status=404)
 
         if call.state == CallState.ACTIVE:
-            return web.json_response({"call_id": call.call_id, "status": "already_active"})
+            dashboard_open_requested = False
+            if open_dashboard and notify_ref:
+                dashboard_open_requested = await self._open_call_dashboard(notify_ref)
+            return web.json_response({
+                "call_id": call.call_id,
+                "status": "already_active",
+                "dashboard_open_requested": dashboard_open_requested,
+            })
 
         msg = make_call_accept(call.call_id, self.cfg.node_id,
                                answered_by_user_id=answered_by_user_id)
@@ -2348,11 +2359,45 @@ class LocalAPI:
         except Exception as e:
             return web.json_response({"error": f"send failed: {e}"}, status=502)
 
+        dashboard_open_requested = False
+        if open_dashboard and notify_ref:
+            dashboard_open_requested = await self._open_call_dashboard(notify_ref)
+
         return web.json_response({
             "call_id": call.call_id,
             "status": "accepted",
             "fallback_used": fallback_used,
+            "dashboard_open_requested": dashboard_open_requested,
         })
+
+    async def _open_call_dashboard(self, notify_ref: str) -> bool:
+        """Open the call UI only on the Companion device that answered."""
+        if not self.addon or not getattr(self.addon, "ha", None):
+            return False
+
+        settings = load_settings()
+        automation = settings.get("automation") or {}
+        configured_refs = {
+            item.strip()
+            for item in str(automation.get("notify_services", "") or "").split(",")
+            if item.strip()
+        }
+        if notify_ref not in configured_refs:
+            logger.warning("Ignoring dashboard-open request for unconfigured notifier %s", notify_ref)
+            return False
+
+        dashboard_path = str(
+            automation.get("dashboard_path", "/lovelace/default_view")
+            or "/lovelace/default_view"
+        ).strip()
+        if not dashboard_path.startswith("/") or dashboard_path.startswith("//"):
+            dashboard_path = "/lovelace/default_view"
+
+        return await self.addon.ha.send_notify_message(
+            notify_ref,
+            "command_webview",
+            data={"command": dashboard_path},
+        )
 
     async def handle_reject(self, request: web.Request) -> web.Response:
         """Reject an incoming call."""
@@ -2364,6 +2409,7 @@ class LocalAPI:
         call_id = str(body.get("call_id", "") or "").strip()
         reason = body.get("reason", "declined")
         strict_call_id = bool(body.get("strict_call_id"))
+        terminate_call = bool(body.get("terminate_call"))
         call, fallback_used = self._resolve_call_for_control(
             call_id,
             allowed_states={CallState.INCOMING, CallState.RINGING, CallState.REQUESTING, CallState.ACTIVE},
@@ -2378,7 +2424,19 @@ class LocalAPI:
             }, status=404)
 
         was_active = call.state == CallState.ACTIVE
-        if was_active:
+        if terminate_call and call.remote_node_id.startswith("asterisk:"):
+            if not self.asterisk or not self.asterisk.connected:
+                return web.json_response({"error": "Asterisk is unavailable"}, status=503)
+            await self.asterisk.hangup_by_call_id(call.call_id)
+            await self.call_mgr.end_call(call.call_id, reason)
+            return web.json_response({
+                "call_id": call.call_id,
+                "status": "ended",
+                "fallback_used": fallback_used,
+                "terminated": True,
+            })
+
+        if was_active or terminate_call:
             msg = make_call_end(call.call_id, self.cfg.node_id, reason or "hangup")
         else:
             msg = make_call_reject(call.call_id, self.cfg.node_id, reason)
@@ -2391,8 +2449,9 @@ class LocalAPI:
         await self.call_mgr.end_call(call.call_id, reason)
         return web.json_response({
             "call_id": call.call_id,
-            "status": "ended" if was_active else "rejected",
+            "status": "ended" if (was_active or terminate_call) else "rejected",
             "fallback_used": fallback_used,
+            "terminated": terminate_call,
         })
 
     async def handle_hangup(self, request: web.Request) -> web.Response:
