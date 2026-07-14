@@ -15,6 +15,14 @@ const state = {
   dirty: false,
   loaded: false,
   selectedDoorTriggerId: "",
+  phoneProvisioning: {
+    enabled: false,
+    sessionId: "",
+    slots: [],
+    selectedSlot: "",
+    deviceName: "",
+    phoneIp: "",
+  },
 };
 
 const defaults = {
@@ -701,6 +709,42 @@ function targetFlowDescription(t) {
    SIP
    ========================================================= */
 
+function phoneProvisioningResultHtml() {
+  const provision = state.phoneProvisioning;
+  if (!provision.sessionId) {
+    return `<div class="provision-status idle"><b>Not tested</b><span>Enter all management fields, then test before creating.</span></div>`;
+  }
+  const available = (provision.slots || []).filter((slot) => slot.available);
+  const occupied = (provision.slots || []).filter((slot) => !slot.available);
+  return `
+    <div class="provision-status ok">
+      <b>Connection verified</b>
+      <span>${esc(provision.deviceName)} at ${esc(provision.phoneIp)} · expires in 5 minutes</span>
+    </div>
+    <div class="field full">
+      <label>Install into available phone account</label>
+      <select id="sip-phone-slot">
+        <option value="">Select an account slot</option>
+        ${available.map((slot) => option(slot.slot, `Account ${slot.slot} · empty`, provision.selectedSlot)).join("")}
+      </select>
+      ${occupied.length ? `<div class="hint">Protected existing accounts: ${occupied.map((slot) => `Account ${esc(slot.slot)}${slot.sip_user ? ` (${esc(slot.sip_user)})` : ""}`).join(", ")}. Simson will not overwrite them.</div>` : ""}
+    </div>`;
+}
+
+function renderPhoneProvisioningResult() {
+  const result = $("sip-phone-test-result");
+  if (result) result.innerHTML = phoneProvisioningResultHtml();
+}
+
+function invalidatePhoneProvisioningTest() {
+  state.phoneProvisioning.sessionId = "";
+  state.phoneProvisioning.slots = [];
+  state.phoneProvisioning.selectedSlot = "";
+  state.phoneProvisioning.deviceName = "";
+  state.phoneProvisioning.phoneIp = "";
+  renderPhoneProvisioningResult();
+}
+
 function renderSip() {
   $("content").innerHTML = `
     <div class="grid cols-2 dense-grid">
@@ -777,6 +821,69 @@ function renderSip() {
           </div>
           <div class="field full">
             <label><input id="sip-callback-caller-auto-speaker" type="checkbox"> Caller phone requests speaker/intercom on callback</label>
+          </div>
+          <div class="field full phone-provision-wrap">
+            <label class="provision-toggle"><input id="sip-phone-provision-enabled" type="checkbox" ${state.phoneProvisioning.enabled ? "checked" : ""}> Configure a supported phone automatically</label>
+            <div class="hint">Optional. Simson can configure a free SIP account on a supported LAN phone after testing its management login. Existing phone accounts are never overwritten.</div>
+            <div id="sip-phone-provision-panel" class="phone-provision-panel ${state.phoneProvisioning.enabled ? "" : "hidden"}">
+              <div class="provision-head">
+                <div>
+                  <b>Phone management connection</b>
+                  <span>Credentials are held in memory for 5 minutes and are never saved in addon settings.</span>
+                </div>
+                <span class="pill">Optional</span>
+              </div>
+              <div class="form-grid compact">
+                <div class="field full">
+                  <label>Device profile</label>
+                  <select id="sip-phone-profile" data-phone-connection>
+                    <option value="grandstream_gsc36xx">Grandstream GSC36xx door/camera station</option>
+                  </select>
+                  <div class="hint">Use only for GSC3610, GSC3615, or GSC3620. Other Grandstream, Fanvil, and Akuvox models require their own adapter and are intentionally rejected.</div>
+                </div>
+                <div class="field">
+                  <label>Phone private IP</label>
+                  <input id="sip-phone-ip" data-phone-connection inputmode="decimal" placeholder="192.168.1.80" autocomplete="off">
+                </div>
+                <div class="field split-field">
+                  <div>
+                    <label>Management protocol</label>
+                    <select id="sip-phone-scheme" data-phone-connection>
+                      <option value="https">HTTPS</option>
+                      <option value="http">HTTP</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label>Port</label>
+                    <input id="sip-phone-port" data-phone-connection type="number" min="1" max="65535" value="443">
+                  </div>
+                </div>
+                <div class="field">
+                  <label>Phone administrator username</label>
+                  <input id="sip-phone-admin-user" data-phone-connection autocomplete="username" placeholder="admin">
+                </div>
+                <div class="field">
+                  <label>Phone administrator password</label>
+                  <input id="sip-phone-admin-pass" data-phone-connection type="password" autocomplete="current-password" placeholder="device web password">
+                </div>
+                <div class="field">
+                  <label>SIP transport</label>
+                  <select id="sip-phone-transport">
+                    <option value="tcp" selected>TCP (recommended default)</option>
+                    <option value="udp">UDP</option>
+                    <option value="tls">TLS/TCP</option>
+                  </select>
+                </div>
+                <div class="field checkbox-bottom">
+                  <label><input id="sip-phone-verify-tls" data-phone-connection type="checkbox"> Verify HTTPS certificate</label>
+                  <div class="hint">Leave off for a phone's self-signed certificate.</div>
+                </div>
+              </div>
+              <div class="provision-actions">
+                <button class="btn secondary" type="button" data-action="discover-phone">Test connection & find accounts</button>
+              </div>
+              <div id="sip-phone-test-result" class="provision-result">${phoneProvisioningResultHtml()}</div>
+            </div>
           </div>
         </div>
         <div style="margin-top:14px"><button class="btn" data-action="create-sip">Create SIP Phone</button></div>
@@ -1370,6 +1477,27 @@ function setByPath(path, value) {
 function onInput(event) {
   const el = event.target;
 
+  if (el.id === "sip-phone-provision-enabled") {
+    state.phoneProvisioning.enabled = el.checked;
+    $("sip-phone-provision-panel")?.classList.toggle("hidden", !el.checked);
+    if (!el.checked) invalidatePhoneProvisioningTest();
+    return;
+  }
+
+  if (el.id === "sip-phone-slot") {
+    state.phoneProvisioning.selectedSlot = el.value;
+    return;
+  }
+
+  if (el.matches("[data-phone-connection]")) {
+    if (el.id === "sip-phone-scheme") {
+      const port = $("sip-phone-port");
+      if (port && ["80", "443", ""].includes(port.value)) port.value = el.value === "https" ? "443" : "80";
+    }
+    invalidatePhoneProvisioningTest();
+    return;
+  }
+
   // Handle door flow selects via delegation instead of inline onchange
   if (el.id === "door-source" || el.id === "door-trigger-select") {
     syncDoorFlowForm();
@@ -1433,6 +1561,7 @@ async function onClick(event) {
     if (action === "add-route") addRoute();
     if (action === "delete-target") deleteTarget(btn.dataset.index);
     if (action === "target-mode") setTargetMode(btn.dataset.id, btn.dataset.mode);
+    if (action === "discover-phone") await discoverPhone();
     if (action === "create-sip") await createSip();
     if (action === "save-sip") await saveSip(btn.dataset.id);
     if (action === "delete-sip") await deleteSip(btn.dataset.id, btn.dataset.ext);
@@ -1517,9 +1646,60 @@ async function createSip() {
     callback_caller_auto_speaker: $("sip-callback-caller-auto-speaker").checked,
     enabled: true,
   };
-  await api("api/sip-endpoints", { method: "POST", body: JSON.stringify(payload) });
-  toast("SIP phone created.");
+  if (state.phoneProvisioning.enabled) {
+    const slot = $("sip-phone-slot")?.value || state.phoneProvisioning.selectedSlot;
+    if (!state.phoneProvisioning.sessionId) {
+      throw new Error("Test the phone management connection before creating the SIP account.");
+    }
+    if (!slot) throw new Error("Select an available phone account slot.");
+    payload.phone_provisioning = {
+      session_id: state.phoneProvisioning.sessionId,
+      slot: Number(slot),
+      transport: $("sip-phone-transport")?.value || "tcp",
+    };
+  }
+  const result = await api("api/sip-endpoints", { method: "POST", body: JSON.stringify(payload) });
+  const configured = result.phone_provisioning;
+  state.phoneProvisioning = {
+    enabled: false,
+    sessionId: "",
+    slots: [],
+    selectedSlot: "",
+    deviceName: "",
+    phoneIp: "",
+  };
+  toast(configured ? `SIP phone created and Account ${configured.slot} configured.` : "SIP phone created.");
   await refresh();
+}
+
+async function discoverPhone() {
+  const required = {
+    ip: $("sip-phone-ip")?.value.trim(),
+    admin_username: $("sip-phone-admin-user")?.value.trim(),
+    admin_password: $("sip-phone-admin-pass")?.value || "",
+  };
+  if (!required.ip || !required.admin_username || !required.admin_password) {
+    throw new Error("Phone IP, administrator username, and administrator password are all required for automatic setup.");
+  }
+  const result = await api("api/phone-provision/discover", {
+    method: "POST",
+    body: JSON.stringify({
+      profile: $("sip-phone-profile")?.value || "grandstream_gsc36xx",
+      ip: required.ip,
+      scheme: $("sip-phone-scheme")?.value || "https",
+      port: Number($("sip-phone-port")?.value || 443),
+      admin_username: required.admin_username,
+      admin_password: required.admin_password,
+      verify_tls: Boolean($("sip-phone-verify-tls")?.checked),
+    }),
+  });
+  state.phoneProvisioning.sessionId = result.session_id;
+  state.phoneProvisioning.slots = Array.isArray(result.slots) ? result.slots : [];
+  state.phoneProvisioning.selectedSlot = "";
+  state.phoneProvisioning.deviceName = result.device_name || result.profile || "Supported phone";
+  state.phoneProvisioning.phoneIp = result.phone_ip || required.ip;
+  renderPhoneProvisioningResult();
+  toast("Phone verified. Select an available account slot.");
 }
 
 function sipFieldValue(endpointId, key) {

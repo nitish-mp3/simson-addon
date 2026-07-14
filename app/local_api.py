@@ -14,11 +14,12 @@ from call_manager import CallManager, CallState, RoutingIntent
 from config import Config
 from protocol import make_call_request, make_call_accept, make_call_reject, make_call_end, make_call_transfer, make_webrtc_signal
 from provisioner import auto_provision, clear_saved_credentials, save_credentials
+from phone_provisioning import PhoneProvisioningService, ProvisioningError
 from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.7.1"
+ADDON_VERSION = "4.8.0"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -64,7 +65,7 @@ def _verify_sip_call_behavior_response(endpoint: dict, requested: dict) -> str:
         if snake_key not in endpoint and legacy_key not in endpoint:
             return (
                 "The VPS SIP call-behavior API is outdated and ignored the new prompt settings. "
-                "Deploy the VPS server that matches addon version 4.7.1, then save again."
+                f"Deploy the VPS server that matches addon version {ADDON_VERSION}, then save again."
             )
         actual = endpoint.get(snake_key, endpoint.get(legacy_key, ""))
         if _normalized_prompt_text(actual) != _normalized_prompt_text(requested.get(snake_key, "")):
@@ -74,7 +75,7 @@ def _verify_sip_call_behavior_response(endpoint: dict, requested: dict) -> str:
         if "call_duration_rules" not in endpoint and "CallDurationRules" not in endpoint:
             return (
                 "The VPS SIP call-behavior API is outdated and ignored route call limits. "
-                "Deploy the VPS server that matches addon version 4.7.1, then save again."
+                f"Deploy the VPS server that matches addon version {ADDON_VERSION}, then save again."
             )
         actual_rules = _normalize_call_duration_rules(
             endpoint.get("call_duration_rules", endpoint.get("CallDurationRules", {}))
@@ -142,7 +143,8 @@ class LocalAPI:
                  send_fn, asterisk=None, wss_client=None,
                  target_dir: TargetDirectory | None = None,
                  addon=None,
-                 standalone_mode: bool = False):
+                 standalone_mode: bool = False,
+                 phone_provisioning: PhoneProvisioningService | None = None):
         """
         Args:
             cfg: Addon config.
@@ -167,6 +169,7 @@ class LocalAPI:
         self._sse_subscribers: list[asyncio.Queue] = []
         self._automation_last_run: dict[str, float] = {}
         self._automation_block_until: dict[str, float] = {}
+        self.phone_provisioning = phone_provisioning or PhoneProvisioningService()
         self._setup_routes()
 
     def _setup_routes(self):
@@ -219,6 +222,7 @@ class LocalAPI:
             self.handle_automation_device_webhook,
         )
         self.app.router.add_get("/api/sip-endpoints", self.handle_list_sip_endpoints)
+        self.app.router.add_post("/api/phone-provision/discover", self.handle_phone_provision_discover)
         self.app.router.add_post("/api/sip-endpoints", self.handle_create_sip_endpoint)
         self.app.router.add_put("/api/sip-endpoints/{id}", self.handle_update_sip_endpoint)
         self.app.router.add_delete("/api/sip-endpoints/{id}", self.handle_delete_sip_endpoint)
@@ -304,6 +308,10 @@ class LocalAPI:
                     "/api/call/hangup",
                 ],
                 "sip_intercom": True,
+                "phone_provisioning": {
+                    "enabled": True,
+                    "profiles": self.phone_provisioning.profiles(),
+                },
                 "automation_webhooks": True,
             },
         })
@@ -899,8 +907,84 @@ class LocalAPI:
             "account_id": self.cfg.account_id,
         })
 
+    async def handle_phone_provision_discover(self, request: web.Request) -> web.Response:
+        """Authenticate to a supported LAN phone and return writable SIP slots."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"error": "request must be an object"}, status=400)
+        try:
+            result = await self.phone_provisioning.discover(body)
+            return web.json_response(result)
+        except ProvisioningError as exc:
+            logger.warning("Phone provisioning discovery rejected: %s", exc)
+            return web.json_response({"error": str(exc), "code": exc.code}, status=exc.status)
+        except asyncio.TimeoutError:
+            return web.json_response(
+                {"error": "Timed out connecting to the phone management interface", "code": "device_timeout"},
+                status=504,
+            )
+        except Exception as exc:
+            logger.exception("Phone provisioning discovery failed")
+            return web.json_response(
+                {"error": "Could not test the phone management connection", "code": "device_test_failed"},
+                status=502,
+            )
+
+    async def _create_vps_sip_endpoint(self, payload: dict) -> tuple[int, dict]:
+        http_url = self._ws_to_http_url(self.cfg.server_url)
+        url = f"{http_url}/admin/accounts/{self.cfg.account_id}/sip-endpoints"
+        headers = {
+            "Authorization": f"Bearer {self.cfg.admin_token}",
+            "Content-Type": "application/json",
+        }
+        async with ClientSession(timeout=ClientTimeout(total=15)) as session:
+            async with session.post(url, json=payload, headers=headers, ssl=False) as response:
+                text = await response.text()
+                try:
+                    data = json.loads(text) if text else {}
+                except Exception:
+                    data = {"error": text or f"VPS returned {response.status}"}
+                if not isinstance(data, dict):
+                    data = {"error": str(data)}
+                return response.status, data
+
+    async def _rollback_vps_sip_endpoint(self, endpoint_id: str) -> bool:
+        if not endpoint_id:
+            return False
+        http_url = self._ws_to_http_url(self.cfg.server_url)
+        url = f"{http_url}/admin/sip-endpoints/{endpoint_id}"
+        headers = {"Authorization": f"Bearer {self.cfg.admin_token}"}
+        try:
+            async with ClientSession(timeout=ClientTimeout(total=10)) as session:
+                async with session.delete(url, headers=headers, ssl=False) as response:
+                    if response.status in (200, 204):
+                        return True
+                    logger.error("SIP endpoint rollback failed: %s %s", response.status, await response.text())
+        except Exception:
+            logger.exception("SIP endpoint rollback request failed")
+        return False
+
+    def _sip_server_for_phone(self, transport: str) -> str:
+        configured = str(getattr(self.cfg, "sip_domain", "") or "").strip()
+        host = configured
+        if configured:
+            parsed = urlsplit(configured if "://" in configured else f"//{configured}")
+            host = parsed.hostname or configured.split(":", 1)[0]
+        if not host:
+            host = urlsplit(self.cfg.server_url).hostname or ""
+        if not host:
+            raise ProvisioningError(
+                "SIP server hostname is not configured for automatic phone setup",
+                status=500,
+                code="sip_server_missing",
+            )
+        return f"{host}:5061" if transport == "tls" else host
+
     async def handle_create_sip_endpoint(self, request: web.Request) -> web.Response:
-        """Create a new SIP endpoint by calling VPS admin API."""
+        """Create a VPS endpoint and optionally provision a tested LAN phone."""
         if not self.cfg.account_id or not self.cfg.admin_token or not self.cfg.server_url:
             return web.json_response(
                 {"error": "Not yet provisioned — no account created on VPS"},
@@ -935,60 +1019,99 @@ class LocalAPI:
                 status=400,
             )
         
-        http_url = self._ws_to_http_url(self.cfg.server_url)
-        
+        provisioning = body.get("phone_provisioning")
+        if provisioning is not None:
+            if not isinstance(provisioning, dict):
+                return web.json_response({"error": "phone_provisioning must be an object"}, status=400)
+            if not provisioning.get("session_id") or not provisioning.get("slot"):
+                return web.json_response(
+                    {"error": "Test the phone connection and select an available account slot before creating"},
+                    status=400,
+                )
+            transport = str(provisioning.get("transport", "tcp") or "tcp").strip().lower()
+            if transport not in {"tcp", "udp", "tls"}:
+                return web.json_response({"error": "SIP transport must be TCP, UDP, or TLS"}, status=400)
+
+        payload = {
+            "extension": extension,
+            "username": username,
+            "password": password,
+            "description": body.get("description", ""),
+            "route_to": body.get("route_to", ""),
+            "video_enabled": bool(body.get("video_enabled", False)),
+            "auto_answer": bool(body.get("auto_answer", False)),
+            "auto_answer_callers": str(body.get("auto_answer_callers", "") or ""),
+            "auto_speaker": bool(body.get("auto_speaker", False)),
+            "auto_speaker_callers": str(body.get("auto_speaker_callers", "") or ""),
+            "callback_bridge": bool(body.get("callback_bridge", False)),
+            "callback_bridge_callers": str(body.get("callback_bridge_callers", "") or ""),
+            "callback_caller_auto_answer": bool(body.get("callback_caller_auto_answer", False)),
+            "callback_caller_auto_speaker": bool(body.get("callback_caller_auto_speaker", False)),
+            "default_outbound": bool(body.get("default_outbound", False)),
+            "gateway_inbound_mode": str(body.get("gateway_inbound_mode", "") or ""),
+            "gateway_direct_target": str(body.get("gateway_direct_target", "") or ""),
+            "gateway_ivr_enabled": bool(body.get("gateway_ivr_enabled", False)),
+            "gateway_ivr_sound": str(body.get("gateway_ivr_sound", "") or ""),
+            "answer_announcement_text": str(body.get("answer_announcement_text", "") or ""),
+            "pre_ring_announcement_text": str(body.get("pre_ring_announcement_text", "") or ""),
+            "call_duration_rules": body.get("call_duration_rules", {}),
+            "enabled": body.get("enabled", True),
+        }
         try:
-            import aiohttp
-            async with aiohttp.ClientSession() as session:
-                url = f"{http_url}/admin/accounts/{self.cfg.account_id}/sip-endpoints"
-                headers = {
-                    "Authorization": f"Bearer {self.cfg.admin_token}",
-                    "Content-Type": "application/json",
-                }
-                payload = {
-                    "extension": extension,
-                    "username": username,
-                    "password": password,
-                    "description": body.get("description", ""),
-                    "route_to": body.get("route_to", ""),
-                    "video_enabled": bool(body.get("video_enabled", False)),
-                    "auto_answer": bool(body.get("auto_answer", False)),
-                    "auto_answer_callers": str(body.get("auto_answer_callers", "") or ""),
-                    "auto_speaker": bool(body.get("auto_speaker", False)),
-                    "auto_speaker_callers": str(body.get("auto_speaker_callers", "") or ""),
-                    "callback_bridge": bool(body.get("callback_bridge", False)),
-                    "callback_bridge_callers": str(body.get("callback_bridge_callers", "") or ""),
-                    "callback_caller_auto_answer": bool(body.get("callback_caller_auto_answer", False)),
-                    "callback_caller_auto_speaker": bool(body.get("callback_caller_auto_speaker", False)),
-                    "default_outbound": bool(body.get("default_outbound", False)),
-                    "gateway_inbound_mode": str(body.get("gateway_inbound_mode", "") or ""),
-                    "gateway_direct_target": str(body.get("gateway_direct_target", "") or ""),
-                    "gateway_ivr_enabled": bool(body.get("gateway_ivr_enabled", False)),
-                    "gateway_ivr_sound": str(body.get("gateway_ivr_sound", "") or ""),
-                    "answer_announcement_text": str(body.get("answer_announcement_text", "") or ""),
-                    "pre_ring_announcement_text": str(body.get("pre_ring_announcement_text", "") or ""),
-                    "call_duration_rules": body.get("call_duration_rules", {}),
-                    "enabled": body.get("enabled", True),
-                }
-                async with session.post(url, json=payload, headers=headers, ssl=False) as resp:
-                    if resp.status in (200, 201):
-                        endpoint = await resp.json()
-                        logger.info(f"SIP endpoint created: ext={endpoint.get('extension')}")
-                        return web.json_response(endpoint, status=resp.status)
-                    else:
-                        error_text = await resp.text()
-                        try:
-                            error_payload = json.loads(error_text) if error_text else {}
-                        except Exception:
-                            error_payload = {"error": error_text or f"VPS returned {resp.status}"}
-                        if not isinstance(error_payload, dict):
-                            error_payload = {"error": str(error_payload)}
-                        error_payload.setdefault("error", f"VPS returned {resp.status}")
-                        logger.error(f"VPS SIP create failed: {resp.status} {error_text}")
-                        return web.json_response(error_payload, status=resp.status)
+            status, endpoint = await self._create_vps_sip_endpoint(payload)
+            if status not in (200, 201):
+                endpoint.setdefault("error", f"VPS returned {status}")
+                logger.error("VPS SIP create failed: %s %s", status, endpoint.get("error"))
+                return web.json_response(endpoint, status=status)
+
+            logger.info("SIP endpoint created: ext=%s", endpoint.get("extension", extension))
+            if provisioning is None:
+                return web.json_response(endpoint, status=status)
+
+            endpoint_id = str(endpoint.get("id") or endpoint.get("ID") or "")
+            transport = str(provisioning.get("transport", "tcp")).lower()
+            try:
+                phone_result = await self.phone_provisioning.apply(
+                    str(provisioning.get("session_id")),
+                    provisioning.get("slot"),
+                    {
+                        "extension": extension,
+                        "username": username,
+                        "password": password,
+                        "label": str(body.get("description", "") or extension),
+                        "server": self._sip_server_for_phone(transport),
+                        "transport": transport,
+                    },
+                )
+            except ProvisioningError as exc:
+                rolled_back = await self._rollback_vps_sip_endpoint(endpoint_id)
+                logger.error(
+                    "Phone provisioning failed after SIP create; rollback=%s code=%s",
+                    rolled_back,
+                    exc.code,
+                )
+                return web.json_response({
+                    "error": str(exc),
+                    "code": exc.code,
+                    "sip_endpoint_rolled_back": rolled_back,
+                    "manual_cleanup_required": not rolled_back,
+                }, status=exc.status if exc.status >= 400 else 502)
+            except Exception:
+                rolled_back = await self._rollback_vps_sip_endpoint(endpoint_id)
+                logger.exception("Unexpected phone provisioning failure after SIP create")
+                return web.json_response({
+                    "error": "Phone configuration failed; the new VPS SIP endpoint was rolled back" if rolled_back else "Phone configuration failed and the new VPS SIP endpoint requires manual cleanup",
+                    "code": "device_update_failed",
+                    "sip_endpoint_rolled_back": rolled_back,
+                    "manual_cleanup_required": not rolled_back,
+                }, status=502)
+
+            result = dict(endpoint)
+            result["phone_provisioning"] = phone_result
+            return web.json_response(result, status=status)
         except Exception as e:
-            logger.error(f"SIP endpoint create error: {e}")
-            return web.json_response({"error": str(e)}, status=500)
+            logger.exception("SIP endpoint create error")
+            return web.json_response({"error": "Could not create the SIP endpoint"}, status=500)
 
     async def handle_update_sip_endpoint(self, request: web.Request) -> web.Response:
         """Update an existing SIP endpoint by calling VPS admin API."""

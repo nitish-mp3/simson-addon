@@ -69,6 +69,28 @@ Use this when a desk phone, SIP phone, or analog landline phone through an ATA s
 
 For an analog landline handset, configure these SIP settings on the ATA device, then plug the handset into the ATA's phone port.
 
+### Optional automatic phone setup
+
+The normal manual SIP-phone workflow above remains available for every device. For a supported phone on the same private LAN as the addon, **SIP Phones -> Add SIP Phone -> Configure a supported phone automatically** can safely perform the phone-side setup too:
+
+1. Enter the new Simson extension, SIP username/password, label, and routing options as usual.
+2. Enable automatic setup and select the exact device profile.
+3. Enter the phone's private IPv4 address and its web-administration username/password.
+4. Select management HTTP or HTTPS and its port. The SIP transport defaults to TCP, but UDP or TLS can be selected.
+5. Press **Test connection & find accounts**. Simson authenticates to the phone and lists its SIP account slots.
+6. Select an available slot and press **Create SIP Phone**.
+
+The first supported profile is **Grandstream GSC3610/GSC3615/GSC3620**. It uses Grandstream's documented GSC36xx HTTP API. Do not select this profile for another Grandstream family, Fanvil, Akuvox, or an unknown model; use manual setup until a matching adapter is added.
+
+Safety behavior:
+
+- Only literal RFC1918 phone addresses (`10.x`, `172.16-31.x`, or `192.168.x`) are accepted.
+- Existing or active phone account slots are shown but cannot be selected or overwritten.
+- Phone administrator credentials are held only in addon memory for the five-minute test session; they are not written to addon settings or returned to the browser.
+- The selected phone slot is activated with the new extension, auth username, SIP password, VPS SIP server, and selected transport.
+- If phone configuration or verification fails after VPS endpoint creation, Simson deletes the newly created endpoint so a half-configured account is not left behind.
+- Automatic setup is optional. Leaving it disabled preserves the existing endpoint creation behavior exactly.
+
 ## Route PSTN/GSM Gateways to HAOS
 
 Use one dedicated SIP endpoint per gateway. Do not reuse a desk-phone endpoint for a gateway.
