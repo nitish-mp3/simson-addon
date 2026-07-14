@@ -16,6 +16,14 @@ For SIP phones and ATAs, keep the device media profile simple:
 
 The **SIP Phones** page can assign an optional spoken prompt to each endpoint. Type the sentence, for example `Call for Amit. Please wait while I connect you.` Simson generates an 8 kHz telephony WAV automatically on the VPS, caches it per customer site and phone, and removes stale versions when the text changes. Asterisk plays it only to that receiving phone after it answers; the caller is connected after playback. Leave the text blank to preserve normal call behavior.
 
+### Caller announcement before ringing
+
+Each SIP phone can also have a separate **Before ringing** sentence, for example `Please wait while I call the kitchen monitor.` Asterisk sends this to the caller as early media and starts ringing the destination only after playback completes. This does not replace the private after-answer prompt; the two stages can be enabled independently. Leave it blank when the destination should ring immediately.
+
+### Exact route call limits
+
+Under a SIP phone, **Route-specific connected call limits** can end only a selected source-to-target route after a configured number of connected seconds. For example, a rule `1027 -> 1028 = 15 seconds` affects only calls from 1027 to 1028. Ringing and the before-ring announcement do not consume this time, and all routes without a rule remain unlimited. Sources must be enabled SIP phones in the same site.
+
 ## Installation
 
 1. Add this repository to Home Assistant: **Settings -> Add-ons -> Add-on Store -> ... -> Repositories -> Paste URL**.

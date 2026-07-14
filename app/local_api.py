@@ -18,8 +18,30 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.6.6"
+ADDON_VERSION = "4.7.0"
 DEFAULT_PSTN_TRUNK = "7009"
+
+
+def _normalize_call_duration_rules(value) -> dict[str, int]:
+    """Normalize the VPS JSON/object representation for the ingress UI."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value or "{}")
+        except (TypeError, ValueError):
+            value = {}
+    if not isinstance(value, dict):
+        return {}
+
+    rules: dict[str, int] = {}
+    for source, seconds in value.items():
+        source_ext = str(source or "").strip()
+        try:
+            duration = int(seconds)
+        except (TypeError, ValueError):
+            continue
+        if source_ext and 1 <= duration <= 86400:
+            rules[source_ext] = duration
+    return rules
 
 
 def _is_gateway_trunk(trunk: str) -> bool:
@@ -902,6 +924,8 @@ class LocalAPI:
                     "gateway_ivr_enabled": bool(body.get("gateway_ivr_enabled", False)),
                     "gateway_ivr_sound": str(body.get("gateway_ivr_sound", "") or ""),
                     "answer_announcement_text": str(body.get("answer_announcement_text", "") or ""),
+                    "pre_ring_announcement_text": str(body.get("pre_ring_announcement_text", "") or ""),
+                    "call_duration_rules": body.get("call_duration_rules", {}),
                     "enabled": body.get("enabled", True),
                 }
                 async with session.post(url, json=payload, headers=headers, ssl=False) as resp:
@@ -978,6 +1002,16 @@ class LocalAPI:
             payload["gateway_ivr_sound"] = str(body.get("gateway_ivr_sound", "") or "")
         if "answer_announcement_text" in body:
             payload["answer_announcement_text"] = str(body.get("answer_announcement_text", "") or "")
+        if "pre_ring_announcement_text" in body:
+            payload["pre_ring_announcement_text"] = str(body.get("pre_ring_announcement_text", "") or "")
+        if "call_duration_rules" in body:
+            raw_rules = body.get("call_duration_rules")
+            if not isinstance(raw_rules, dict):
+                return web.json_response(
+                    {"error": "call_duration_rules must be an object keyed by source SIP extension"},
+                    status=400,
+                )
+            payload["call_duration_rules"] = raw_rules
         if "enabled" in body:
             payload["enabled"] = bool(body.get("enabled"))
 
@@ -2908,6 +2942,11 @@ class LocalAPI:
                 "gateway_ivr_sound": item.get("gateway_ivr_sound", item.get("GatewayIVRSound", "")),
                 "answer_announcement": item.get("answer_announcement", item.get("AnswerAnnouncement", "")),
                 "answer_announcement_text": item.get("answer_announcement_text", item.get("AnswerAnnouncementText", "")),
+                "pre_ring_announcement": item.get("pre_ring_announcement", item.get("PreRingAnnouncement", "")),
+                "pre_ring_announcement_text": item.get("pre_ring_announcement_text", item.get("PreRingAnnouncementText", "")),
+                "call_duration_rules": _normalize_call_duration_rules(
+                    item.get("call_duration_rules", item.get("CallDurationRules", {}))
+                ),
                 "enabled": bool(item.get("enabled", item.get("Enabled", True))),
                 "registered": bool(item.get("registered", item.get("Registered", False))),
                 "contact_status": item.get("contact_status", item.get("ContactStatus", "")),

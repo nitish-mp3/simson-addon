@@ -809,6 +809,130 @@ textarea {
   gap: var(--space-2);
 }
 
+.call-stage-box,
+.route-duration-box {
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.call-stage-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+
+.call-stage-label > span {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--accent-hover);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.call-stage-label b,
+.call-stage-label small {
+  display: block;
+}
+
+.call-stage-label b {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.call-stage-label small {
+  margin-top: 1px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.duration-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.duration-rule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.duration-rule-list:empty::after {
+  content: "No route limit. Calls to this phone remain unlimited.";
+  padding: 10px 12px;
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.duration-rule-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(190px, 0.65fr) 34px;
+  align-items: center;
+  gap: 10px;
+  padding: 9px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-base);
+}
+
+.route-pair {
+  display: grid;
+  grid-template-columns: minmax(130px, 1fr) 22px minmax(70px, auto);
+  align-items: center;
+  gap: 6px;
+}
+
+.route-target {
+  padding: 7px 9px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.duration-seconds {
+  display: grid;
+  grid-template-columns: minmax(70px, 0.45fr) 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.duration-seconds span {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.icon-btn {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 18px;
+}
+
+.icon-btn.danger:hover {
+  border-color: rgba(239, 68, 68, 0.55);
+  background: rgba(239, 68, 68, 0.1);
+  color: #fca5a5;
+}
+
 /* =========================================================
    Door Flow
    ========================================================= */
@@ -1206,6 +1330,18 @@ textarea {
 
   .sip-edit-grid {
     grid-template-columns: 1fr;
+  }
+
+  .duration-head {
+    flex-direction: column;
+  }
+
+  .duration-rule-row {
+    grid-template-columns: 1fr 34px;
+  }
+
+  .duration-rule-row .route-pair {
+    grid-column: 1 / -1;
   }
 
   .sip-main,

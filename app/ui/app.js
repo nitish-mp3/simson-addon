@@ -312,6 +312,22 @@ function render() {
    Data Helpers
    ========================================================= */
 
+function normalizeCallDurationRules(value) {
+  if (typeof value === "string") {
+    try { value = JSON.parse(value || "{}"); } catch (_) { value = {}; }
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const result = {};
+  Object.entries(value).forEach(([source, seconds]) => {
+    const sourceExt = String(source || "").trim();
+    const duration = Number(seconds);
+    if (sourceExt && Number.isInteger(duration) && duration >= 1 && duration <= 86400) {
+      result[sourceExt] = duration;
+    }
+  });
+  return result;
+}
+
 function normalizeSipEndpoint(ep) {
   if (!ep || typeof ep !== "object") return null;
   return {
@@ -337,6 +353,9 @@ function normalizeSipEndpoint(ep) {
     gateway_ivr_sound: ep.gateway_ivr_sound ?? ep.GatewayIVRSound ?? "",
     answer_announcement: ep.answer_announcement ?? ep.AnswerAnnouncement ?? "",
     answer_announcement_text: ep.answer_announcement_text ?? ep.AnswerAnnouncementText ?? "",
+    pre_ring_announcement: ep.pre_ring_announcement ?? ep.PreRingAnnouncement ?? "",
+    pre_ring_announcement_text: ep.pre_ring_announcement_text ?? ep.PreRingAnnouncementText ?? "",
+    call_duration_rules: normalizeCallDurationRules(ep.call_duration_rules ?? ep.CallDurationRules ?? {}),
     enabled: ep.enabled ?? ep.Enabled ?? true,
     registered: Boolean(ep.registered ?? ep.Registered ?? false),
     contact_status: ep.contact_status ?? ep.ContactStatus ?? "",
@@ -713,6 +732,11 @@ function renderSip() {
             <label><input id="sip-video" type="checkbox"> Video capable H.264 device</label>
           </div>
           <div class="field full">
+            <label>Caller announcement before this phone starts ringing optional</label>
+            <textarea id="sip-pre-ring-announcement-text" maxlength="300" rows="2" placeholder="Please wait while I call the kitchen monitor."></textarea>
+            <div class="hint">The caller hears this first using early media; this phone starts ringing immediately after the sentence finishes. Leave blank for normal immediate ringing.</div>
+          </div>
+          <div class="field full">
             <label>Prompt spoken to this phone after answer optional</label>
             <textarea id="sip-answer-announcement-text" maxlength="300" rows="2" placeholder="Call for Amit. Please wait while I connect you."></textarea>
             <div class="hint">Just type the sentence. Simson privately generates and caches the audio for this site and phone. The caller joins after the receiving phone hears it.</div>
@@ -810,12 +834,16 @@ function sipRow(raw) {
   const answerPromptText = ep.answer_announcement_text
     ? `private prompt "${ep.answer_announcement_text}"`
     : "no private answer prompt";
+  const preRingPromptText = ep.pre_ring_announcement_text
+    ? `caller intro "${ep.pre_ring_announcement_text}"`
+    : "no caller intro";
+  const durationRuleCount = Object.keys(ep.call_duration_rules || {}).length;
   return `
     <div class="sip-manage-row ${isGateway ? "protected" : ""}">
       <div class="sip-main">
         <div style="min-width:0;">
           <div class="row-title">${esc(ep.extension || "-")} ${ep.description ? `<span>${esc(ep.description)}</span>` : ""}</div>
-          <div class="row-sub">User ${esc(ep.username || "-")} · ${esc(ep.route_to || "any available node")} · ${ep.video_enabled ? "Audio + H.264" : "Audio only"} · ${esc(autoAnswerText)} · ${esc(speakerText)} · ${esc(callbackText)} · ${esc(answerPromptText)}</div>
+          <div class="row-sub">User ${esc(ep.username || "-")} · ${esc(ep.route_to || "any available node")} · ${ep.video_enabled ? "Audio + H.264" : "Audio only"} · ${esc(autoAnswerText)} · ${esc(speakerText)} · ${esc(callbackText)} · ${esc(preRingPromptText)} · ${esc(answerPromptText)} · ${durationRuleCount ? `${durationRuleCount} timed route${durationRuleCount === 1 ? "" : "s"}` : "no call time limit"}</div>
           <div class="row-sub">Live contact: ${esc(contactText)}</div>
         </div>
         <div class="row-actions">
@@ -882,10 +910,28 @@ function sipRow(raw) {
             </div>
           </div>
         </div>` : ""}
+        <div class="field full call-stage-box">
+          <div class="call-stage-label"><span>1</span><div><b>Before ringing</b><small>Heard by the caller</small></div></div>
+          <textarea data-sip-id="${esc(endpointId)}" data-sip-key="pre_ring_announcement_text" maxlength="300" rows="2" placeholder="Please wait while I call the kitchen monitor.">${esc(ep.pre_ring_announcement_text || "")}</textarea>
+          <div class="hint">Asterisk plays this as early media, then starts ringing ${esc(ep.extension || "this phone")}. Blank keeps normal immediate ringing.</div>
+        </div>
         <div class="field full">
-          <label>Prompt spoken to this receiving phone after answer</label>
+          <div class="call-stage-label"><span>2</span><div><b>After answer</b><small>Heard only by the receiving phone</small></div></div>
           <textarea data-sip-id="${esc(endpointId)}" data-sip-key="answer_announcement_text" maxlength="300" rows="2" placeholder="Call for Amit. Please wait while I connect you.">${esc(ep.answer_announcement_text || "")}</textarea>
           <div class="hint">Type only the spoken sentence. Simson generates telephony audio automatically and isolates it to this customer site and phone. Blank disables the prompt.</div>
+        </div>
+        <div class="field full route-duration-box">
+          <div class="duration-head">
+            <div>
+              <label>Route-specific connected call limits</label>
+              <div class="hint">Optional. The timer starts only after ${esc(ep.extension || "this phone")} answers. Ring time is never deducted.</div>
+            </div>
+            <button class="btn small secondary" data-action="add-duration-rule" data-id="${esc(endpointId)}" data-target-ext="${esc(ep.extension || "")}">+ Add limit</button>
+          </div>
+          <div class="duration-rule-list" data-duration-list="${esc(endpointId)}">
+            ${durationRuleRows(endpointId, ep.extension, ep.call_duration_rules)}
+          </div>
+          <div class="hint">Example: source 1027 with 15 seconds means only 1027 → ${esc(ep.extension || "this phone")} ends after 15 connected seconds. All other callers remain unlimited.</div>
         </div>
         <div class="field full">
           <label>Only auto-answer from caller extension(s)</label>
@@ -1389,6 +1435,8 @@ async function onClick(event) {
     if (action === "create-sip") await createSip();
     if (action === "save-sip") await saveSip(btn.dataset.id);
     if (action === "delete-sip") await deleteSip(btn.dataset.id, btn.dataset.ext);
+    if (action === "add-duration-rule") addDurationRule(btn.dataset.id, btn.dataset.targetExt);
+    if (action === "remove-duration-rule") removeDurationRule(btn);
     if (action === "generate-webhook") generateWebhook();
     if (action === "test-notification") await testNotification();
     if (action === "create-door-flow") createDoorFlow();
@@ -1455,7 +1503,9 @@ async function createSip() {
     route_to: $("sip-route").value.trim(),
     default_outbound: $("sip-default-outbound").checked,
     video_enabled: $("sip-video").checked,
+    pre_ring_announcement_text: $("sip-pre-ring-announcement-text").value.trim(),
     answer_announcement_text: $("sip-answer-announcement-text").value.trim(),
+    call_duration_rules: {},
     auto_answer: $("sip-auto-answer").checked,
     auto_answer_callers: $("sip-auto-answer-callers").value.trim(),
     auto_speaker: $("sip-auto-speaker").checked,
@@ -1477,6 +1527,67 @@ function sipFieldValue(endpointId, key) {
   return el.type === "checkbox" ? el.checked : el.value.trim();
 }
 
+function durationSourceOptions(targetExtension, selected = "") {
+  const sources = state.sip
+    .map(normalizeSipEndpoint)
+    .filter((ep) => ep && ep.enabled !== false && ep.extension && ep.extension !== targetExtension && !isGatewaySip(ep));
+  const options = [`<option value="">Select caller phone</option>`];
+  if (selected && !sources.some((ep) => ep.extension === selected)) {
+    options.push(option(selected, `${selected} (unavailable; remove or replace)`, selected));
+  }
+  sources.forEach((ep) => options.push(option(ep.extension, `${ep.extension}${ep.description ? ` · ${ep.description}` : ""}`, selected)));
+  return options.join("");
+}
+
+function durationRuleRow(endpointId, targetExtension, source = "", seconds = "") {
+  return `
+    <div class="duration-rule-row" data-duration-target="${esc(endpointId)}">
+      <div class="route-pair">
+        <select data-duration-key="source">${durationSourceOptions(targetExtension, source)}</select>
+        <span class="route-arrow">→</span>
+        <span class="route-target">${esc(targetExtension || "target")}</span>
+      </div>
+      <label class="duration-seconds"><input type="number" min="1" max="86400" step="1" data-duration-key="seconds" value="${esc(seconds)}" placeholder="15"><span>seconds connected</span></label>
+      <button class="icon-btn danger" type="button" data-action="remove-duration-rule" aria-label="Remove call limit">×</button>
+    </div>`;
+}
+
+function durationRuleRows(endpointId, targetExtension, rules) {
+  return Object.entries(normalizeCallDurationRules(rules))
+    .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
+    .map(([source, seconds]) => durationRuleRow(endpointId, targetExtension, source, seconds))
+    .join("");
+}
+
+function addDurationRule(endpointId, targetExtension) {
+  const list = document.querySelector(`[data-duration-list="${CSS.escape(endpointId)}"]`);
+  if (!list) return;
+  list.insertAdjacentHTML("beforeend", durationRuleRow(endpointId, targetExtension));
+  setDirty("Call duration rule added. Choose a caller and save the SIP device.");
+}
+
+function removeDurationRule(button) {
+  button.closest(".duration-rule-row")?.remove();
+  setDirty("Call duration rule removed. Save the SIP device to apply it.");
+}
+
+function collectDurationRules(endpointId, targetExtension) {
+  const rules = {};
+  const rows = document.querySelectorAll(`[data-duration-target="${CSS.escape(endpointId)}"]`);
+  rows.forEach((row) => {
+    const source = row.querySelector('[data-duration-key="source"]')?.value.trim() || "";
+    const rawSeconds = row.querySelector('[data-duration-key="seconds"]')?.value.trim() || "";
+    if (!source && !rawSeconds) return;
+    const seconds = Number(rawSeconds);
+    if (!/^\d{2,12}$/.test(source)) throw new Error("Choose a valid source SIP extension for every call limit.");
+    if (source === String(targetExtension || "")) throw new Error("A call limit source and target cannot be the same phone.");
+    if (!Number.isInteger(seconds) || seconds < 1 || seconds > 86400) throw new Error("Connected call duration must be between 1 and 86400 seconds.");
+    if (Object.prototype.hasOwnProperty.call(rules, source)) throw new Error(`Only one call limit is allowed for source ${source}.`);
+    rules[source] = seconds;
+  });
+  return rules;
+}
+
 function renderedSipEndpointIds() {
   return Array.from(document.querySelectorAll("[data-sip-id][data-sip-key]"))
     .map((el) => el.dataset.sipId)
@@ -1485,6 +1596,7 @@ function renderedSipEndpointIds() {
 }
 
 function sipUpdatePayload(endpointId) {
+  const endpoint = state.sip.map(normalizeSipEndpoint).find((ep) => String(ep?.id || ep?.extension || ep?.username) === String(endpointId));
   const payload = {
     description: sipFieldValue(endpointId, "description"),
     route_to: sipFieldValue(endpointId, "route_to"),
@@ -1502,7 +1614,9 @@ function sipUpdatePayload(endpointId) {
     gateway_direct_target: sipFieldValue(endpointId, "gateway_direct_target"),
     gateway_ivr_enabled: Boolean(sipFieldValue(endpointId, "gateway_ivr_enabled")),
     gateway_ivr_sound: sipFieldValue(endpointId, "gateway_ivr_sound"),
+    pre_ring_announcement_text: sipFieldValue(endpointId, "pre_ring_announcement_text"),
     answer_announcement_text: sipFieldValue(endpointId, "answer_announcement_text"),
+    call_duration_rules: collectDurationRules(endpointId, endpoint?.extension || ""),
     enabled: Boolean(sipFieldValue(endpointId, "enabled")),
   };
   const password = sipFieldValue(endpointId, "password");
