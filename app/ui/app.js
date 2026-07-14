@@ -835,8 +835,8 @@ function sipRow(raw) {
     ? `private prompt "${ep.answer_announcement_text}"`
     : "no private answer prompt";
   const preRingPromptText = ep.pre_ring_announcement_text
-    ? `caller intro "${ep.pre_ring_announcement_text}"`
-    : "no caller intro";
+    ? `caller waiting announcement "${ep.pre_ring_announcement_text}"`
+    : "no caller waiting announcement";
   const durationRuleCount = Object.keys(ep.call_duration_rules || {}).length;
   return `
     <div class="sip-manage-row ${isGateway ? "protected" : ""}">
@@ -910,15 +910,16 @@ function sipRow(raw) {
             </div>
           </div>
         </div>` : ""}
-        <div class="field full call-stage-box">
-          <div class="call-stage-label"><span>1</span><div><b>Before ringing</b><small>Heard by the caller</small></div></div>
+        <div class="field full call-stage-box caller-stage">
+          <div class="call-stage-label"><span>1</span><div><b>Caller waiting announcement</b><small>Before ${esc(ep.extension || "the destination")} starts ringing · caller hears this</small></div></div>
           <textarea data-sip-id="${esc(endpointId)}" data-sip-key="pre_ring_announcement_text" maxlength="300" rows="2" placeholder="Please wait while I call the kitchen monitor.">${esc(ep.pre_ring_announcement_text || "")}</textarea>
-          <div class="hint">Asterisk plays this as early media, then starts ringing ${esc(ep.extension || "this phone")}. Blank keeps normal immediate ringing.</div>
+          <div class="prompt-audience caller"><b>Audience: caller only.</b> Asterisk plays early media first, then starts ringing ${esc(ep.extension || "this phone")}. The receiving phone cannot hear this stage.</div>
         </div>
-        <div class="field full">
-          <div class="call-stage-label"><span>2</span><div><b>After answer</b><small>Heard only by the receiving phone</small></div></div>
+        <div class="field full call-stage-box receiver-stage">
+          <div class="call-stage-label"><span>2</span><div><b>Receiving-phone private prompt</b><small>Immediately after manual/auto-answer · receiver hears this</small></div></div>
           <textarea data-sip-id="${esc(endpointId)}" data-sip-key="answer_announcement_text" maxlength="300" rows="2" placeholder="Call for Amit. Please wait while I connect you.">${esc(ep.answer_announcement_text || "")}</textarea>
-          <div class="hint">Type only the spoken sentence. Simson generates telephony audio automatically and isolates it to this customer site and phone. Blank disables the prompt.</div>
+          <div class="prompt-audience receiver"><b>Audience: receiving phone only.</b> The phone must answer before SIP media can be delivered; Simson plays this privately before bridging the caller. Blank disables it.</div>
+          <div class="sip-standard-note">Standard SIP does not support sending arbitrary audio to an unanswered receiving handset. This is the earliest standards-compliant receiver-side prompt and does not alter normal ringing behavior.</div>
         </div>
         <div class="field full route-duration-box">
           <div class="duration-head">
@@ -1643,11 +1644,14 @@ async function saveSip(endpointId) {
   }
   const payload = sipUpdatePayload(endpointId);
   const password = Boolean(payload.password);
-  await api(`api/sip-endpoints/${encodeURIComponent(endpointId)}`, {
+  const saved = await api(`api/sip-endpoints/${encodeURIComponent(endpointId)}`, {
     method: "PUT",
     body: JSON.stringify(payload),
   });
-  toast(password ? "SIP device saved and password rotated." : "SIP device saved.");
+  if (saved.save_verified !== true) {
+    throw new Error("SIP device response was not verified; settings were not reported as saved.");
+  }
+  toast(password ? "SIP device saved, verified, and password rotated." : "SIP device saved and verified.");
   await refresh();
 }
 

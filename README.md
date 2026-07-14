@@ -16,9 +16,11 @@ For SIP phones and ATAs, keep the device media profile simple:
 
 The **SIP Phones** page can assign an optional spoken prompt to each endpoint. Type the sentence, for example `Call for Amit. Please wait while I connect you.` Simson generates an 8 kHz telephony WAV automatically on the VPS, caches it per customer site and phone, and removes stale versions when the text changes. Asterisk plays it only to that receiving phone after it answers; the caller is connected after playback. Leave the text blank to preserve normal call behavior.
 
-### Caller announcement before ringing
+### Caller waiting announcement before the destination rings
 
-Each SIP phone can also have a separate **Before ringing** sentence, for example `Please wait while I call the kitchen monitor.` Asterisk sends this to the caller as early media and starts ringing the destination only after playback completes. This does not replace the private after-answer prompt; the two stages can be enabled independently. Leave it blank when the destination should ring immediately.
+Each SIP phone can also have a separate caller-only waiting sentence, for example `Please wait while I call the kitchen monitor.` Asterisk sends this to the caller as early media and starts ringing the destination only after playback completes. This does not replace the private receiving-phone prompt; the two stages can be enabled independently. Leave it blank when the destination should ring immediately.
+
+Standard SIP cannot send arbitrary audio to a receiving handset before that handset answers because no media session exists yet. Use **Receiving-phone private prompt** when the destination must hear the message: Simson plays it immediately after manual or automatic answer and before bridging the caller.
 
 ### Exact route call limits
 

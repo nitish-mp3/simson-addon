@@ -18,7 +18,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.7.0"
+ADDON_VERSION = "4.7.1"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -42,6 +42,48 @@ def _normalize_call_duration_rules(value) -> dict[str, int]:
         if source_ext and 1 <= duration <= 86400:
             rules[source_ext] = duration
     return rules
+
+
+def _normalized_prompt_text(value) -> str:
+    """Mirror the VPS prompt normalization for reliable save verification."""
+    return " ".join(str(value or "").split())
+
+
+def _verify_sip_call_behavior_response(endpoint: dict, requested: dict) -> str:
+    """Reject successful responses from an older VPS that ignored new fields."""
+    if not isinstance(endpoint, dict):
+        return "VPS returned an invalid SIP device after saving"
+
+    checks = (
+        ("pre_ring_announcement_text", "PreRingAnnouncementText"),
+        ("answer_announcement_text", "AnswerAnnouncementText"),
+    )
+    for snake_key, legacy_key in checks:
+        if snake_key not in requested:
+            continue
+        if snake_key not in endpoint and legacy_key not in endpoint:
+            return (
+                "The VPS SIP call-behavior API is outdated and ignored the new prompt settings. "
+                "Deploy the VPS server that matches addon version 4.7.1, then save again."
+            )
+        actual = endpoint.get(snake_key, endpoint.get(legacy_key, ""))
+        if _normalized_prompt_text(actual) != _normalized_prompt_text(requested.get(snake_key, "")):
+            return f"VPS did not persist {snake_key.replace('_', ' ')}; no settings were reported as saved"
+
+    if "call_duration_rules" in requested:
+        if "call_duration_rules" not in endpoint and "CallDurationRules" not in endpoint:
+            return (
+                "The VPS SIP call-behavior API is outdated and ignored route call limits. "
+                "Deploy the VPS server that matches addon version 4.7.1, then save again."
+            )
+        actual_rules = _normalize_call_duration_rules(
+            endpoint.get("call_duration_rules", endpoint.get("CallDurationRules", {}))
+        )
+        expected_rules = _normalize_call_duration_rules(requested.get("call_duration_rules", {}))
+        if actual_rules != expected_rules:
+            return "VPS did not persist the route-specific connected call limits; no settings were reported as saved"
+
+    return ""
 
 
 def _is_gateway_trunk(trunk: str) -> bool:
@@ -1031,8 +1073,15 @@ class LocalAPI:
                 async with session.put(url, json=payload, headers=headers, ssl=False) as resp:
                     if resp.status == 200:
                         endpoint = await resp.json()
+                        verification_error = _verify_sip_call_behavior_response(endpoint, payload)
+                        if verification_error:
+                            logger.error("VPS SIP update verification failed: %s", verification_error)
+                            return web.json_response(
+                                {"error": verification_error, "save_verified": False},
+                                status=409,
+                            )
                         logger.info("SIP endpoint updated: %s", endpoint_id)
-                        return web.json_response(endpoint)
+                        return web.json_response({**endpoint, "save_verified": True})
 
                     error_text = await resp.text()
                     try:
