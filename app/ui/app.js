@@ -12,6 +12,8 @@ const state = {
   nodes: [],
   sip: [],
   routing: null,
+  advancedRoutes: [],
+  advancedDraft: null,
   dirty: false,
   loaded: false,
   selectedDoorTriggerId: "",
@@ -621,7 +623,171 @@ function renderRouting() {
         ${settings.call_targets.map(targetRow).join("") || `<div class="empty">No route targets yet.</div>`}
       </div>
     </div>
+    ${renderAdvancedRoutes()}
   `;
+}
+
+function newAdvancedRoute() {
+  const gateway = gatewayEndpoints()[0]?.extension || "";
+  const sip = state.sip.map(normalizeSipEndpoint).filter(Boolean).find((ep) => !isGatewaySip(ep));
+  return {
+    id: "",
+    name: "",
+    ingress_kind: gateway ? "gateway" : "sip",
+    ingress_value: gateway || sip?.extension || "",
+    enabled: true,
+    stages: [{
+      id: `stage_${randomHex(4)}`,
+      name: "First response",
+      ring_seconds: 20,
+      answer_mode: "first_answer",
+      max_answered: 1,
+      targets: [],
+    }],
+  };
+}
+
+function renderAdvancedRoutes() {
+  const routes = state.advancedRoutes || [];
+  const draft = state.advancedDraft;
+  return `
+    <section class="advanced-routing" aria-labelledby="advanced-routing-title">
+      <div class="advanced-heading">
+        <div>
+          <div class="kicker">Per-line orchestration</div>
+          <h2 id="advanced-routing-title">Multi-level call routes</h2>
+          <p>Match one gateway or SIP source, ring targets in parallel, then move to the next stage only when nobody answers.</p>
+        </div>
+        <button class="btn" data-action="advanced-new">+ New plan</button>
+      </div>
+      <div class="route-plan-list">
+        ${routes.map(advancedRouteSummary).join("") || `<div class="empty compact-empty">No advanced plans. Existing gateway and SIP routing remains unchanged.</div>`}
+      </div>
+      ${draft ? advancedRouteEditor(draft) : ""}
+    </section>`;
+}
+
+function advancedRouteSummary(route) {
+  const stages = Array.isArray(route.stages) ? route.stages : [];
+  const path = stages.map((stage, index) => {
+    const targets = (stage.targets || []).filter((target) => target.enabled !== false);
+    return `<span class="route-stage-pill"><b>${index + 1}</b>${esc(stage.name || `Stage ${index + 1}`)} · ${targets.length} target${targets.length === 1 ? "" : "s"} · ${esc(stage.ring_seconds || 0)}s</span>`;
+  }).join(`<span class="route-arrow">→</span>`);
+  return `<article class="route-plan-summary ${route.enabled ? "" : "disabled"}">
+    <div class="route-plan-main">
+      <div class="route-plan-title"><span class="pill ${route.enabled ? "ok" : "warn"}">${route.enabled ? "live" : "draft"}</span>${esc(route.name)}</div>
+      <div class="route-plan-ingress">${esc(route.ingress_kind)} <b>${esc(route.ingress_value)}</b></div>
+      <div class="route-stage-path">${path || "No stages"}</div>
+    </div>
+    <div class="row-actions">
+      <button class="btn small secondary" data-action="advanced-edit" data-id="${esc(route.id)}">Edit</button>
+      <button class="btn small red" data-action="advanced-delete" data-id="${esc(route.id)}">Delete</button>
+    </div>
+  </article>`;
+}
+
+function advancedRouteEditor(route) {
+  const stages = Array.isArray(route.stages) ? route.stages : [];
+  const privateHub = stages.some((stage) => stage.answer_mode === "private_hub");
+  return `<form class="advanced-editor" id="advanced-route-form">
+    <div class="advanced-editor-head">
+      <div>
+        <div class="kicker">${route.id ? "Edit route plan" : "New route plan"}</div>
+        <h3>${esc(route.name || "Untitled route")}</h3>
+      </div>
+      <button type="button" class="icon-btn" data-action="advanced-close" aria-label="Close editor">×</button>
+    </div>
+    <div class="advanced-route-basics">
+      <div class="field wide"><label>Plan name</label><input data-advanced-route-key="name" value="${esc(route.name)}" placeholder="Main line escalation"></div>
+      <div class="field"><label>Incoming source type</label><select data-advanced-route-key="ingress_kind">
+        ${option("gateway", "Gateway / FXO / GSM", route.ingress_kind)}
+        ${option("sip", "SIP phone", route.ingress_kind)}
+      </select></div>
+      <div class="field"><label>Incoming source</label>${advancedIngressField(route)}</div>
+      <label class="toggle-line"><input type="checkbox" data-advanced-route-key="enabled" ${route.enabled ? "checked" : ""}> Enable this exact source route</label>
+    </div>
+    <div class="advanced-route-note">Only calls matching <b>${esc(route.ingress_kind)}</b> <b>${esc(route.ingress_value || "not selected")}</b> use this plan. Other calls keep their current routing.</div>
+    <div class="stage-stack">
+      ${stages.map(advancedStageEditor).join("")}
+    </div>
+    <div class="advanced-editor-actions">
+      <button type="button" class="btn secondary" data-action="advanced-add-stage">+ Add next stage</button>
+      <span class="capability-note ${privateHub ? "warn" : ""}">${privateHub ? "Private hub is saved disabled until isolated-media support is assigned; this prevents spoke audio leakage." : "Stages run in order. Targets inside a stage ring at the same time."}</span>
+      <button type="button" class="btn" data-action="advanced-save">${route.id ? "Save plan" : "Create plan"}</button>
+    </div>
+  </form>`;
+}
+
+function advancedIngressField(route) {
+  const endpoints = route.ingress_kind === "gateway"
+    ? gatewayEndpoints()
+    : state.sip.map(normalizeSipEndpoint).filter((ep) => ep && !isGatewaySip(ep));
+  const hasCurrent = endpoints.some((ep) => String(ep.extension) === String(route.ingress_value));
+  return `<select data-advanced-route-key="ingress_value">
+    ${!hasCurrent && route.ingress_value ? option(route.ingress_value, `${route.ingress_value} · current`, route.ingress_value) : ""}
+    ${endpoints.map((ep) => option(ep.extension, `${ep.extension} · ${ep.description || ep.username || route.ingress_kind}`, route.ingress_value)).join("")}
+  </select>`;
+}
+
+function advancedStageEditor(stage, stageIndex) {
+  const targets = Array.isArray(stage.targets) ? stage.targets : [];
+  const conference = stage.answer_mode === "conference";
+  const privateHub = stage.answer_mode === "private_hub";
+  return `<article class="advanced-stage ${privateHub ? "unsupported" : ""}">
+    <div class="stage-number">${String(stageIndex + 1).padStart(2, "0")}</div>
+    <div class="stage-body">
+      <div class="stage-controls">
+        <div class="field wide"><label>Stage name</label><input data-advanced-stage-index="${stageIndex}" data-advanced-stage-key="name" value="${esc(stage.name)}"></div>
+        <div class="field small"><label>Ring for</label><div class="input-suffix"><input type="number" min="3" max="300" data-advanced-stage-index="${stageIndex}" data-advanced-stage-key="ring_seconds" value="${esc(stage.ring_seconds)}"><span>s</span></div></div>
+        <div class="field"><label>When answered</label><select data-advanced-stage-index="${stageIndex}" data-advanced-stage-key="answer_mode">
+          ${option("first_answer", "First answer wins", stage.answer_mode)}
+          ${option("conference", "Conference answered SIP phones", stage.answer_mode)}
+          ${option("private_hub", "Private hub / whisper", stage.answer_mode)}
+        </select></div>
+        ${(conference || privateHub) ? `<div class="field small"><label>Participant limit</label><input type="number" min="1" max="10" data-advanced-stage-index="${stageIndex}" data-advanced-stage-key="max_answered" value="${esc(stage.max_answered || 2)}"></div>` : ""}
+        <button type="button" class="icon-btn danger" data-action="advanced-remove-stage" data-stage="${stageIndex}" aria-label="Remove stage">×</button>
+      </div>
+      <div class="stage-policy">${advancedModeHelp(stage.answer_mode)}</div>
+      <div class="advanced-targets">
+        ${targets.map((target, targetIndex) => advancedTargetEditor(target, stageIndex, targetIndex, stage.answer_mode)).join("") || `<div class="empty compact-empty">Add one or more destinations for this stage.</div>`}
+      </div>
+      <button type="button" class="text-button" data-action="advanced-add-target" data-stage="${stageIndex}">+ Add parallel destination</button>
+    </div>
+  </article>`;
+}
+
+function advancedModeHelp(mode) {
+  if (mode === "conference") return "Every answered SIP phone joins the same audio conference, up to the participant limit. HAOS targets are intentionally blocked in this mode.";
+  if (mode === "private_hub") return "Isolation contract: the hub may talk to every spoke, while spokes cannot hear one another. Activation is blocked until the isolated-media capability is available.";
+  return "The first destination to answer owns the call; all other ringing destinations are cancelled immediately.";
+}
+
+function advancedTargetEditor(target, stageIndex, targetIndex, answerMode) {
+  return `<div class="advanced-target ${target.enabled === false ? "disabled" : ""}">
+    <select aria-label="Destination type" data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="kind">
+      ${option("sip", "SIP phone", target.kind)}
+      ${option("haos", "HAOS card / node", target.kind)}
+      ${option("gateway", "Gateway / FXO port", target.kind)}
+      ${option("external", "Outside number", target.kind)}
+    </select>
+    ${advancedTargetValueField(target, stageIndex, targetIndex)}
+    ${target.kind === "external" ? `<select aria-label="Outbound gateway" data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="trunk">${gatewaySelectOptions(target.trunk || "")}</select>` : ""}
+    ${answerMode === "private_hub" ? `<select aria-label="Private hub role" data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="role">${option("spoke", "Spoke (private)", target.role || "spoke")}${option("hub", "Main hub", target.role || "spoke")}</select>` : ""}
+    <input aria-label="Destination label" data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="label" value="${esc(target.label || "")}" placeholder="Label (optional)">
+    <label class="target-enabled"><input type="checkbox" data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="enabled" ${target.enabled !== false ? "checked" : ""}> Active</label>
+    <button type="button" class="icon-btn danger" data-action="advanced-remove-target" data-stage="${stageIndex}" data-target="${targetIndex}" aria-label="Remove destination">×</button>
+  </div>`;
+}
+
+function advancedTargetValueField(target, stageIndex, targetIndex) {
+  const attrs = `data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="value"`;
+  if (target.kind === "external") return `<input ${attrs} value="${esc(target.value)}" placeholder="Outside number">`;
+  let options = [];
+  if (target.kind === "haos") options = state.nodes.map((node) => ({ value: node.id, label: `${node.label || node.id} · HAOS` }));
+  if (target.kind === "gateway") options = gatewayEndpoints().map((ep) => ({ value: ep.extension, label: `${ep.extension} · ${ep.description || "gateway"}` }));
+  if (target.kind === "sip") options = state.sip.map(normalizeSipEndpoint).filter((ep) => ep && !isGatewaySip(ep)).map((ep) => ({ value: ep.extension, label: `${ep.extension} · ${ep.description || ep.username || "SIP"}` }));
+  const hasCurrent = options.some((item) => String(item.value) === String(target.value));
+  return `<select ${attrs}>${!hasCurrent && target.value ? option(target.value, `${target.value} · current`, target.value) : ""}${options.map((item) => option(item.value, item.label, target.value)).join("")}</select>`;
 }
 
 function targetRowReadonly(t) {
@@ -1477,6 +1643,43 @@ function setByPath(path, value) {
 function onInput(event) {
   const el = event.target;
 
+  if (el.matches("[data-advanced-route-key]")) {
+    if (!state.advancedDraft) return;
+    const key = el.dataset.advancedRouteKey;
+    state.advancedDraft[key] = el.type === "checkbox" ? el.checked : el.value;
+    if (key === "ingress_kind") {
+      state.advancedDraft.ingress_value = advancedDefaultIngressValue(el.value);
+      renderRouting();
+    }
+    return;
+  }
+
+  if (el.matches("[data-advanced-stage-index][data-advanced-stage-key]")) {
+    const stage = state.advancedDraft?.stages?.[Number(el.dataset.advancedStageIndex)];
+    if (!stage) return;
+    const key = el.dataset.advancedStageKey;
+    stage[key] = el.type === "number" ? Number(el.value) : el.value;
+    if (key === "answer_mode") {
+      stage.max_answered = el.value === "first_answer" ? 1 : Math.max(2, Number(stage.max_answered) || 2);
+      if (el.value === "private_hub") state.advancedDraft.enabled = false;
+      renderRouting();
+    }
+    return;
+  }
+
+  if (el.matches("[data-advanced-target-stage][data-advanced-target-index][data-advanced-target-key]")) {
+    const target = state.advancedDraft?.stages?.[Number(el.dataset.advancedTargetStage)]?.targets?.[Number(el.dataset.advancedTargetIndex)];
+    if (!target) return;
+    const key = el.dataset.advancedTargetKey;
+    target[key] = el.type === "checkbox" ? el.checked : el.value;
+    if (key === "kind") {
+      target.value = advancedDefaultTargetValue(el.value);
+      target.trunk = el.value === "external" ? defaultGatewayTrunk() : "";
+      renderRouting();
+    }
+    return;
+  }
+
   if (el.id === "sip-phone-provision-enabled") {
     state.phoneProvisioning.enabled = el.checked;
     $("sip-phone-provision-panel")?.classList.toggle("hidden", !el.checked);
@@ -1534,6 +1737,17 @@ function onInput(event) {
   }
 }
 
+function advancedDefaultIngressValue(kind) {
+  if (kind === "gateway") return gatewayEndpoints()[0]?.extension || "";
+  if (kind === "sip") {
+    return state.sip
+      .map(normalizeSipEndpoint)
+      .filter(Boolean)
+      .find((endpoint) => !isGatewaySip(endpoint))?.extension || "";
+  }
+  return "";
+}
+
 async function onClick(event) {
   const btn = event.target.closest("button");
   if (!btn) return;
@@ -1561,6 +1775,15 @@ async function onClick(event) {
     if (action === "add-route") addRoute();
     if (action === "delete-target") deleteTarget(btn.dataset.index);
     if (action === "target-mode") setTargetMode(btn.dataset.id, btn.dataset.mode);
+    if (action === "advanced-new") openNewAdvancedRoute();
+    if (action === "advanced-edit") editAdvancedRoute(btn.dataset.id);
+    if (action === "advanced-close") closeAdvancedRoute();
+    if (action === "advanced-add-stage") addAdvancedStage();
+    if (action === "advanced-remove-stage") removeAdvancedStage(btn.dataset.stage);
+    if (action === "advanced-add-target") addAdvancedTarget(btn.dataset.stage);
+    if (action === "advanced-remove-target") removeAdvancedTarget(btn.dataset.stage, btn.dataset.target);
+    if (action === "advanced-save") await saveAdvancedRoute();
+    if (action === "advanced-delete") await deleteAdvancedRoute(btn.dataset.id);
     if (action === "discover-phone") await discoverPhone();
     if (action === "create-sip") await createSip();
     if (action === "save-sip") await saveSip(btn.dataset.id);
@@ -1585,6 +1808,132 @@ async function onClick(event) {
 /* =========================================================
    Actions
    ========================================================= */
+
+function openNewAdvancedRoute() {
+  state.advancedDraft = newAdvancedRoute();
+  renderRouting();
+  requestAnimationFrame(() => $("advanced-route-form")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+}
+
+function editAdvancedRoute(id) {
+  const route = state.advancedRoutes.find((item) => String(item.id) === String(id));
+  if (!route) return;
+  state.advancedDraft = structuredClone(route);
+  renderRouting();
+  requestAnimationFrame(() => $("advanced-route-form")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+}
+
+function closeAdvancedRoute() {
+  state.advancedDraft = null;
+  renderRouting();
+}
+
+function addAdvancedStage() {
+  if (!state.advancedDraft) return;
+  if (state.advancedDraft.stages.length >= 10) {
+    toast("A route can contain at most 10 stages.");
+    return;
+  }
+  state.advancedDraft.stages.push({
+    id: `stage_${randomHex(4)}`,
+    name: `Stage ${state.advancedDraft.stages.length + 1}`,
+    ring_seconds: 20,
+    answer_mode: "first_answer",
+    max_answered: 1,
+    targets: [],
+  });
+  renderRouting();
+}
+
+function removeAdvancedStage(index) {
+  if (!state.advancedDraft) return;
+  if (state.advancedDraft.stages.length <= 1) {
+    toast("A route needs at least one stage.");
+    return;
+  }
+  state.advancedDraft.stages.splice(Number(index), 1);
+  renderRouting();
+}
+
+function advancedDefaultTargetValue(kind) {
+  if (kind === "haos") return state.nodes[0]?.id || "";
+  if (kind === "gateway") return gatewayEndpoints()[0]?.extension || "";
+  if (kind === "sip") return state.sip.map(normalizeSipEndpoint).filter((ep) => ep && !isGatewaySip(ep))[0]?.extension || "";
+  return "";
+}
+
+function addAdvancedTarget(stageIndex) {
+  const stage = state.advancedDraft?.stages?.[Number(stageIndex)];
+  if (!stage) return;
+  if (stage.targets.length >= 20) {
+    toast("A stage can contain at most 20 destinations.");
+    return;
+  }
+  const kind = advancedDefaultTargetValue("sip") ? "sip" : advancedDefaultTargetValue("haos") ? "haos" : "gateway";
+  const hubExists = stage.targets.some((target) => target.role === "hub");
+  stage.targets.push({
+    id: `target_${randomHex(4)}`,
+    kind,
+    value: advancedDefaultTargetValue(kind),
+    trunk: "",
+    label: "",
+    role: stage.answer_mode === "private_hub" && !hubExists ? "hub" : "spoke",
+    enabled: true,
+  });
+  renderRouting();
+}
+
+function removeAdvancedTarget(stageIndex, targetIndex) {
+  const stage = state.advancedDraft?.stages?.[Number(stageIndex)];
+  if (!stage) return;
+  stage.targets.splice(Number(targetIndex), 1);
+  renderRouting();
+}
+
+function normalizeAdvancedRouteForSave(route) {
+  const payload = structuredClone(route);
+  payload.name = String(payload.name || "").trim();
+  payload.ingress_value = String(payload.ingress_value || "").trim();
+  payload.stages = (payload.stages || []).map((stage, stageIndex) => ({
+    ...stage,
+    id: stage.id || `stage_${stageIndex + 1}`,
+    name: String(stage.name || `Stage ${stageIndex + 1}`).trim(),
+    ring_seconds: Number(stage.ring_seconds) || 20,
+    max_answered: stage.answer_mode === "first_answer" ? 1 : Number(stage.max_answered) || 2,
+    targets: (stage.targets || []).map((target, targetIndex) => ({
+      ...target,
+      id: target.id || `target_${stageIndex + 1}_${targetIndex + 1}`,
+      value: String(target.value || "").trim(),
+      trunk: String(target.trunk || "").trim(),
+      label: String(target.label || "").trim(),
+      enabled: target.enabled !== false,
+    })),
+  }));
+  return payload;
+}
+
+async function saveAdvancedRoute() {
+  if (!state.advancedDraft) return;
+  const payload = normalizeAdvancedRouteForSave(state.advancedDraft);
+  const path = payload.id ? `api/advanced-routes/${encodeURIComponent(payload.id)}` : "api/advanced-routes";
+  const saved = await api(path, { method: payload.id ? "PUT" : "POST", body: JSON.stringify(payload) });
+  const index = state.advancedRoutes.findIndex((item) => item.id === saved.id);
+  if (index >= 0) state.advancedRoutes[index] = saved;
+  else state.advancedRoutes.push(saved);
+  state.advancedDraft = structuredClone(saved);
+  toast(payload.id ? "Route plan updated." : "Route plan created.");
+  renderRouting();
+}
+
+async function deleteAdvancedRoute(id) {
+  const route = state.advancedRoutes.find((item) => item.id === id);
+  if (!route || !window.confirm(`Delete route plan “${route.name}”? Existing legacy routes are not affected.`)) return;
+  await api(`api/advanced-routes/${encodeURIComponent(id)}`, { method: "DELETE" });
+  state.advancedRoutes = state.advancedRoutes.filter((item) => item.id !== id);
+  if (state.advancedDraft?.id === id) state.advancedDraft = null;
+  toast("Route plan deleted.");
+  renderRouting();
+}
 
 function addRoute() {
   const kind = $("quick-kind").value;
@@ -2031,12 +2380,13 @@ async function saveSettings() {
 
 async function refresh() {
   setSaveState("Refreshing…");
-  const [status, settings, nodes, sip, routing] = await Promise.all([
+  const [status, settings, nodes, sip, routing, advancedRoutes] = await Promise.all([
     api("api/status").catch(() => null),
     api("api/settings").catch(() => null),
     api("api/nodes").catch(() => ({ nodes: [] })),
     api("api/sip-endpoints").catch(() => []),
     api("api/routing").catch(() => null),
+    api("api/advanced-routes").catch(() => []),
   ]);
   state.status = status;
   state.settings = settings ? deepMerge(defaults, settings) : getSettings();
@@ -2044,6 +2394,11 @@ async function refresh() {
   const sipItems = Array.isArray(sip) ? sip : Array.isArray(sip?.endpoints) ? sip.endpoints : [];
   state.sip = sipItems.map(normalizeSipEndpoint).filter(Boolean);
   state.routing = routing;
+  state.advancedRoutes = Array.isArray(advancedRoutes) ? advancedRoutes : [];
+  if (state.advancedDraft?.id) {
+    const freshDraft = state.advancedRoutes.find((route) => route.id === state.advancedDraft.id);
+    state.advancedDraft = freshDraft ? structuredClone(freshDraft) : null;
+  }
   state.loaded = true;
   if (!state.dirty) setSaveState("Everything saved", "ok");
   render();

@@ -226,6 +226,10 @@ class LocalAPI:
         self.app.router.add_post("/api/sip-endpoints", self.handle_create_sip_endpoint)
         self.app.router.add_put("/api/sip-endpoints/{id}", self.handle_update_sip_endpoint)
         self.app.router.add_delete("/api/sip-endpoints/{id}", self.handle_delete_sip_endpoint)
+        self.app.router.add_get("/api/advanced-routes", self.handle_list_advanced_routes)
+        self.app.router.add_post("/api/advanced-routes", self.handle_create_advanced_route)
+        self.app.router.add_put("/api/advanced-routes/{id}", self.handle_update_advanced_route)
+        self.app.router.add_delete("/api/advanced-routes/{id}", self.handle_delete_advanced_route)
 
     async def start(self):
         """Start the local API server, falling back to alternate ports if needed."""
@@ -854,6 +858,84 @@ class LocalAPI:
         except Exception as e:
             logger.error(f"SIP endpoint list error: {e}")
             return web.json_response({"error": str(e)}, status=500)
+
+    async def _proxy_advanced_routes(
+        self,
+        method: str,
+        route_id: str = "",
+        payload: dict | None = None,
+    ) -> web.Response:
+        """Proxy account-scoped route plans without exposing the admin token."""
+        if not self.cfg.account_id or not self.cfg.admin_token or not self.cfg.server_url:
+            return web.json_response(
+                {"error": "Not yet provisioned — no account created on VPS"},
+                status=400,
+            )
+
+        http_url = self._ws_to_http_url(self.cfg.server_url)
+        if method in {"GET", "POST"} and not route_id:
+            url = f"{http_url}/admin/accounts/{self.cfg.account_id}/advanced-routes"
+        else:
+            url = (
+                f"{http_url}/admin/accounts/{self.cfg.account_id}"
+                f"/advanced-routes/{route_id}"
+            )
+        headers = {"Authorization": f"Bearer {self.cfg.admin_token}"}
+
+        try:
+            import aiohttp
+            timeout = aiohttp.ClientTimeout(total=20)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.request(
+                    method,
+                    url,
+                    headers=headers,
+                    json=payload if method in {"POST", "PUT"} else None,
+                    ssl=False,
+                ) as resp:
+                    body = await resp.text()
+                    try:
+                        data = json.loads(body) if body else {"ok": resp.status < 300}
+                    except Exception:
+                        data = {"error": body or f"VPS returned {resp.status}"}
+                    if resp.status >= 400:
+                        logger.error(
+                            "VPS advanced route %s failed: %s %s",
+                            method,
+                            resp.status,
+                            body,
+                        )
+                    return web.json_response(data, status=resp.status)
+        except Exception as exc:
+            logger.error("Advanced route proxy error: %s", exc)
+            return web.json_response({"error": str(exc)}, status=502)
+
+    async def handle_list_advanced_routes(self, request: web.Request) -> web.Response:
+        return await self._proxy_advanced_routes("GET")
+
+    async def handle_create_advanced_route(self, request: web.Request) -> web.Response:
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON"}, status=400)
+        return await self._proxy_advanced_routes("POST", payload=payload)
+
+    async def handle_update_advanced_route(self, request: web.Request) -> web.Response:
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON"}, status=400)
+        return await self._proxy_advanced_routes(
+            "PUT",
+            route_id=request.match_info["id"],
+            payload=payload,
+        )
+
+    async def handle_delete_advanced_route(self, request: web.Request) -> web.Response:
+        return await self._proxy_advanced_routes(
+            "DELETE",
+            route_id=request.match_info["id"],
+        )
 
     async def handle_list_nodes(self, request: web.Request) -> web.Response:
         """List VPS nodes in this site/account so settings can use real route targets."""
