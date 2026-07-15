@@ -191,17 +191,6 @@ class SimsonAddon:
 
         notification_tag = f"simson-call-{call_id or event}"
 
-        # Remove the existing ringing/active alert when the call is over rather
-        # than adding another stale notification to the user's tray.
-        if event in ("ended", "declined"):
-            for service_ref in notify_services:
-                await self.ha.send_notify_message(
-                    service_ref,
-                    "clear_notification",
-                    data={"tag": notification_tag, "group": "simson-calls"},
-                )
-            return
-
         def call_action_id(action: str, notify_ref: str = "") -> str:
             # Native Companion actions fire mobile_app_notification_action in
             # Home Assistant even while the app is in the background. Unlike a
@@ -246,6 +235,13 @@ class SimsonAddon:
             data["sticky"] = "true"
             data["persistent"] = True
         if event == "active":
+            data["alert_once"] = True
+        if event in ("ended", "declined", "failed", "missed", "timeout"):
+            # Update the same tagged alert instead of instantly clearing it.
+            # This keeps a short or remotely-ended call visible in notification
+            # history without creating a second notification for the call.
+            data["sticky"] = "false"
+            data["persistent"] = False
             data["alert_once"] = True
         data["push"] = {
             "sound": (
@@ -293,9 +289,16 @@ class SimsonAddon:
                         "authenticationRequired": True,
                     },
                 ]
-            await self.ha.send_notify_message(
+            delivered = await self.ha.send_notify_message(
                 service_ref, message, title=title, data=service_data
             )
+            if not delivered:
+                logging.getLogger("simson.notifications").warning(
+                    "Call notification %s for %s was not accepted by %s",
+                    event,
+                    call_id or "unknown call",
+                    service_ref,
+                )
 
     def track_outgoing_call_request(self, request_id: str, call_id: str):
         """Register a pending outgoing call.request envelope."""

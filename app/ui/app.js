@@ -13,6 +13,7 @@ const state = {
   sip: [],
   routing: null,
   advancedRoutes: [],
+  advancedRoutesError: "",
   advancedDraft: null,
   dirty: false,
   loaded: false,
@@ -661,6 +662,7 @@ function renderAdvancedRoutes() {
         <button class="btn" data-action="advanced-new">+ New plan</button>
       </div>
       <div class="route-plan-list">
+        ${state.advancedRoutesError ? `<div class="inline-notice error"><div><b>Advanced routing could not be loaded</b><span>${esc(state.advancedRoutesError)}</span></div><button class="btn small secondary" data-action="refresh">Retry</button></div>` : ""}
         ${routes.map(advancedRouteSummary).join("") || `<div class="empty compact-empty">No advanced plans. Existing gateway and SIP routing remains unchanged.</div>`}
       </div>
       ${draft ? advancedRouteEditor(draft) : ""}
@@ -913,6 +915,10 @@ function invalidatePhoneProvisioningTest() {
 
 function renderSip() {
   $("content").innerHTML = `
+    <div class="inline-notice info" style="margin-bottom:16px">
+      <div><b>Need multi-level or parallel ringing?</b><span>Advanced plans are configured under Routing. Choose a gateway or SIP phone as the exact incoming source, then add ordered stages and parallel SIP/HAOS destinations.</span></div>
+      <button class="btn small secondary" data-page="routing">Open Routing</button>
+    </div>
     <div class="grid cols-2 dense-grid">
       <div class="card glow">
         <div class="card-title">Create SIP phone</div>
@@ -2380,13 +2386,15 @@ async function saveSettings() {
 
 async function refresh() {
   setSaveState("Refreshing…");
-  const [status, settings, nodes, sip, routing, advancedRoutes] = await Promise.all([
+  const [status, settings, nodes, sip, routing, advancedRouteResult] = await Promise.all([
     api("api/status").catch(() => null),
     api("api/settings").catch(() => null),
     api("api/nodes").catch(() => ({ nodes: [] })),
     api("api/sip-endpoints").catch(() => []),
     api("api/routing").catch(() => null),
-    api("api/advanced-routes").catch(() => []),
+    api("api/advanced-routes")
+      .then((data) => ({ data, error: "" }))
+      .catch((error) => ({ data: [], error: error?.message || "Request failed" })),
   ]);
   state.status = status;
   state.settings = settings ? deepMerge(defaults, settings) : getSettings();
@@ -2394,7 +2402,8 @@ async function refresh() {
   const sipItems = Array.isArray(sip) ? sip : Array.isArray(sip?.endpoints) ? sip.endpoints : [];
   state.sip = sipItems.map(normalizeSipEndpoint).filter(Boolean);
   state.routing = routing;
-  state.advancedRoutes = Array.isArray(advancedRoutes) ? advancedRoutes : [];
+  state.advancedRoutes = Array.isArray(advancedRouteResult.data) ? advancedRouteResult.data : [];
+  state.advancedRoutesError = advancedRouteResult.error || "";
   if (state.advancedDraft?.id) {
     const freshDraft = state.advancedRoutes.find((route) => route.id === state.advancedDraft.id);
     state.advancedDraft = freshDraft ? structuredClone(freshDraft) : null;
