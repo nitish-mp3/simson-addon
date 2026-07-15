@@ -19,7 +19,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.8.0"
+ADDON_VERSION = "4.8.3"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -3250,6 +3250,38 @@ def _call_to_dict(call) -> dict:
     if call.state.value in ("requesting", "ringing", "incoming", "active"):
         base = call.answered_at or call.started_at or now
         active_for = max(0, int(now - base))
+    metadata = call.metadata or {}
+
+    def first(*values):
+        for value in values:
+            if value is not None and str(value).strip():
+                return str(value).strip()
+        return ""
+
+    remote_node = first(call.remote_node_id)
+    remote_extension = remote_node.split(":", 1)[1] if ":" in remote_node else remote_node
+    source_extension = first(
+        metadata.get("source_extension"),
+        metadata.get("sip_extension") if call.direction == "incoming" else "",
+        remote_extension if call.direction == "incoming" and remote_node.startswith(("sip:", "asterisk:")) else "",
+    )
+    target_extension = first(
+        metadata.get("target_extension"), metadata.get("extension"),
+        remote_extension if call.direction == "outgoing" and remote_node.startswith(("sip:", "asterisk:")) else "",
+    )
+    caller_number = first(metadata.get("caller_number"), metadata.get("sip_caller_id"), metadata.get("caller_id"), source_extension)
+    callee_number = first(metadata.get("callee_number"), metadata.get("phone_number"), target_extension, metadata.get("target_id"))
+    remote_number = caller_number if call.direction == "incoming" else callee_number
+    remote_number = remote_number or call.remote_label or remote_extension
+    remote_name = first(
+        metadata.get("caller_name") if call.direction == "incoming" else metadata.get("callee_name"),
+        metadata.get("sip_caller_name") if call.direction == "incoming" else metadata.get("target_label"),
+        call.remote_label, remote_number,
+    )
+    end_clock = call.ended_at or now
+    duration_seconds = max(0, int(end_clock - call.answered_at)) if call.answered_at else 0
+    ring_end = call.answered_at or call.ended_at or now
+    ring_duration_seconds = max(0, int(ring_end - call.started_at)) if call.started_at else 0
     d = {
         "call_id": call.call_id,
         "remote_node_id": call.remote_node_id,
@@ -3264,12 +3296,19 @@ def _call_to_dict(call) -> dict:
         "end_reason": call.end_reason,
         "fallback_attempt": call.fallback_attempt,
         "sip_bridge_id": call.metadata.get("sip_bridge_id", ""),
-        "remote_number": call.metadata.get("remote_number", call.metadata.get("phone_number", "")),
-        "source_extension": call.metadata.get("source_extension", ""),
-        "target_extension": call.metadata.get("target_extension", call.metadata.get("extension", "")),
+        "remote_number": remote_number,
+        "remote_name": remote_name,
+        "display_name": remote_name or remote_number,
+        "caller_number": caller_number,
+        "caller_name": first(metadata.get("caller_name"), metadata.get("sip_caller_name"), caller_number),
+        "callee_number": callee_number,
+        "callee_name": first(metadata.get("callee_name"), metadata.get("target_label"), callee_number),
+        "source_extension": source_extension,
+        "target_extension": target_extension,
         "extension": call.metadata.get("extension", ""),
         "context": call.metadata.get("context", ""),
         "trunk": call.metadata.get("trunk", ""),
+        "gateway_extension": first(call.metadata.get("gateway_extension"), call.metadata.get("trunk")),
         "target_id": call.metadata.get("target_id", ""),
         "target_type": call.metadata.get("target_type", ""),
         "target_label": call.metadata.get("target_label", ""),
@@ -3282,6 +3321,8 @@ def _call_to_dict(call) -> dict:
         "answered_by_user_name": call.metadata.get("answered_by_user_name", ""),
         "forwarded_to": call.metadata.get("forwarded_to", ""),
         "forwarded_extension": call.metadata.get("forwarded_extension", ""),
+        "duration_seconds": duration_seconds,
+        "ring_duration_seconds": ring_duration_seconds,
     }
     if call.routing:
         d["routing"] = {

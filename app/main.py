@@ -78,11 +78,61 @@ class SimsonAddon:
         # Deduplicate repeated incoming invites from the same SIP source.
         self._recent_invite_sources: dict[str, float] = {}
         self._mobile_notify_last: dict[str, float] = {}
+        # Only incoming calls assigned to this HAOS node own a mobile call
+        # notification. Outgoing/SIP lifecycle events must never overwrite an
+        # incoming alert with a misleading "hung up" message.
+        self._mobile_incoming_calls: dict[str, dict] = {}
 
     def _call_event_payload(self, call: CallInfo, event: str, reason: str = "", **extra) -> dict:
         """Build a normalized HA automation event for every call lifecycle change."""
         metadata = call.metadata or {}
         routing_meta = metadata.get("routing") if isinstance(metadata.get("routing"), dict) else {}
+        now = time.time()
+
+        def first(*values):
+            for value in values:
+                if value is not None and str(value).strip():
+                    return str(value).strip()
+            return ""
+
+        remote_node = first(call.remote_node_id)
+        remote_extension = remote_node.split(":", 1)[1] if ":" in remote_node else remote_node
+        source_extension = first(
+            metadata.get("source_extension"),
+            metadata.get("sip_extension") if call.direction == "incoming" else "",
+            remote_extension if call.direction == "incoming" and remote_node.startswith(("sip:", "asterisk:")) else "",
+        )
+        target_extension = first(
+            metadata.get("target_extension"), metadata.get("extension"),
+            remote_extension if call.direction == "outgoing" and remote_node.startswith(("sip:", "asterisk:")) else "",
+        )
+        caller_number = first(
+            metadata.get("caller_number"), metadata.get("sip_caller_id"),
+            metadata.get("caller_id"), source_extension,
+            remote_extension if call.direction == "incoming" else self.cfg.node_id,
+        )
+        callee_number = first(
+            metadata.get("callee_number"), metadata.get("phone_number"),
+            target_extension, metadata.get("target_id"),
+            remote_extension if call.direction == "outgoing" else self.cfg.node_id,
+        )
+        caller_name = first(
+            metadata.get("caller_name"), metadata.get("sip_caller_name"),
+            call.remote_label if call.direction == "incoming" else self.cfg.node_label,
+            caller_number,
+        )
+        callee_name = first(
+            metadata.get("callee_name"), metadata.get("target_user_name"),
+            metadata.get("target_label"),
+            call.remote_label if call.direction == "outgoing" else self.cfg.node_label,
+            callee_number,
+        )
+        remote_number = caller_number if call.direction == "incoming" else callee_number
+        remote_name = caller_name if call.direction == "incoming" else callee_name
+        end_clock = call.ended_at or now
+        duration_seconds = max(0, int(end_clock - call.answered_at)) if call.answered_at else 0
+        ring_end = call.answered_at or call.ended_at or now
+        ring_duration_seconds = max(0, int(ring_end - call.started_at)) if call.started_at else 0
         payload = {
             "event": event,
             "call_id": call.call_id,
@@ -106,12 +156,21 @@ class SimsonAddon:
             "sip_extension": metadata.get("sip_extension", metadata.get("extension", "")),
             "sip_channel": metadata.get("sip_channel", ""),
             "sip_caller_id": metadata.get("sip_caller_id", ""),
-            "source_extension": metadata.get("source_extension", ""),
-            "target_extension": metadata.get("target_extension", ""),
-            "remote_number": metadata.get("sip_caller_id", "") or call.remote_label or call.remote_node_id,
+            "source_extension": source_extension,
+            "target_extension": target_extension,
+            "gateway_extension": first(metadata.get("gateway_extension"), metadata.get("trunk")),
+            "caller_number": caller_number,
+            "caller_name": caller_name,
+            "callee_number": callee_number,
+            "callee_name": callee_name,
+            "remote_number": remote_number,
+            "remote_name": remote_name,
+            "display_name": remote_name or remote_number,
             "started_at": call.started_at,
             "answered_at": call.answered_at,
             "ended_at": call.ended_at,
+            "duration_seconds": duration_seconds,
+            "ring_duration_seconds": ring_duration_seconds,
         }
         payload.update({k: v for k, v in extra.items() if v is not None})
         return payload
@@ -124,7 +183,7 @@ class SimsonAddon:
         return payload
 
     async def _notify_call_event(self, payload: dict) -> None:
-        """Send configured HA mobile notifications for every meaningful call event."""
+        """Send one coherent mobile lifecycle for calls ringing this HAOS node."""
         settings = load_settings()
         automation = settings.get("automation") or {}
         notify_services = [
@@ -137,11 +196,22 @@ class SimsonAddon:
 
         event = str(payload.get("event") or payload.get("status") or "").strip()
         call_id = str(payload.get("call_id") or "").strip()
-        if event not in {
-            "incoming", "outgoing", "active", "ended", "failed",
-            "missed", "declined", "timeout", "forwarded",
-        }:
+        if event not in {"incoming", "active", "ended", "failed", "missed", "declined", "timeout", "forwarded"}:
             return
+
+        direction = str(payload.get("direction") or "").strip()
+        if event == "incoming":
+            self._mobile_incoming_calls[call_id] = {
+                "answered": False,
+                "remote": payload.get("remote_number") or payload.get("remote_name") or "Caller",
+            }
+        tracked = self._mobile_incoming_calls.get(call_id)
+        if not tracked:
+            # Outgoing calls and unrelated SIP legs are represented by HA
+            # entities/history, not by a phone-ringing notification.
+            return
+        if event == "active":
+            tracked["answered"] = True
 
         dedupe_key = f"{call_id}:{event}"
         now = time.time()
@@ -154,18 +224,25 @@ class SimsonAddon:
 
         remote = (
             payload.get("remote_number")
+            or payload.get("remote_name")
             or payload.get("remote_label")
             or payload.get("remote_node_id")
             or "Unknown caller"
         )
-        direction = str(payload.get("direction") or "").strip()
         call_type = str(payload.get("call_type") or "call").strip()
         dashboard_path = str(automation.get("dashboard_path", "/lovelace/default_view") or "/lovelace/default_view").strip()
         if not dashboard_path.startswith("/"):
             dashboard_path = "/" + dashboard_path
+        if event in ("missed", "timeout") or (
+            event in ("ended", "failed") and not tracked.get("answered")
+        ):
+            # Convert an unanswered terminal event before deriving clear/update
+            # behavior. Otherwise an `ended` event could clear the alert even
+            # though it should remain visible as a missed call.
+            event = "missed"
+
         title_map = {
             "incoming": "Simson Incoming Call",
-            "outgoing": "Simson Outgoing Call",
             "active": "Simson Call Active",
             "ended": "Simson Call Ended",
             "failed": "Simson Call Failed",
@@ -177,14 +254,15 @@ class SimsonAddon:
         title = title_map.get(event, "Simson Call")
         if event == "incoming":
             message = f"{remote} is calling this site ({call_type})."
-        elif event == "outgoing":
-            message = f"Calling {remote} from this site."
         elif event == "active":
             message = f"Call with {remote} is active."
         elif event == "forwarded":
             message = f"Call from {remote} forwarded to {payload.get('forwarded_to') or payload.get('forwarded_extension') or 'fallback target'}."
         elif event == "failed":
             message = f"Call with {remote} failed: {payload.get('reason') or 'unknown reason'}."
+        elif event == "missed":
+            title = "Simson Missed Call"
+            message = f"Missed call from {remote}."
         else:
             suffix = f": {payload.get('reason')}" if payload.get("reason") else ""
             message = f"{direction or 'Call'} with {remote} is {event}{suffix}."
@@ -204,6 +282,8 @@ class SimsonAddon:
                 value += f"::{quote(notify_ref, safe='')}"
             return value
 
+        terminal = event in ("ended", "declined", "failed", "forwarded")
+        clear_terminal = terminal and event != "missed"
         data = {
             "tag": notification_tag,
             "group": "simson-calls",
@@ -236,7 +316,7 @@ class SimsonAddon:
             data["persistent"] = True
         if event == "active":
             data["alert_once"] = True
-        if event in ("ended", "declined", "failed", "missed", "timeout"):
+        if event in ("ended", "declined", "failed", "missed", "timeout", "forwarded"):
             # Update the same tagged alert instead of instantly clearing it.
             # This keeps a short or remotely-ended call visible in notification
             # history without creating a second notification for the call.
@@ -290,7 +370,10 @@ class SimsonAddon:
                     },
                 ]
             delivered = await self.ha.send_notify_message(
-                service_ref, message, title=title, data=service_data
+                service_ref,
+                "clear_notification" if clear_terminal else message,
+                title="" if clear_terminal else title,
+                data={"tag": notification_tag} if clear_terminal else service_data,
             )
             if not delivered:
                 logging.getLogger("simson.notifications").warning(
@@ -299,6 +382,8 @@ class SimsonAddon:
                     call_id or "unknown call",
                     service_ref,
                 )
+        if terminal or event == "missed":
+            self._mobile_incoming_calls.pop(call_id, None)
 
     def track_outgoing_call_request(self, request_id: str, call_id: str):
         """Register a pending outgoing call.request envelope."""
@@ -1003,17 +1088,9 @@ class SimsonAddon:
         state = call.state.value
         attrs = {
             "friendly_name": f"Simson {self.cfg.node_id}",
-            "node_id": self.cfg.node_id,
             "icon": "mdi:phone-voip",
-            "call_id": call.call_id,
             "call_state": state,
-            "direction": call.direction,
-            "remote_node_id": call.remote_node_id,
-            "remote_label": call.remote_label,
-            "call_type": call.call_type,
-            "sip_bridge_id": call.metadata.get("sip_bridge_id", ""),
-            "target_user_id": call.metadata.get("target_user_id", ""),
-            "caller_user_id": call.caller_user_id,
+            **self._call_event_payload(call, state, call.end_reason),
         }
 
         # Map call state to sensor state.

@@ -691,6 +691,7 @@ function advancedRouteSummary(route) {
 function advancedRouteEditor(route) {
   const stages = Array.isArray(route.stages) ? route.stages : [];
   const privateHub = stages.some((stage) => stage.answer_mode === "private_hub");
+  const validationError = advancedRouteValidationError(route);
   return `<form class="advanced-editor" id="advanced-route-form">
     <div class="advanced-editor-head">
       <div>
@@ -709,6 +710,7 @@ function advancedRouteEditor(route) {
       <label class="toggle-line"><input type="checkbox" data-advanced-route-key="enabled" ${route.enabled ? "checked" : ""}> Enable this exact source route</label>
     </div>
     <div class="advanced-route-note">Only calls matching <b>${esc(route.ingress_kind)}</b> <b>${esc(route.ingress_value || "not selected")}</b> use this plan. Other calls keep their current routing.</div>
+    ${validationError ? `<div class="inline-notice error"><div><b>Fix this route before saving</b><span>${esc(validationError)}</span></div></div>` : ""}
     <div class="stage-stack">
       ${stages.map(advancedStageEditor).join("")}
     </div>
@@ -1918,9 +1920,41 @@ function normalizeAdvancedRouteForSave(route) {
   return payload;
 }
 
+function advancedRouteValidationError(route) {
+  const seen = new Map();
+  const ingressKind = String(route?.ingress_kind || "").trim().toLowerCase();
+  const ingressValue = String(route?.ingress_value || "").trim();
+  for (const [stageIndex, stage] of (route?.stages || []).entries()) {
+    for (const target of (stage?.targets || [])) {
+      if (target?.enabled === false) continue;
+      const kind = String(target?.kind || "").trim().toLowerCase();
+      const value = String(target?.value || "").trim();
+      const trunk = String(target?.trunk || "").trim();
+      if (!value) continue;
+      if (ingressKind !== "manual" && (kind === "sip" || kind === "gateway") && value === ingressValue) {
+        return `Stage ${stageIndex + 1} routes ${value} back to its own incoming source.`;
+      }
+      const key = (kind === "sip" || kind === "gateway")
+        ? `endpoint:${value}`
+        : `${kind}:${value}:${trunk}`;
+      if (seen.has(key)) {
+        return `${value} is already used in stage ${seen.get(key)}. A destination can appear only once in a route plan.`;
+      }
+      seen.set(key, stageIndex + 1);
+    }
+  }
+  return "";
+}
+
 async function saveAdvancedRoute() {
   if (!state.advancedDraft) return;
   const payload = normalizeAdvancedRouteForSave(state.advancedDraft);
+  const validationError = advancedRouteValidationError(payload);
+  if (validationError) {
+    toast(validationError);
+    renderRouting();
+    return;
+  }
   const path = payload.id ? `api/advanced-routes/${encodeURIComponent(payload.id)}` : "api/advanced-routes";
   const saved = await api(path, { method: payload.id ? "PUT" : "POST", body: JSON.stringify(payload) });
   const index = state.advancedRoutes.findIndex((item) => item.id === saved.id);

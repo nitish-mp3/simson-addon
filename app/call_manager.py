@@ -76,22 +76,27 @@ class CallManager:
     @property
     def active_call(self) -> CallInfo | None:
         """Return the current active/ringing/incoming call, if any."""
-        for c in self._calls.values():
+        active = [
+            c for c in self._calls.values()
             if c.state in (CallState.REQUESTING, CallState.RINGING,
-                           CallState.INCOMING, CallState.ACTIVE):
-                return c
-        return None
+                           CallState.INCOMING, CallState.ACTIVE)
+        ]
+        # A late status from an older call must not replace the call currently
+        # shown by HA or the Lovelace card. The most recently started call is
+        # the authoritative foreground call for this node.
+        return max(active, key=lambda c: c.started_at or 0, default=None)
 
     def active_call_for_user(self, user_id: str) -> "CallInfo | None":
         """Return active call owned by user_id. Falls back to any active call if user_id blank."""
         if not user_id:
             return self.active_call
-        for c in self._calls.values():
+        active = [
+            c for c in self._calls.values()
             if c.state in (CallState.REQUESTING, CallState.RINGING,
-                           CallState.INCOMING, CallState.ACTIVE):
-                if not c.caller_user_id or c.caller_user_id == user_id:
-                    return c
-        return None
+                           CallState.INCOMING, CallState.ACTIVE)
+            and (not c.caller_user_id or c.caller_user_id == user_id)
+        ]
+        return max(active, key=lambda c: c.started_at or 0, default=None)
 
     @property
     def all_calls(self) -> list[CallInfo]:
