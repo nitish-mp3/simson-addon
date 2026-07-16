@@ -16,6 +16,7 @@ const state = {
   advancedRoutesError: "",
   notificationTargets: [],
   notificationTargetsError: "",
+  notificationPickerOpen: false,
   health: null,
   advancedDraft: null,
   dirty: false,
@@ -1378,7 +1379,13 @@ function renderAutomation() {
     if (item.kind !== "entity") return true;
     const suffix = String(item.ref || "").replace(/^notify\./, "");
     return !companionRefs.has(`notify.mobile_app_${suffix}`) || configuredNotifyTargets.has(String(item.ref));
-  });
+  }).filter((item) => item.rich_actions || configuredNotifyTargets.has(String(item.ref)))
+    .sort((a, b) => {
+      const selectedDelta = Number(configuredNotifyTargets.has(String(b.ref))) - Number(configuredNotifyTargets.has(String(a.ref)));
+      if (selectedDelta) return selectedDelta;
+      return String(a.label || a.ref).localeCompare(String(b.label || b.ref));
+    });
+  const selectedNotifyTargets = notifyTargets.filter((item) => configuredNotifyTargets.has(String(item.ref)));
   const missingNotifyTargets = [...configuredNotifyTargets].filter((ref) => !discoveredNotifyRefs.has(ref));
 
   $("content").innerHTML = `
@@ -1415,18 +1422,34 @@ function renderAutomation() {
             <label><input type="checkbox" data-path="automation.persistent_notifications" ${auto.persistent_notifications !== false ? "checked" : ""}> Create Home Assistant notifications for door events</label>
           </div>
           <div class="field full">
-            <label>Phones receiving incoming-call alerts</label>
-            <div class="notify-target-picker">
-              ${notifyTargets.map((target) => `
-                <label class="notify-target ${configuredNotifyTargets.has(String(target.ref)) ? "selected" : ""}">
-                  <input type="checkbox" data-notify-target="${esc(target.ref)}" ${configuredNotifyTargets.has(String(target.ref)) ? "checked" : ""}>
-                  <span><strong>${esc(target.label || target.ref)}</strong><small>${esc(target.ref)}</small></span>
-                  <em class="${target.rich_actions ? "rich" : "basic"}">${target.rich_actions ? "Answer / Decline ready" : "Basic notify target"}</em>
-                </label>`).join("") || `<div class="empty compact-empty">${esc(state.notificationTargetsError || "No Home Assistant notify targets were discovered. Open the Companion app once, then refresh.")}</div>`}
+            <div class="notify-recipient-head">
+              <div>
+                <label>Phones receiving incoming-call alerts</label>
+                <div class="hint">Only Companion-app devices that support Answer, Decline, and dashboard deep links are shown.</div>
+              </div>
+              <button type="button" class="btn small secondary" data-action="toggle-notify-picker">${state.notificationPickerOpen ? "Done" : `Manage phones (${selectedNotifyTargets.length})`}</button>
             </div>
+            <div class="notify-selected-list">
+              ${selectedNotifyTargets.map((target) => `
+                <span class="notify-selected-chip" title="${esc(target.ref)}">
+                  <b>${esc(target.label || target.ref)}</b>
+                  <button type="button" data-action="remove-notify-target" data-ref="${esc(target.ref)}" aria-label="Remove ${esc(target.label || target.ref)}">×</button>
+                </span>`).join("") || `<div class="inline-notice error compact"><div><b>No call-alert phone selected</b><span>Select at least one Companion device to receive incoming-call controls.</span></div></div>`}
+            </div>
+            ${state.notificationPickerOpen ? `
+              <div class="notify-picker-panel">
+                <input id="notify-target-search" type="search" placeholder="Search phone name or notify service">
+                <div class="notify-target-picker">
+                  ${notifyTargets.map((target) => `
+                    <label class="notify-target ${configuredNotifyTargets.has(String(target.ref)) ? "selected" : ""}" data-notify-search="${esc(`${target.label || ""} ${target.ref}`.toLowerCase())}">
+                      <input type="checkbox" data-notify-target="${esc(target.ref)}" ${configuredNotifyTargets.has(String(target.ref)) ? "checked" : ""}>
+                      <span><strong>${esc(target.label || target.ref)}</strong><small>${esc(target.ref)}</small></span>
+                      <em class="rich">Call controls ready</em>
+                    </label>`).join("") || `<div class="empty compact-empty">${esc(state.notificationTargetsError || "No compatible Companion phones were discovered. Open the Companion app once, then refresh.")}</div>`}
+                </div>
+              </div>` : ""}
             ${missingNotifyTargets.length ? `<div class="inline-notice error compact"><div><b>Unavailable saved target</b><span>${esc(missingNotifyTargets.join(", "))}</span></div></div>` : ""}
             <details class="manual-notify"><summary>Manual or legacy target</summary><input data-path="automation.notify_services" value="${esc(auto.notify_services || "")}" placeholder="notify.mobile_app_phone"></details>
-            <div class="hint">Choose a target marked Answer / Decline ready for a loud Companion-app call alert. No selected phone means incoming calls cannot produce a mobile call notification.</div>
           </div>
           <div class="field full">
             <label>Notification opens this HA dashboard path</label>
@@ -1767,11 +1790,20 @@ function setByPath(path, value) {
 function onInput(event) {
   const el = event.target;
 
+  if (el.id === "notify-target-search") {
+    const query = String(el.value || "").trim().toLowerCase();
+    document.querySelectorAll("[data-notify-search]").forEach((row) => {
+      row.hidden = Boolean(query) && !String(row.dataset.notifySearch || "").includes(query);
+    });
+    return;
+  }
+
   if (el.matches("[data-notify-target]")) {
     const selected = new Set(splitList(getSettings().automation.notify_services));
     if (el.checked) selected.add(el.dataset.notifyTarget);
     else selected.delete(el.dataset.notifyTarget);
     getSettings().automation.notify_services = [...selected].join(", ");
+    state.notificationPickerOpen = true;
     setDirty("Notification recipients changed. Save Settings to apply.");
     renderAutomation();
     return;
@@ -1939,6 +1971,17 @@ async function onClick(event) {
     if (action === "remove-duration-rule") removeDurationRule(btn);
     if (action === "generate-webhook") generateWebhook();
     if (action === "test-notification") await testNotification();
+    if (action === "toggle-notify-picker") {
+      state.notificationPickerOpen = !state.notificationPickerOpen;
+      renderAutomation();
+    }
+    if (action === "remove-notify-target") {
+      const selected = new Set(splitList(getSettings().automation.notify_services));
+      selected.delete(String(btn.dataset.ref || ""));
+      getSettings().automation.notify_services = [...selected].join(", ");
+      setDirty("Notification recipients changed. Save Settings to apply.");
+      renderAutomation();
+    }
     if (action === "create-door-flow") createDoorFlow();
     if (action === "delete-trigger") deleteTrigger(btn.dataset.id);
   } catch (err) {

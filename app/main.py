@@ -282,6 +282,15 @@ class SimsonAddon:
                 value += f"::{quote(notify_ref, safe='')}"
             return value
 
+        def call_action_uri(action: str) -> str:
+            """Use HA's authenticated view to control the call and foreground the app."""
+            return (
+                f"/api/simson/call-action/{quote(action, safe='')}/"
+                f"{quote(call_id, safe='')}"
+                f"?node_id={quote(self.cfg.node_id, safe='')}"
+                f"&redirect={quote(dashboard_path, safe='')}"
+            )
+
         terminal = event in ("ended", "declined", "failed", "forwarded")
         clear_terminal = terminal and event != "missed"
         data = {
@@ -336,12 +345,9 @@ class SimsonAddon:
             if event == "incoming" and call_id:
                 service_data["actions"] = [
                     {
-                        "action": call_action_id("answer", service_ref),
+                        "action": "URI",
                         "title": "Answer and open call",
-                        # iOS foregrounds the app; Android is opened by the
-                        # targeted command_webview sent after acceptance.
-                        "activationMode": "foreground",
-                        "uri": dashboard_path,
+                        "uri": call_action_uri("answer"),
                     },
                     {
                         "action": call_action_id("decline", service_ref),
@@ -377,8 +383,9 @@ class SimsonAddon:
                     # a subsequent rich update with the same tag.
                     "actions": [
                         {
-                            "action": call_action_id("answer", service_ref),
-                            "title": "Answer",
+                            "action": "URI",
+                            "title": "Answer & Open",
+                            "uri": call_action_uri("answer"),
                         },
                         {
                             "action": call_action_id("decline", service_ref),

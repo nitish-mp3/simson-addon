@@ -887,7 +887,10 @@ textarea {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 7px;
-  margin-top: 6px;
+  max-height: 320px;
+  margin-top: 10px;
+  padding-right: 4px;
+  overflow: auto;
 }
 
 .notify-target {
@@ -895,8 +898,8 @@ textarea {
   grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
   gap: 9px;
-  min-height: 58px;
-  padding: 9px 11px;
+  min-height: 48px;
+  padding: 7px 9px;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   background: rgba(0, 0, 0, 0.12);
@@ -917,6 +920,58 @@ textarea {
 .notify-target em { padding: 3px 6px; border-radius: 999px; font-size: 9px; font-style: normal; font-weight: 750; white-space: nowrap; }
 .notify-target em.rich { color: var(--success); background: rgba(49, 196, 110, 0.1); }
 .notify-target em.basic { color: var(--text-tertiary); background: rgba(255, 255, 255, 0.04); }
+
+.notify-recipient-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.notify-selected-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.notify-selected-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  gap: 7px;
+  padding: 6px 8px 6px 10px;
+  border: 1px solid rgba(36, 196, 173, 0.28);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: rgba(36, 196, 173, 0.07);
+  font-size: 11px;
+}
+
+.notify-selected-chip b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notify-selected-chip button {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+}
+
+.notify-picker-panel {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: rgba(0, 0, 0, 0.12);
+}
 
 .manual-notify {
   margin-top: 8px;
@@ -942,6 +997,11 @@ textarea {
   .notify-target-picker { grid-template-columns: 1fr; }
   .notify-target { grid-template-columns: 18px minmax(0, 1fr); }
   .notify-target em { grid-column: 2; justify-self: start; }
+  .notify-recipient-head { align-items: stretch; flex-direction: column; }
+}
+
+@media (max-width: 1400px) {
+  .automation-grid { grid-template-columns: 1fr; }
 }
 
 .checkbox-bottom {

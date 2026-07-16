@@ -64,11 +64,13 @@ class CallNotificationLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls[0].kwargs["data"]["channel"], "Simson Incoming Calls v5")
         baseline_actions = calls[0].kwargs["data"]["actions"]
         self.assertEqual([item["title"] for item in baseline_actions], [
-            "Answer",
+            "Answer & Open",
             "Decline",
             "View",
         ])
-        self.assertTrue(baseline_actions[0]["action"].startswith("SIMSON_ANSWER::office::incoming-1"))
+        self.assertEqual(baseline_actions[0]["action"], "URI")
+        self.assertIn("/api/simson/call-action/answer/incoming-1", baseline_actions[0]["uri"])
+        self.assertIn("redirect=%2Flovelace%2Fcalls", baseline_actions[0]["uri"])
         self.assertTrue(baseline_actions[1]["action"].startswith("SIMSON_DECLINE::office::incoming-1"))
         actions = calls[1].kwargs["data"]["actions"]
         self.assertEqual([item["title"] for item in actions], [
@@ -76,7 +78,8 @@ class CallNotificationLifecycleTests(unittest.IsolatedAsyncioTestCase):
             "Decline",
             "Open call screen",
         ])
-        self.assertTrue(actions[0]["action"].startswith("SIMSON_ANSWER::office::incoming-1"))
+        self.assertEqual(actions[0]["action"], "URI")
+        self.assertIn("/api/simson/call-action/answer/incoming-1", actions[0]["uri"])
         self.assertTrue(actions[1]["action"].startswith("SIMSON_DECLINE::office::incoming-1"))
         self.assertIn("is active", calls[2].args[1])
         self.assertEqual(calls[3].args[1], "clear_notification")
