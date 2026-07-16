@@ -19,8 +19,43 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.8.4"
+ADDON_VERSION = "4.8.5"
 DEFAULT_PSTN_TRUNK = "7009"
+
+
+def _safe_upstream_error(status: int, body: str, feature: str) -> dict:
+    """Return a bounded, actionable error without leaking an HTML proxy page."""
+    text = str(body or "").strip()
+    content = text.lower()
+    if status == 404 and feature == "advanced routing":
+        return {
+            "error": "Advanced routing is unavailable on the connected VPS. Deploy the matching Simson VPS build, then retry.",
+            "code": "advanced_routes_unavailable",
+            "upstream_status": status,
+        }
+    if "<!doctype html" in content or "<html" in content or "cloudflare" in content:
+        return {
+            "error": f"{feature.capitalize()} service is temporarily unavailable (HTTP {status}). Check the addon/VPS service and retry.",
+            "code": "upstream_proxy_error",
+            "upstream_status": status,
+        }
+    try:
+        parsed = json.loads(text) if text else {}
+    except (TypeError, ValueError):
+        parsed = {}
+    if isinstance(parsed, dict):
+        message = str(parsed.get("error") or parsed.get("message") or "").strip()
+        code = str(parsed.get("code") or "").strip()
+        if message:
+            result = {"error": message[:500], "upstream_status": status}
+            if code:
+                result["code"] = code[:100]
+            return result
+    return {
+        "error": (text[:500] if text else f"{feature.capitalize()} request failed with HTTP {status}"),
+        "code": "upstream_request_failed",
+        "upstream_status": status,
+    }
 
 
 def _normalize_call_duration_rules(value) -> dict[str, int]:
@@ -909,21 +944,29 @@ class LocalAPI:
                     ssl=False,
                 ) as resp:
                     body = await resp.text()
-                    try:
-                        data = json.loads(body) if body else {"ok": resp.status < 300}
-                    except Exception:
-                        data = {"error": body or f"VPS returned {resp.status}"}
                     if resp.status >= 400:
+                        data = _safe_upstream_error(resp.status, body, "advanced routing")
                         logger.error(
-                            "VPS advanced route %s failed: %s %s",
+                            "VPS advanced route %s failed: HTTP %s code=%s",
                             method,
                             resp.status,
-                            body,
+                            data.get("code", "upstream_request_failed"),
                         )
+                        # An old VPS returning 404 is a service/version mismatch,
+                        # not a missing route in the addon's own API.
+                        status = 503 if resp.status == 404 else resp.status
+                        return web.json_response(data, status=status)
+                    try:
+                        data = json.loads(body) if body else {"ok": True}
+                    except Exception:
+                        data = {"ok": True}
                     return web.json_response(data, status=resp.status)
         except Exception as exc:
             logger.error("Advanced route proxy error: %s", exc)
-            return web.json_response({"error": str(exc)}, status=502)
+            return web.json_response({
+                "error": "Could not reach the VPS advanced-routing service. Check VPS health and retry.",
+                "code": "advanced_routes_unreachable",
+            }, status=502)
 
     async def handle_list_advanced_routes(self, request: web.Request) -> web.Response:
         return await self._proxy_advanced_routes("GET")
@@ -1013,7 +1056,13 @@ class LocalAPI:
         if not isinstance(body, dict):
             return web.json_response({"error": "request must be an object"}, status=400)
         try:
-            result = await self.phone_provisioning.discover(body)
+            # Bound the entire adapter, not only its individual HTTP requests.
+            # This prevents HA ingress/Cloudflare from timing out with an HTML
+            # 502 page when a LAN phone accepts TCP but never completes login.
+            result = await asyncio.wait_for(
+                self.phone_provisioning.discover(body),
+                timeout=12,
+            )
             return web.json_response(result)
         except ProvisioningError as exc:
             logger.warning("Phone provisioning discovery rejected: %s", exc)

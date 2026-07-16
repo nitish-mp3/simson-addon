@@ -249,6 +249,26 @@ class HABridge:
         if data:
             payload["data"] = data
 
+        # Companion versions and Android vendors do not all accept the same
+        # optional notification fields. Keep call actions, sound and deep-link
+        # data for a compatibility retry before falling back to plain text.
+        compatible_payload = {"message": message}
+        if title:
+            compatible_payload["title"] = title
+        if isinstance(data, dict):
+            safe_keys = {
+                "actions", "channel", "clickAction", "group", "importance",
+                "notification_icon", "priority", "push", "sticky", "tag",
+                "timeout", "ttl", "url", "vibrationPattern",
+            }
+            compatible_data = {key: value for key, value in data.items() if key in safe_keys}
+            if compatible_data:
+                compatible_payload["data"] = compatible_data
+
+        basic_payload = {"message": message}
+        if title:
+            basic_payload["title"] = title
+
         actions = data.get("actions") if isinstance(data, dict) else None
         has_actions = bool(actions)
         clearing_only = message == "clear_notification" and not has_actions
@@ -264,10 +284,21 @@ class HABridge:
         async def call_notify_entity(body: dict) -> bool:
             return await self.call_service("notify", "send_message", {"entity_id": ref, **body})
 
+        async def deliver_mobile(service_ref: str) -> bool:
+            if await call_notify_service(service_ref, payload):
+                return True
+            if compatible_payload != payload and await call_notify_service(service_ref, compatible_payload):
+                logger.warning("Notification %s required the compatible rich payload", service_ref)
+                return True
+            if not clearing_only and await call_notify_service(service_ref, basic_payload):
+                logger.warning("Notification %s was delivered without call controls", service_ref)
+                return True
+            return False
+
         if ref.startswith("notify."):
             service = ref.split(".", 1)[1]
             if service.startswith("mobile_app_"):
-                if await call_notify_service(ref, payload):
+                if await deliver_mobile(ref):
                     logger.info("Delivered rich notification through %s", ref)
                     return True
             else:
@@ -275,30 +306,26 @@ class HABridge:
                 # dropping Companion call actions. Prefer the discovered mobile
                 # service for action-bearing notifications.
                 mobile_service = await self._mobile_notify_service_for(ref) if (has_actions or data) else ""
-                if mobile_service and await call_notify_service(mobile_service, payload):
+                if mobile_service and await deliver_mobile(mobile_service):
                     logger.info("Delivered rich notification for %s through %s", ref, mobile_service)
                     return True
                 if await call_notify_entity(payload):
                     logger.info("Delivered notification through entity %s", ref)
                     return True
+                if compatible_payload != payload and await call_notify_entity(compatible_payload):
+                    logger.warning("Notification entity %s required the compatible payload", ref)
+                    return True
+                if not clearing_only and await call_notify_entity(basic_payload):
+                    logger.warning("Notification entity %s was delivered without call controls", ref)
+                    return True
                 guessed = f"notify.mobile_app_{service}"
-                if guessed != mobile_service and await call_notify_service(guessed, payload):
+                if guessed != mobile_service and await deliver_mobile(guessed):
                     logger.info("Delivered notification for %s through compatibility service %s", ref, guessed)
                     return True
 
             if clearing_only:
                 return False
 
-            if (title or data) and await self.call_service(
-                "notify",
-                "send_message",
-                {"entity_id": ref, "message": message},
-            ):
-                logger.warning(
-                    "Notification %s was delivered without rich call controls; configure its notify.mobile_app service",
-                    ref,
-                )
-                return True
             return False
 
         domain, service = ref.split(".", 1)

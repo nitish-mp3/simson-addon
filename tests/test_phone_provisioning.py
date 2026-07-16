@@ -109,6 +109,17 @@ class ProvisioningSessionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(caught.exception.code, "slot_not_available")
 
+    def test_vendor_provisioning_profiles_are_explicit_and_not_guessed(self):
+        profiles = {profile["id"]: profile for profile in self.service.profiles()}
+        self.assertTrue(profiles["grandstream_gsc36xx"]["automatic_write"])
+        self.assertFalse(profiles["fanvil_linkvil_provisioning"]["automatic_write"])
+        self.assertFalse(profiles["grandstream_xml_provisioning"]["automatic_write"])
+
+        with self.assertRaises(ProvisioningError) as caught:
+            self.service._connection({"profile": "fanvil_linkvil_provisioning"})
+
+        self.assertEqual(caught.exception.code, "provisioning_server_required")
+
 
 if __name__ == "__main__":
     unittest.main()

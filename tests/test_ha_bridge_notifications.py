@@ -38,7 +38,10 @@ class HABridgeNotificationTests(unittest.IsolatedAsyncioTestCase):
             "notify.23090ra98i",
             "Caller is ringing",
             title="Incoming call",
-            data={"actions": [{"action": "ANSWER", "title": "Answer"}]},
+            data={
+                "actions": [{"action": "ANSWER", "title": "Answer"}],
+                "persistent": True,
+            },
         )
 
         self.assertTrue(ok)
@@ -80,6 +83,45 @@ class HABridgeNotificationTests(unittest.IsolatedAsyncioTestCase):
             self.bridge.call_service.await_args.args[:2],
             ("notify", "mobile_app_23090ra98i"),
         )
+
+    async def test_retries_reduced_rich_payload_before_losing_actions(self):
+        self.bridge.call_service.side_effect = [False, True]
+        ok = await self.bridge.send_notify_message(
+            "notify.mobile_app_23090ra98i",
+            "Caller is ringing",
+            title="Incoming call",
+            data={
+                "actions": [{"action": "ANSWER", "title": "Answer"}],
+                "persistent": True,
+                "simson": {"call_id": "call-1"},
+                "tag": "simson-call-1",
+            },
+        )
+
+        self.assertTrue(ok)
+        self.assertEqual(self.bridge.call_service.await_count, 2)
+        retry = self.bridge.call_service.await_args_list[1].args[2]
+        self.assertIn("actions", retry["data"])
+        self.assertNotIn("persistent", retry["data"])
+        self.assertNotIn("simson", retry["data"])
+
+    async def test_mobile_service_plain_fallback_uses_service_not_entity(self):
+        self.bridge.call_service.side_effect = [False, False, True]
+        ok = await self.bridge.send_notify_message(
+            "notify.mobile_app_23090ra98i",
+            "Caller is ringing",
+            title="Incoming call",
+            data={
+                "actions": [{"action": "ANSWER", "title": "Answer"}],
+                "persistent": True,
+            },
+        )
+
+        self.assertTrue(ok)
+        self.assertEqual(self.bridge.call_service.await_count, 3)
+        domain, service, body = self.bridge.call_service.await_args_list[2].args
+        self.assertEqual((domain, service), ("notify", "mobile_app_23090ra98i"))
+        self.assertEqual(body, {"message": "Caller is ringing", "title": "Incoming call"})
 
 
 if __name__ == "__main__":

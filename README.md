@@ -80,7 +80,7 @@ The normal manual SIP-phone workflow above remains available for every device. F
 5. Press **Test connection & find accounts**. Simson authenticates to the phone and lists its SIP account slots.
 6. Select an available slot and press **Create SIP Phone**.
 
-The first supported profile is **Grandstream GSC3610/GSC3615/GSC3620**. It uses Grandstream's documented GSC36xx HTTP API. Do not select this profile for another Grandstream family, Fanvil, Akuvox, or an unknown model; use manual setup until a matching adapter is added.
+The direct-management profile is **Grandstream GSC3610/GSC3615/GSC3620**. It uses Grandstream's documented GSC36xx HTTP API. Fanvil/LINKVIL and standard Grandstream desk phones are also identified in the UI, but those families use vendor provisioning (SIP PnP, DHCP/static HTTP provisioning, or Grandstream XML files) rather than the GSC API. Simson reports that requirement clearly and does not guess undocumented private web-form endpoints. Manual SIP setup remains available for every model.
 
 Safety behavior:
 

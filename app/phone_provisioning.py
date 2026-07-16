@@ -288,19 +288,53 @@ class PhoneProvisioningService:
 
     @staticmethod
     def profiles() -> list[dict]:
-        return [{
-            "id": GrandstreamGSC36xxAdapter.profile,
-            "name": GrandstreamGSC36xxAdapter.display_name,
-            "account_slots": 4,
-        }]
+        return [
+            {
+                "id": GrandstreamGSC36xxAdapter.profile,
+                "name": GrandstreamGSC36xxAdapter.display_name,
+                "account_slots": 4,
+                "mode": "direct_management",
+                "automatic_write": True,
+                "help": "Direct, verified account-slot setup through the documented GSC36xx management API.",
+            },
+            {
+                "id": "fanvil_linkvil_provisioning",
+                "name": "Fanvil / LINKVIL phone (provisioning server)",
+                "account_slots": 0,
+                "mode": "provisioning_server",
+                "automatic_write": False,
+                "help": "Fanvil and LINKVIL use SIP PnP, DHCP, or an HTTP/HTTPS provisioning server; they do not share the GSC direct-management API.",
+            },
+            {
+                "id": "grandstream_xml_provisioning",
+                "name": "Grandstream desk phone (XML provisioning)",
+                "account_slots": 0,
+                "mode": "provisioning_server",
+                "automatic_write": False,
+                "help": "Standard Grandstream desk phones use Grandstream XML provisioning. Select the exact documented model workflow instead of writing guessed web-form fields.",
+            },
+        ]
+
+    @classmethod
+    def _profile(cls, profile_id: str) -> dict | None:
+        return next((profile for profile in cls.profiles() if profile["id"] == profile_id), None)
 
     def _connection(self, payload: dict) -> tuple[str, DeviceConnection]:
         profile = str(payload.get("profile", "")).strip()
-        if profile != GrandstreamGSC36xxAdapter.profile:
+        profile_meta = self._profile(profile)
+        if not profile_meta:
             raise ProvisioningError(
                 "Unsupported phone profile. Select the exact supported model family.",
                 status=422,
                 code="unsupported_profile",
+            )
+        if not profile_meta.get("automatic_write"):
+            raise ProvisioningError(
+                f"{profile_meta['name']} uses vendor provisioning rather than a documented direct account API. "
+                "Use the phone's SIP PnP/DHCP/static provisioning workflow or configure the SIP account manually; "
+                "Simson will not guess private web-form endpoints.",
+                status=422,
+                code="provisioning_server_required",
             )
         scheme = str(payload.get("scheme", "https")).strip().lower()
         if scheme not in {"http", "https"}:

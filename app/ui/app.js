@@ -16,6 +16,7 @@ const state = {
   advancedRoutesError: "",
   notificationTargets: [],
   notificationTargetsError: "",
+  health: null,
   advancedDraft: null,
   dirty: false,
   loaded: false,
@@ -29,6 +30,35 @@ const state = {
     phoneIp: "",
   },
 };
+
+function phoneProvisioningProfiles() {
+  const profiles = state.health?.capabilities?.phone_provisioning?.profiles;
+  return Array.isArray(profiles) && profiles.length ? profiles : [{
+    id: "grandstream_gsc36xx",
+    name: "Grandstream GSC36xx door/camera station",
+    mode: "direct_management",
+    automatic_write: true,
+    help: "Direct account setup for GSC3610, GSC3615, and GSC3620.",
+  }];
+}
+
+function selectedPhoneProvisioningProfile() {
+  const selected = $("sip-phone-profile")?.value || phoneProvisioningProfiles()[0]?.id || "";
+  return phoneProvisioningProfiles().find((profile) => profile.id === selected) || phoneProvisioningProfiles()[0];
+}
+
+function updatePhoneProfileHelp() {
+  const profile = selectedPhoneProvisioningProfile();
+  const hint = $("sip-phone-profile-help");
+  const button = document.querySelector('[data-action="discover-phone"]');
+  if (hint) hint.textContent = profile?.help || "Select the exact device family.";
+  if (button) {
+    button.disabled = profile?.automatic_write === false;
+    button.textContent = profile?.automatic_write === false
+      ? "Provisioning-server setup required"
+      : "Test connection & find accounts";
+  }
+}
 
 const defaults = {
   local_api_port: 8799,
@@ -208,7 +238,14 @@ async function api(path, options = {}) {
   try {
     data = text ? JSON.parse(text) : {};
   } catch {
-    data = { error: text || res.statusText };
+    const lower = text.toLowerCase();
+    const proxyPage = lower.includes("<!doctype html") || lower.includes("<html") || lower.includes("cloudflare");
+    data = {
+      error: proxyPage
+        ? `Service temporarily unavailable (HTTP ${res.status}). Check addon/VPS health and retry.`
+        : (text || res.statusText || `Request failed: ${res.status}`).slice(0, 500),
+      code: proxyPage ? "upstream_proxy_error" : "invalid_api_response",
+    };
   }
   if (!res.ok) {
     const detail = Array.isArray(data.errors) && data.errors.length
@@ -700,7 +737,7 @@ function advancedIngressLabel(route) {
 
 function advancedTargetLabel(target) {
   const value = String(target?.value || "");
-  if (target?.kind === "external") return `Outside ${value} via gateway ${target.trunk || "not selected"}`;
+  if (target?.kind === "external") return `Gateway ${target.trunk || "not selected"} dials ${value || "no number selected"}`;
   if (target?.kind === "haos") {
     const node = state.nodes.find((item) => String(item.id) === value);
     return `HAOS ${node?.label || value}`;
@@ -765,6 +802,7 @@ function advancedStageEditor(stage, stageIndex) {
       <div class="stage-controls">
         <div class="field wide"><label>Stage name</label><input data-advanced-stage-index="${stageIndex}" data-advanced-stage-key="name" value="${esc(stage.name)}"></div>
         <div class="field small"><label>Ring for</label><div class="input-suffix"><input type="number" min="3" max="300" data-advanced-stage-index="${stageIndex}" data-advanced-stage-key="ring_seconds" value="${esc(stage.ring_seconds)}"><span>s</span></div></div>
+        <div class="field small"><label>End connected call after</label><div class="input-suffix"><input type="number" min="0" max="86400" data-advanced-stage-index="${stageIndex}" data-advanced-stage-key="max_call_seconds" value="${esc(stage.max_call_seconds || 0)}"><span>s</span></div></div>
         <div class="field"><label>When answered</label><select data-advanced-stage-index="${stageIndex}" data-advanced-stage-key="answer_mode">
           ${option("first_answer", "First answer wins", stage.answer_mode)}
           ${option("conference", "Conference answered SIP phones", stage.answer_mode)}
@@ -789,16 +827,16 @@ function advancedModeHelp(mode) {
 }
 
 function advancedTargetEditor(target, stageIndex, targetIndex, answerMode) {
-  const kindLabel = target.kind === "external" ? "Outside phone number" : target.kind === "haos" ? "HAOS node/card" : target.kind === "gateway" ? "Gateway or wired port" : "SIP phone";
+  const kindLabel = target.kind === "external" ? "Number or intercom extension to dial" : target.kind === "haos" ? "HAOS node/card" : target.kind === "gateway" ? "Gateway or wired port" : "SIP phone";
   return `<div class="advanced-target ${target.enabled === false ? "disabled" : ""}">
     <div class="advanced-target-field kind"><label>Destination type</label><select aria-label="Destination type" data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="kind">
       ${option("sip", "SIP phone", target.kind)}
       ${option("haos", "HAOS card / node", target.kind)}
       ${option("gateway", "Gateway / FXO port", target.kind)}
-      ${option("external", "Outside number", target.kind)}
+      ${option("external", "Number/extension through gateway", target.kind)}
     </select></div>
     <div class="advanced-target-field destination"><label>${esc(kindLabel)}</label>${advancedTargetValueField(target, stageIndex, targetIndex)}</div>
-    ${target.kind === "external" ? `<div class="advanced-target-field trunk"><label>Send through gateway</label><select aria-label="Outbound gateway" data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="trunk">${gatewaySelectOptions(target.trunk || "")}</select></div>` : ""}
+    ${target.kind === "external" ? `<div class="advanced-target-field trunk"><label>Gateway that places the call</label><select aria-label="Outbound gateway" data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="trunk">${gatewaySelectOptions(target.trunk || "")}</select></div>` : ""}
     ${answerMode === "private_hub" ? `<select aria-label="Private hub role" data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="role">${option("spoke", "Spoke (private)", target.role || "spoke")}${option("hub", "Main hub", target.role || "spoke")}</select>` : ""}
     <input aria-label="Destination label" data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="label" value="${esc(target.label || "")}" placeholder="Label (optional)">
     <label class="target-enabled"><input type="checkbox" data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="enabled" ${target.enabled !== false ? "checked" : ""}> Active</label>
@@ -808,7 +846,7 @@ function advancedTargetEditor(target, stageIndex, targetIndex, answerMode) {
 
 function advancedTargetValueField(target, stageIndex, targetIndex) {
   const attrs = `data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="value"`;
-  if (target.kind === "external") return `<input ${attrs} value="${esc(target.value)}" placeholder="Outside number">`;
+  if (target.kind === "external") return `<input ${attrs} value="${esc(target.value)}" placeholder="Exact phone or intercom number"><small>The selected gateway dials this exact value.</small>`;
   let options = [];
   if (target.kind === "haos") options = state.nodes.map((node) => ({ value: node.id, label: `${node.label || node.id} · HAOS` }));
   if (target.kind === "gateway") options = gatewayEndpoints().map((ep) => ({ value: ep.extension, label: `${ep.extension} · ${ep.description || "gateway"}` }));
@@ -1034,9 +1072,13 @@ function renderSip() {
                 <div class="field full">
                   <label>Device profile</label>
                   <select id="sip-phone-profile" data-phone-connection>
-                    <option value="grandstream_gsc36xx">Grandstream GSC36xx door/camera station</option>
+                    ${phoneProvisioningProfiles().map((profile) => option(
+                      profile.id,
+                      `${profile.name}${profile.automatic_write === false ? " · provisioning server" : ""}`,
+                      "grandstream_gsc36xx",
+                    )).join("")}
                   </select>
-                  <div class="hint">Use only for GSC3610, GSC3615, or GSC3620. Other Grandstream, Fanvil, and Akuvox models require their own adapter and are intentionally rejected.</div>
+                  <div id="sip-phone-profile-help" class="hint">${esc(phoneProvisioningProfiles()[0]?.help || "Select the exact device family.")}</div>
                 </div>
                 <div class="field">
                   <label>Phone private IP</label>
@@ -1757,6 +1799,7 @@ function onInput(event) {
       if (port && ["80", "443", ""].includes(port.value)) port.value = el.value === "https" ? "443" : "80";
     }
     invalidatePhoneProvisioningTest();
+    if (el.id === "sip-phone-profile") updatePhoneProfileHelp();
     return;
   }
 
@@ -1897,6 +1940,7 @@ function addAdvancedStage() {
     id: `stage_${randomHex(4)}`,
     name: `Stage ${state.advancedDraft.stages.length + 1}`,
     ring_seconds: 20,
+    max_call_seconds: 0,
     answer_mode: "first_answer",
     max_answered: 1,
     targets: [],
@@ -1958,6 +2002,7 @@ function normalizeAdvancedRouteForSave(route) {
     id: stage.id || `stage_${stageIndex + 1}`,
     name: String(stage.name || `Stage ${stageIndex + 1}`).trim(),
     ring_seconds: Number(stage.ring_seconds) || 20,
+    max_call_seconds: Math.max(0, Number(stage.max_call_seconds) || 0),
     max_answered: stage.answer_mode === "first_answer" ? 1 : Number(stage.max_answered) || 2,
     targets: (stage.targets || []).map((target, targetIndex) => ({
       ...target,
@@ -1982,8 +2027,12 @@ function advancedRouteValidationError(route) {
   for (const [stageIndex, stage] of (route?.stages || []).entries()) {
     const enabledTargets = (stage?.targets || []).filter((target) => target?.enabled !== false);
     const ringSeconds = Number(stage?.ring_seconds);
+    const maxCallSeconds = Number(stage?.max_call_seconds || 0);
     if (!enabledTargets.length) return `Stage ${stageIndex + 1} needs at least one active destination.`;
     if (!Number.isFinite(ringSeconds) || ringSeconds < 3 || ringSeconds > 300) return `Stage ${stageIndex + 1} ring time must be between 3 and 300 seconds.`;
+    if (!Number.isFinite(maxCallSeconds) || maxCallSeconds < 0 || maxCallSeconds > 86400 || (maxCallSeconds > 0 && maxCallSeconds < 10)) {
+      return `Stage ${stageIndex + 1} connected-call limit must be 0 (unlimited) or between 10 and 86400 seconds.`;
+    }
     if (stage?.answer_mode === "conference" && enabledTargets.some((target) => target.kind !== "sip")) {
       return `Stage ${stageIndex + 1} conference mode supports SIP phones only.`;
     }
@@ -2125,6 +2174,10 @@ async function createSip() {
 }
 
 async function discoverPhone() {
+  const profile = selectedPhoneProvisioningProfile();
+  if (profile?.automatic_write === false) {
+    throw new Error(profile.help || "This phone family requires its vendor provisioning-server workflow.");
+  }
   const required = {
     ip: $("sip-phone-ip")?.value.trim(),
     admin_username: $("sip-phone-admin-user")?.value.trim(),
@@ -2483,7 +2536,8 @@ async function saveSettings() {
 
 async function refresh() {
   setSaveState("Refreshing…");
-  const [status, settings, nodes, sip, routing, advancedRouteResult, notificationTargetResult] = await Promise.all([
+  const [health, status, settings, nodes, sip, routing, advancedRouteResult, notificationTargetResult] = await Promise.all([
+    api("api/health").catch(() => null),
     api("api/status").catch(() => null),
     api("api/settings").catch(() => null),
     api("api/nodes").catch(() => ({ nodes: [] })),
@@ -2496,6 +2550,7 @@ async function refresh() {
       .then((data) => ({ data, error: "" }))
       .catch((error) => ({ data: { targets: [] }, error: error?.message || "Notification discovery failed" })),
   ]);
+  state.health = health;
   state.status = status;
   state.settings = settings ? deepMerge(defaults, settings) : getSettings();
   state.nodes = Array.isArray(nodes?.nodes) ? nodes.nodes : [];
