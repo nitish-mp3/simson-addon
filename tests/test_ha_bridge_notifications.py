@@ -105,8 +105,8 @@ class HABridgeNotificationTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("persistent", retry["data"])
         self.assertNotIn("simson", retry["data"])
 
-    async def test_mobile_service_plain_fallback_uses_service_not_entity(self):
-        self.bridge.call_service.side_effect = [False, False, True]
+    async def test_action_notification_never_falls_back_to_plain_same_tag(self):
+        self.bridge.call_service.side_effect = [False, False]
         ok = await self.bridge.send_notify_message(
             "notify.mobile_app_23090ra98i",
             "Caller is ringing",
@@ -117,11 +117,11 @@ class HABridgeNotificationTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-        self.assertTrue(ok)
-        self.assertEqual(self.bridge.call_service.await_count, 3)
-        domain, service, body = self.bridge.call_service.await_args_list[2].args
-        self.assertEqual((domain, service), ("notify", "mobile_app_23090ra98i"))
-        self.assertEqual(body, {"message": "Caller is ringing", "title": "Incoming call"})
+        self.assertFalse(ok)
+        self.assertEqual(self.bridge.call_service.await_count, 2)
+        for call in self.bridge.call_service.await_args_list:
+            body = call.args[2]
+            self.assertIn("actions", body["data"])
 
 
 if __name__ == "__main__":

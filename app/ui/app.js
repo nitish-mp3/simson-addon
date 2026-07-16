@@ -718,8 +718,9 @@ function advancedRouteSummary(route) {
   return `<article class="route-plan-summary ${route.enabled ? "" : "disabled"}">
     <div class="route-plan-main">
       <div class="route-plan-title"><span class="pill ${route.enabled ? "ok" : "warn"}">${route.enabled ? "live" : "draft"}</span>${esc(route.name)}</div>
-      <div class="route-plan-ingress"><span>Calls entering from</span><b>${esc(advancedIngressLabel(route))}</b></div>
+      <div class="route-plan-ingress"><span>${route.ingress_kind === "sip" ? "Calls placed by" : "Calls entering from"}</span><b>${esc(advancedIngressLabel(route))}</b></div>
       <div class="route-stage-path">${path || "No stages"}</div>
+      ${route.ingress_kind === "sip" ? `<div class="route-plan-trigger">Dial <b>100</b> from this phone to run the plan. Dial <b>*100</b> to ring the HAOS card instead.</div>` : ""}
     </div>
     <div class="row-actions">
       ${!route.enabled && !stages.some((stage) => stage.answer_mode === "private_hub")
@@ -771,7 +772,9 @@ function advancedRouteEditor(route) {
       <div class="field"><label>Incoming source</label>${advancedIngressField(route)}</div>
       <label class="toggle-line"><input type="checkbox" data-advanced-route-key="enabled" ${route.enabled ? "checked" : ""}> Enable this exact source route</label>
     </div>
-    <div class="advanced-route-note">Only calls matching <b>${esc(route.ingress_kind)}</b> <b>${esc(route.ingress_value || "not selected")}</b> use this plan. Other calls keep their current routing.</div>
+    <div class="advanced-route-note">${route.ingress_kind === "sip"
+      ? `This plan starts when SIP phone <b>${esc(route.ingress_value || "not selected")}</b> dials <b>100</b>. Dial <b>*100</b> from that phone to bypass this plan and ring the HAOS card. Normal direct extension calls remain point-to-point.`
+      : `Only calls arriving through gateway <b>${esc(route.ingress_value || "not selected")}</b> use this plan. Other calls keep their current routing.`}</div>
     ${validationError ? `<div class="inline-notice error"><div><b>Fix this route before saving</b><span>${esc(validationError)}</span></div></div>` : ""}
     <div class="stage-stack">
       ${stages.map(advancedStageEditor).join("")}
@@ -814,7 +817,7 @@ function advancedStageEditor(stage, stageIndex) {
         ${(conference || privateHub) ? `<div class="field small"><label>Participant limit</label><input type="number" min="1" max="10" data-advanced-stage-index="${stageIndex}" data-advanced-stage-key="max_answered" value="${esc(stage.max_answered || 2)}"></div>` : ""}
         <button type="button" class="icon-btn danger" data-action="advanced-remove-stage" data-stage="${stageIndex}" aria-label="Remove stage">×</button>
       </div>
-      <div class="stage-policy">${advancedModeHelp(stage.answer_mode)}</div>
+      <div class="stage-policy">${advancedModeHelp(stage)}</div>
       <div class="advanced-targets">
         ${targets.map((target, targetIndex) => advancedTargetEditor(target, stageIndex, targetIndex, stage.answer_mode)).join("") || `<div class="empty compact-empty">Add one or more destinations for this stage.</div>`}
       </div>
@@ -823,14 +826,20 @@ function advancedStageEditor(stage, stageIndex) {
   </article>`;
 }
 
-function advancedModeHelp(mode) {
-  if (mode === "conference") return "Every answered SIP phone joins the same audio conference, up to the participant limit. HAOS targets are intentionally blocked in this mode.";
+function advancedModeHelp(stage) {
+  const mode = stage?.answer_mode;
+  if (mode === "conference") {
+    const active = (stage?.targets || []).filter((target) => target?.enabled !== false).length;
+    const limit = Math.max(1, Number(stage?.max_answered) || 1);
+    return `All ${active} active SIP destination${active === 1 ? "" : "s"} ring together. Up to ${limit} answered destination${limit === 1 ? "" : "s"} stay in the conference; the original caller is additional and is not counted in this limit.`;
+  }
   if (mode === "private_hub") return "Isolation contract: the hub may talk to every spoke while spokes remain private. This plan stays draft until the ARI isolated-media worker is installed; Simson will never substitute a shared conference that leaks spoke audio.";
   return "The first destination to answer owns the call; all other ringing destinations are cancelled immediately.";
 }
 
 function advancedTargetEditor(target, stageIndex, targetIndex, answerMode) {
   const kindLabel = target.kind === "external" ? "Number or intercom extension to dial" : target.kind === "haos" ? "HAOS node/card" : target.kind === "gateway" ? "Gateway or wired port" : "SIP phone";
+  const availability = advancedTargetAvailability(target);
   return `<div class="advanced-target ${target.enabled === false ? "disabled" : ""}">
     <div class="advanced-target-field kind"><label>Destination type</label><select aria-label="Destination type" data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="kind">
       ${option("sip", "SIP phone", target.kind)}
@@ -842,9 +851,30 @@ function advancedTargetEditor(target, stageIndex, targetIndex, answerMode) {
     ${target.kind === "external" ? `<div class="advanced-target-field trunk"><label>Gateway that places the call</label><select aria-label="Outbound gateway" data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="trunk">${gatewaySelectOptions(target.trunk || "")}</select></div>` : ""}
     ${answerMode === "private_hub" ? `<select aria-label="Private hub role" data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="role">${option("spoke", "Spoke (private)", target.role || "spoke")}${option("hub", "Main hub", target.role || "spoke")}</select>` : ""}
     <input aria-label="Destination label" data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="label" value="${esc(target.label || "")}" placeholder="Label (optional)">
+    ${availability ? `<span class="pill ${availability.ok ? "ok" : "warn"}" title="${esc(availability.detail)}">${esc(availability.label)}</span>` : ""}
     <label class="target-enabled"><input type="checkbox" data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="enabled" ${target.enabled !== false ? "checked" : ""}> Active</label>
     <button type="button" class="icon-btn danger" data-action="advanced-remove-target" data-stage="${stageIndex}" data-target="${targetIndex}" aria-label="Remove destination">×</button>
   </div>`;
+}
+
+function advancedTargetAvailability(target) {
+  const value = String(target?.value || "").trim();
+  if (!value) return null;
+  if (target?.kind === "sip" || target?.kind === "gateway") {
+    const endpoint = state.sip.map(normalizeSipEndpoint).filter(Boolean).find((item) => String(item.extension) === value);
+    if (!endpoint) return { ok: false, label: "unknown", detail: "This endpoint is not present in the current site endpoint list." };
+    return endpoint.registered
+      ? { ok: true, label: "registered", detail: endpoint.contact_address || endpoint.contact_uri || "Asterisk has a live contact." }
+      : { ok: false, label: "offline", detail: endpoint.contact_status || "Asterisk has no live SIP contact, so this destination cannot ring." };
+  }
+  if (target?.kind === "haos") {
+    const node = state.nodes.find((item) => String(item.id) === value);
+    const online = Boolean(node?.online ?? node?.connected ?? node?.is_online);
+    return online
+      ? { ok: true, label: "online", detail: "The HAOS node is connected." }
+      : { ok: false, label: "offline", detail: "The HAOS node is not currently connected." };
+  }
+  return null;
 }
 
 function advancedTargetValueField(target, stageIndex, targetIndex) {

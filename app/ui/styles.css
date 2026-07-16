@@ -704,6 +704,17 @@ textarea {
   text-transform: none;
 }
 
+.route-plan-trigger {
+  margin-top: 7px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.route-plan-trigger b {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
 .advanced-editor {
   margin-top: var(--space-5);
   padding: var(--space-4);
@@ -806,7 +817,7 @@ textarea {
 
 .advanced-target {
   display: grid;
-  grid-template-columns: 155px minmax(130px, 1fr) minmax(120px, 0.8fr) minmax(120px, 0.8fr) auto 34px;
+  grid-template-columns: 155px minmax(130px, 1fr) minmax(120px, 0.8fr) minmax(120px, 0.8fr) auto auto 34px;
   align-items: center;
   gap: 7px;
   padding: 7px;

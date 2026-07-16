@@ -372,6 +372,24 @@ class SimsonAddon:
                     "url": dashboard_path,
                     "notification_icon": "mdi:phone-in-talk",
                     "vibrationPattern": "100, 800, 100, 800, 100, 800",
+                    # Put the controls on the first notification. Some Android
+                    # Companion builds display this baseline but silently drop
+                    # a subsequent rich update with the same tag.
+                    "actions": [
+                        {
+                            "action": call_action_id("answer", service_ref),
+                            "title": "Answer",
+                        },
+                        {
+                            "action": call_action_id("decline", service_ref),
+                            "title": "Decline",
+                        },
+                        {
+                            "action": "URI",
+                            "title": "View",
+                            "uri": dashboard_path,
+                        },
+                    ],
                 }
                 baseline_delivered = await self.ha.send_notify_message(
                     service_ref,

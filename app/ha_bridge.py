@@ -290,7 +290,10 @@ class HABridge:
             if compatible_payload != payload and await call_notify_service(service_ref, compatible_payload):
                 logger.warning("Notification %s required the compatible rich payload", service_ref)
                 return True
-            if not clearing_only and await call_notify_service(service_ref, basic_payload):
+            # Never overwrite an already-delivered actionable notification
+            # with a plain update using the same tag. If both rich attempts are
+            # rejected, report failure and let the caller keep its baseline.
+            if not clearing_only and not has_actions and await call_notify_service(service_ref, basic_payload):
                 logger.warning("Notification %s was delivered without call controls", service_ref)
                 return True
             return False
@@ -315,7 +318,7 @@ class HABridge:
                 if compatible_payload != payload and await call_notify_entity(compatible_payload):
                     logger.warning("Notification entity %s required the compatible payload", ref)
                     return True
-                if not clearing_only and await call_notify_entity(basic_payload):
+                if not clearing_only and not has_actions and await call_notify_entity(basic_payload):
                     logger.warning("Notification entity %s was delivered without call controls", ref)
                     return True
                 guessed = f"notify.mobile_app_{service}"
