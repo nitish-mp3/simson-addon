@@ -722,6 +722,9 @@ function advancedRouteSummary(route) {
       <div class="route-stage-path">${path || "No stages"}</div>
     </div>
     <div class="row-actions">
+      ${!route.enabled && !stages.some((stage) => stage.answer_mode === "private_hub")
+        ? `<button class="btn small" data-action="advanced-activate" data-id="${esc(route.id)}">Activate</button>`
+        : ""}
       <button class="btn small secondary" data-action="advanced-edit" data-id="${esc(route.id)}">Edit</button>
       <button class="btn small red" data-action="advanced-delete" data-id="${esc(route.id)}">Delete</button>
     </div>
@@ -806,7 +809,7 @@ function advancedStageEditor(stage, stageIndex) {
         <div class="field"><label>When answered</label><select data-advanced-stage-index="${stageIndex}" data-advanced-stage-key="answer_mode">
           ${option("first_answer", "First answer wins", stage.answer_mode)}
           ${option("conference", "Conference answered SIP phones", stage.answer_mode)}
-          ${option("private_hub", "Private hub / whisper", stage.answer_mode)}
+          ${option("private_hub", "Private hub / whisper (requires media worker)", stage.answer_mode)}
         </select></div>
         ${(conference || privateHub) ? `<div class="field small"><label>Participant limit</label><input type="number" min="1" max="10" data-advanced-stage-index="${stageIndex}" data-advanced-stage-key="max_answered" value="${esc(stage.max_answered || 2)}"></div>` : ""}
         <button type="button" class="icon-btn danger" data-action="advanced-remove-stage" data-stage="${stageIndex}" aria-label="Remove stage">×</button>
@@ -822,7 +825,7 @@ function advancedStageEditor(stage, stageIndex) {
 
 function advancedModeHelp(mode) {
   if (mode === "conference") return "Every answered SIP phone joins the same audio conference, up to the participant limit. HAOS targets are intentionally blocked in this mode.";
-  if (mode === "private_hub") return "Isolation contract: the hub may talk to every spoke, while spokes cannot hear one another. Activation is blocked until the isolated-media capability is available.";
+  if (mode === "private_hub") return "Isolation contract: the hub may talk to every spoke while spokes remain private. This plan stays draft until the ARI isolated-media worker is installed; Simson will never substitute a shared conference that leaks spoke audio.";
   return "The first destination to answer owns the call; all other ringing destinations are cancelled immediately.";
 }
 
@@ -1759,10 +1762,21 @@ function onInput(event) {
     const stage = state.advancedDraft?.stages?.[Number(el.dataset.advancedStageIndex)];
     if (!stage) return;
     const key = el.dataset.advancedStageKey;
+    const previousValue = stage[key];
     stage[key] = el.type === "number" ? Number(el.value) : el.value;
     if (key === "answer_mode") {
       stage.max_answered = el.value === "first_answer" ? 1 : Math.max(2, Number(stage.max_answered) || 2);
-      if (el.value === "private_hub") state.advancedDraft.enabled = false;
+      if (el.value === "private_hub") {
+        state.advancedDraft.enabled = false;
+        state.advancedDraft._disabled_for_private_hub = true;
+      } else if (
+        previousValue === "private_hub"
+        && state.advancedDraft._disabled_for_private_hub
+        && !state.advancedDraft.stages.some((item) => item.answer_mode === "private_hub")
+      ) {
+        state.advancedDraft.enabled = true;
+        delete state.advancedDraft._disabled_for_private_hub;
+      }
       renderRouting();
     }
     return;
@@ -1885,6 +1899,7 @@ async function onClick(event) {
     if (action === "advanced-add-target") addAdvancedTarget(btn.dataset.stage);
     if (action === "advanced-remove-target") removeAdvancedTarget(btn.dataset.stage, btn.dataset.target);
     if (action === "advanced-save") await saveAdvancedRoute();
+    if (action === "advanced-activate") await setAdvancedRouteEnabled(btn.dataset.id, true);
     if (action === "advanced-delete") await deleteAdvancedRoute(btn.dataset.id);
     if (action === "discover-phone") await discoverPhone();
     if (action === "create-sip") await createSip();
@@ -1921,6 +1936,12 @@ function editAdvancedRoute(id) {
   const route = state.advancedRoutes.find((item) => String(item.id) === String(id));
   if (!route) return;
   state.advancedDraft = structuredClone(route);
+  if (
+    !state.advancedDraft.enabled
+    && (state.advancedDraft.stages || []).some((stage) => stage.answer_mode === "private_hub")
+  ) {
+    state.advancedDraft._disabled_for_private_hub = true;
+  }
   renderRouting();
   requestAnimationFrame(() => $("advanced-route-form")?.scrollIntoView({ behavior: "smooth", block: "start" }));
 }
@@ -1995,6 +2016,7 @@ function removeAdvancedTarget(stageIndex, targetIndex) {
 
 function normalizeAdvancedRouteForSave(route) {
   const payload = structuredClone(route);
+  delete payload._disabled_for_private_hub;
   payload.name = String(payload.name || "").trim();
   payload.ingress_value = String(payload.ingress_value || "").trim();
   payload.stages = (payload.stages || []).map((stage, stageIndex) => ({
@@ -2084,6 +2106,24 @@ async function deleteAdvancedRoute(id) {
   state.advancedRoutes = state.advancedRoutes.filter((item) => item.id !== id);
   if (state.advancedDraft?.id === id) state.advancedDraft = null;
   toast("Route plan deleted.");
+  renderRouting();
+}
+
+async function setAdvancedRouteEnabled(id, enabled) {
+  const route = state.advancedRoutes.find((item) => String(item.id) === String(id));
+  if (!route) return;
+  if (enabled && (route.stages || []).some((stage) => stage.answer_mode === "private_hub")) {
+    throw new Error("Private hub plans require the isolated-media worker and cannot be activated as a shared conference.");
+  }
+  const payload = normalizeAdvancedRouteForSave({ ...route, enabled });
+  const saved = await api(`api/advanced-routes/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+  const index = state.advancedRoutes.findIndex((item) => String(item.id) === String(id));
+  if (index >= 0) state.advancedRoutes[index] = saved;
+  if (state.advancedDraft?.id === id) state.advancedDraft = structuredClone(saved);
+  toast(enabled ? "Route plan is live." : "Route plan saved as draft.");
   renderRouting();
 }
 

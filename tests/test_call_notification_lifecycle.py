@@ -59,9 +59,11 @@ class CallNotificationLifecycleTests(unittest.IsolatedAsyncioTestCase):
         await self.notify({**base, "event": "ended", "reason": "remote_hangup"})
 
         calls = self.addon.ha.send_notify_message.await_args_list
-        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(calls), 4)
         self.assertIn("is calling", calls[0].args[1])
-        actions = calls[0].kwargs["data"]["actions"]
+        self.assertNotIn("actions", calls[0].kwargs["data"])
+        self.assertEqual(calls[0].kwargs["data"]["channel"], "Simson Incoming Calls v5")
+        actions = calls[1].kwargs["data"]["actions"]
         self.assertEqual([item["title"] for item in actions], [
             "Answer and open call",
             "Decline",
@@ -69,8 +71,8 @@ class CallNotificationLifecycleTests(unittest.IsolatedAsyncioTestCase):
         ])
         self.assertTrue(actions[0]["action"].startswith("SIMSON_ANSWER::office::incoming-1"))
         self.assertTrue(actions[1]["action"].startswith("SIMSON_DECLINE::office::incoming-1"))
-        self.assertIn("is active", calls[1].args[1])
-        self.assertEqual(calls[2].args[1], "clear_notification")
+        self.assertIn("is active", calls[2].args[1])
+        self.assertEqual(calls[3].args[1], "clear_notification")
         self.assertEqual(calls[0].kwargs["data"]["tag"], calls[1].kwargs["data"]["tag"])
         self.assertNotIn("incoming-1", self.addon._mobile_incoming_calls)
 
@@ -85,11 +87,11 @@ class CallNotificationLifecycleTests(unittest.IsolatedAsyncioTestCase):
         await self.notify({**base, "event": "ended", "reason": "remote_hangup"})
 
         calls = self.addon.ha.send_notify_message.await_args_list
-        self.assertEqual(len(calls), 2)
-        self.assertEqual(calls[1].kwargs["title"], "Simson Missed Call")
-        self.assertIn("Missed call from Front desk", calls[1].args[1])
-        self.assertNotEqual(calls[1].args[1], "clear_notification")
-        self.assertNotIn("hung up", calls[1].args[1].lower())
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls[2].kwargs["title"], "Simson Missed Call")
+        self.assertIn("Missed call from Front desk", calls[2].args[1])
+        self.assertNotEqual(calls[2].args[1], "clear_notification")
+        self.assertNotIn("hung up", calls[2].args[1].lower())
 
 
 if __name__ == "__main__":

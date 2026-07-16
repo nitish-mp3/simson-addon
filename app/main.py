@@ -294,7 +294,7 @@ class SimsonAddon:
             # to make an incoming-call alert audible even when the normal
             # notification stream is muted. Non-ringing updates use a quiet,
             # dedicated channel and update the same tagged notification.
-            "channel": "alarm_stream" if event == "incoming" else "Simson Calls v4",
+            "channel": "Simson Incoming Calls v5" if event == "incoming" else "Simson Calls v4",
             "importance": "max",
             "priority": "high",
             "ttl": 0,
@@ -355,6 +355,37 @@ class SimsonAddon:
                         "uri": dashboard_path,
                     },
                 ]
+                # First publish a minimal notification that every Companion
+                # version can render, then update the same tag with controls.
+                # Some Android builds acknowledge a rich payload but discard
+                # it locally; this baseline keeps the primary incoming alert
+                # visible while the second update adds Answer/Decline.
+                baseline_data = {
+                    "tag": notification_tag,
+                    "group": "simson-calls",
+                    "channel": "Simson Incoming Calls v5",
+                    "importance": "max",
+                    "priority": "high",
+                    "ttl": 0,
+                    "sticky": "true",
+                    "clickAction": dashboard_path,
+                    "url": dashboard_path,
+                    "notification_icon": "mdi:phone-in-talk",
+                    "vibrationPattern": "100, 800, 100, 800, 100, 800",
+                }
+                baseline_delivered = await self.ha.send_notify_message(
+                    service_ref,
+                    message,
+                    title=title,
+                    data=baseline_data,
+                )
+                service_data["alert_once"] = True
+                if not baseline_delivered:
+                    logging.getLogger("simson.notifications").warning(
+                        "Incoming-call baseline for %s was not accepted by %s",
+                        call_id,
+                        service_ref,
+                    )
             elif event == "active" and call_id:
                 service_data["actions"] = [
                     {
