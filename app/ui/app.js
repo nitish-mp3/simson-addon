@@ -14,6 +14,8 @@ const state = {
   routing: null,
   advancedRoutes: [],
   advancedRoutesError: "",
+  notificationTargets: [],
+  notificationTargetsError: "",
   advancedDraft: null,
   dirty: false,
   loaded: false,
@@ -673,12 +675,13 @@ function advancedRouteSummary(route) {
   const stages = Array.isArray(route.stages) ? route.stages : [];
   const path = stages.map((stage, index) => {
     const targets = (stage.targets || []).filter((target) => target.enabled !== false);
-    return `<span class="route-stage-pill"><b>${index + 1}</b>${esc(stage.name || `Stage ${index + 1}`)} · ${targets.length} target${targets.length === 1 ? "" : "s"} · ${esc(stage.ring_seconds || 0)}s</span>`;
+    const destinations = targets.map(advancedTargetLabel).join(" + ") || "no destination";
+    return `<span class="route-stage-pill"><b>${index + 1}</b><span>${esc(stage.name || `Stage ${index + 1}`)}<small>${esc(destinations)} · ${esc(stage.ring_seconds || 0)}s</small></span></span>`;
   }).join(`<span class="route-arrow">→</span>`);
   return `<article class="route-plan-summary ${route.enabled ? "" : "disabled"}">
     <div class="route-plan-main">
       <div class="route-plan-title"><span class="pill ${route.enabled ? "ok" : "warn"}">${route.enabled ? "live" : "draft"}</span>${esc(route.name)}</div>
-      <div class="route-plan-ingress">${esc(route.ingress_kind)} <b>${esc(route.ingress_value)}</b></div>
+      <div class="route-plan-ingress"><span>Calls entering from</span><b>${esc(advancedIngressLabel(route))}</b></div>
       <div class="route-stage-path">${path || "No stages"}</div>
     </div>
     <div class="row-actions">
@@ -686,6 +689,25 @@ function advancedRouteSummary(route) {
       <button class="btn small red" data-action="advanced-delete" data-id="${esc(route.id)}">Delete</button>
     </div>
   </article>`;
+}
+
+function advancedIngressLabel(route) {
+  const value = String(route?.ingress_value || "");
+  const endpoint = state.sip.map(normalizeSipEndpoint).filter(Boolean).find((item) => String(item.extension) === value);
+  const label = endpoint?.description || endpoint?.username || value || "not selected";
+  return `${route?.ingress_kind === "gateway" ? "Gateway" : "SIP phone"} ${value}${label && label !== value ? ` · ${label}` : ""}`;
+}
+
+function advancedTargetLabel(target) {
+  const value = String(target?.value || "");
+  if (target?.kind === "external") return `Outside ${value} via gateway ${target.trunk || "not selected"}`;
+  if (target?.kind === "haos") {
+    const node = state.nodes.find((item) => String(item.id) === value);
+    return `HAOS ${node?.label || value}`;
+  }
+  const endpoint = state.sip.map(normalizeSipEndpoint).filter(Boolean).find((item) => String(item.extension) === value);
+  const prefix = target?.kind === "gateway" ? "Gateway/FXO" : "SIP";
+  return `${prefix} ${value}${endpoint?.description ? ` · ${endpoint.description}` : ""}`;
 }
 
 function advancedRouteEditor(route) {
@@ -767,15 +789,16 @@ function advancedModeHelp(mode) {
 }
 
 function advancedTargetEditor(target, stageIndex, targetIndex, answerMode) {
+  const kindLabel = target.kind === "external" ? "Outside phone number" : target.kind === "haos" ? "HAOS node/card" : target.kind === "gateway" ? "Gateway or wired port" : "SIP phone";
   return `<div class="advanced-target ${target.enabled === false ? "disabled" : ""}">
-    <select aria-label="Destination type" data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="kind">
+    <div class="advanced-target-field kind"><label>Destination type</label><select aria-label="Destination type" data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="kind">
       ${option("sip", "SIP phone", target.kind)}
       ${option("haos", "HAOS card / node", target.kind)}
       ${option("gateway", "Gateway / FXO port", target.kind)}
       ${option("external", "Outside number", target.kind)}
-    </select>
-    ${advancedTargetValueField(target, stageIndex, targetIndex)}
-    ${target.kind === "external" ? `<select aria-label="Outbound gateway" data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="trunk">${gatewaySelectOptions(target.trunk || "")}</select>` : ""}
+    </select></div>
+    <div class="advanced-target-field destination"><label>${esc(kindLabel)}</label>${advancedTargetValueField(target, stageIndex, targetIndex)}</div>
+    ${target.kind === "external" ? `<div class="advanced-target-field trunk"><label>Send through gateway</label><select aria-label="Outbound gateway" data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="trunk">${gatewaySelectOptions(target.trunk || "")}</select></div>` : ""}
     ${answerMode === "private_hub" ? `<select aria-label="Private hub role" data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="role">${option("spoke", "Spoke (private)", target.role || "spoke")}${option("hub", "Main hub", target.role || "spoke")}</select>` : ""}
     <input aria-label="Destination label" data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="label" value="${esc(target.label || "")}" placeholder="Label (optional)">
     <label class="target-enabled"><input type="checkbox" data-advanced-target-stage="${stageIndex}" data-advanced-target-index="${targetIndex}" data-advanced-target-key="enabled" ${target.enabled !== false ? "checked" : ""}> Active</label>
@@ -1273,6 +1296,15 @@ function renderAutomation() {
   const selectedDoorTargets = new Set(existingTargetIds.map(String));
   const selectedSource = selectedDoor.source_extension || videoSip[0]?.extension || "";
   const selectedFanout = selectedDoor.fanout_mode || "parallel";
+  const configuredNotifyTargets = new Set(splitList(auto.notify_services));
+  const discoveredNotifyRefs = new Set(state.notificationTargets.map((item) => String(item.ref || "")));
+  const companionRefs = new Set(state.notificationTargets.filter((item) => item.rich_actions).map((item) => String(item.ref || "")));
+  const notifyTargets = state.notificationTargets.filter((item) => {
+    if (item.kind !== "entity") return true;
+    const suffix = String(item.ref || "").replace(/^notify\./, "");
+    return !companionRefs.has(`notify.mobile_app_${suffix}`) || configuredNotifyTargets.has(String(item.ref));
+  });
+  const missingNotifyTargets = [...configuredNotifyTargets].filter((ref) => !discoveredNotifyRefs.has(ref));
 
   $("content").innerHTML = `
     <div class="automation-grid">
@@ -1308,9 +1340,18 @@ function renderAutomation() {
             <label><input type="checkbox" data-path="automation.persistent_notifications" ${auto.persistent_notifications !== false ? "checked" : ""}> Create Home Assistant notifications for door events</label>
           </div>
           <div class="field full">
-            <label>Phones receiving call alerts</label>
-            <input data-path="automation.notify_services" value="${esc(auto.notify_services || "")}" placeholder="notify.23090ra98i, notify.mobile_app_your_phone">
-            <div class="hint">Enter the same notify entity that works with notify.send_message. Incoming calls use a loud, maximum-priority channel with Answer/Decline controls.</div>
+            <label>Phones receiving incoming-call alerts</label>
+            <div class="notify-target-picker">
+              ${notifyTargets.map((target) => `
+                <label class="notify-target ${configuredNotifyTargets.has(String(target.ref)) ? "selected" : ""}">
+                  <input type="checkbox" data-notify-target="${esc(target.ref)}" ${configuredNotifyTargets.has(String(target.ref)) ? "checked" : ""}>
+                  <span><strong>${esc(target.label || target.ref)}</strong><small>${esc(target.ref)}</small></span>
+                  <em class="${target.rich_actions ? "rich" : "basic"}">${target.rich_actions ? "Answer / Decline ready" : "Basic notify target"}</em>
+                </label>`).join("") || `<div class="empty compact-empty">${esc(state.notificationTargetsError || "No Home Assistant notify targets were discovered. Open the Companion app once, then refresh.")}</div>`}
+            </div>
+            ${missingNotifyTargets.length ? `<div class="inline-notice error compact"><div><b>Unavailable saved target</b><span>${esc(missingNotifyTargets.join(", "))}</span></div></div>` : ""}
+            <details class="manual-notify"><summary>Manual or legacy target</summary><input data-path="automation.notify_services" value="${esc(auto.notify_services || "")}" placeholder="notify.mobile_app_phone"></details>
+            <div class="hint">Choose a target marked Answer / Decline ready for a loud Companion-app call alert. No selected phone means incoming calls cannot produce a mobile call notification.</div>
           </div>
           <div class="field full">
             <label>Notification opens this HA dashboard path</label>
@@ -1651,6 +1692,16 @@ function setByPath(path, value) {
 function onInput(event) {
   const el = event.target;
 
+  if (el.matches("[data-notify-target]")) {
+    const selected = new Set(splitList(getSettings().automation.notify_services));
+    if (el.checked) selected.add(el.dataset.notifyTarget);
+    else selected.delete(el.dataset.notifyTarget);
+    getSettings().automation.notify_services = [...selected].join(", ");
+    setDirty("Notification recipients changed. Save Settings to apply.");
+    renderAutomation();
+    return;
+  }
+
   if (el.matches("[data-advanced-route-key]")) {
     if (!state.advancedDraft) return;
     const key = el.dataset.advancedRouteKey;
@@ -1921,16 +1972,28 @@ function normalizeAdvancedRouteForSave(route) {
 }
 
 function advancedRouteValidationError(route) {
+  if (!String(route?.name || "").trim()) return "Enter a plan name.";
+  if (!["gateway", "sip"].includes(String(route?.ingress_kind || ""))) return "Choose whether calls enter from a gateway or SIP phone.";
+  if (!String(route?.ingress_value || "").trim()) return "Choose the exact incoming gateway or SIP phone.";
+  if (!Array.isArray(route?.stages) || !route.stages.length) return "Add at least one routing stage.";
   const seen = new Map();
   const ingressKind = String(route?.ingress_kind || "").trim().toLowerCase();
   const ingressValue = String(route?.ingress_value || "").trim();
   for (const [stageIndex, stage] of (route?.stages || []).entries()) {
-    for (const target of (stage?.targets || [])) {
+    const enabledTargets = (stage?.targets || []).filter((target) => target?.enabled !== false);
+    const ringSeconds = Number(stage?.ring_seconds);
+    if (!enabledTargets.length) return `Stage ${stageIndex + 1} needs at least one active destination.`;
+    if (!Number.isFinite(ringSeconds) || ringSeconds < 3 || ringSeconds > 300) return `Stage ${stageIndex + 1} ring time must be between 3 and 300 seconds.`;
+    if (stage?.answer_mode === "conference" && enabledTargets.some((target) => target.kind !== "sip")) {
+      return `Stage ${stageIndex + 1} conference mode supports SIP phones only.`;
+    }
+    for (const target of enabledTargets) {
       if (target?.enabled === false) continue;
       const kind = String(target?.kind || "").trim().toLowerCase();
       const value = String(target?.value || "").trim();
       const trunk = String(target?.trunk || "").trim();
-      if (!value) continue;
+      if (!value) return `Stage ${stageIndex + 1} has a destination with no value selected.`;
+      if (kind === "external" && !trunk) return `Stage ${stageIndex + 1} outside number ${value} needs an outbound gateway.`;
       if (ingressKind !== "manual" && (kind === "sip" || kind === "gateway") && value === ingressValue) {
         return `Stage ${stageIndex + 1} routes ${value} back to its own incoming source.`;
       }
@@ -2420,7 +2483,7 @@ async function saveSettings() {
 
 async function refresh() {
   setSaveState("Refreshing…");
-  const [status, settings, nodes, sip, routing, advancedRouteResult] = await Promise.all([
+  const [status, settings, nodes, sip, routing, advancedRouteResult, notificationTargetResult] = await Promise.all([
     api("api/status").catch(() => null),
     api("api/settings").catch(() => null),
     api("api/nodes").catch(() => ({ nodes: [] })),
@@ -2429,6 +2492,9 @@ async function refresh() {
     api("api/advanced-routes")
       .then((data) => ({ data, error: "" }))
       .catch((error) => ({ data: [], error: error?.message || "Request failed" })),
+    api("api/notification-targets")
+      .then((data) => ({ data, error: "" }))
+      .catch((error) => ({ data: { targets: [] }, error: error?.message || "Notification discovery failed" })),
   ]);
   state.status = status;
   state.settings = settings ? deepMerge(defaults, settings) : getSettings();
@@ -2438,6 +2504,8 @@ async function refresh() {
   state.routing = routing;
   state.advancedRoutes = Array.isArray(advancedRouteResult.data) ? advancedRouteResult.data : [];
   state.advancedRoutesError = advancedRouteResult.error || "";
+  state.notificationTargets = Array.isArray(notificationTargetResult.data?.targets) ? notificationTargetResult.data.targets : [];
+  state.notificationTargetsError = notificationTargetResult.error || "";
   if (state.advancedDraft?.id) {
     const freshDraft = state.advancedRoutes.find((route) => route.id === state.advancedDraft.id);
     state.advancedDraft = freshDraft ? structuredClone(freshDraft) : null;

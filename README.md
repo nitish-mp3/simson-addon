@@ -158,6 +158,18 @@ In the addon panel, open **Settings -> Site Routing & Availability**:
 
 To route calls to other SIP phones, create a Call Target with **Type = SIP phone**, set **SIP Extension** to the phone extension, and leave the gateway trunk empty. To route to an outside phone through a gateway, create **Type = Gateway / outside line**, set the outside number as the extension, and set **SIP/PSTN Trunk** to the gateway endpoint such as `7009`.
 
+### Exact-source multi-level routes
+
+The **Routing -> Multi-level call routes** editor is for per-line routing that must not affect other phones or gateways. Choose the exact incoming gateway or SIP phone, then add ordered stages. Destinations in one stage ring together; the next stage starts only when the current stage times out without an answer.
+
+Each stage may target a SIP phone, a HAOS node/card, a gateway/FXO port, or an outside number. An outside number always requires an explicit outbound gateway in the same destination row. Simson rejects an empty stage, a repeated destination, a route back to its own incoming source, and an outside number without a gateway. These plans are scoped to the current VPS account/site.
+
+### Mobile incoming-call alerts
+
+Open **Door Automation -> Phones receiving incoming-call alerts** and select a discovered Home Assistant Companion target marked **Answer / Decline ready**, then save settings and send a test. Simson prefers the verified `notify.mobile_app_*` service for call actions; a generic `notify.*` entity remains available for basic messages but may not support action buttons on every Home Assistant release.
+
+The dashboard path controls where tapping the notification opens. Incoming calls use one tagged notification with Answer, Decline, and Open actions. Active, ended, forwarded, and missed states update that same notification instead of creating alert spam.
+
 ## FXO Channel Event Troubleshooting
 
 Raw Home Assistant notifications such as `New channel: PJSIP/fxo1-...` and `Channel hung up: PJSIP/fxo1-...` are not created by the Simson addon. They come from a separate onsite Asterisk AMI automation or integration that is publishing every channel lifecycle event.

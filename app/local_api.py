@@ -19,7 +19,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.8.3"
+ADDON_VERSION = "4.8.4"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -179,6 +179,7 @@ class LocalAPI:
         self.app.router.add_get("/", self.handle_ingress)
         self.app.router.add_get("/api/status", self.handle_status)
         self.app.router.add_post("/api/notification/test", self.handle_notification_test)
+        self.app.router.add_get("/api/notification-targets", self.handle_notification_targets)
         self.app.router.add_get("/api/calls", self.handle_list_calls)
         self.app.router.add_post("/api/calls", self.handle_make_call)
         self.app.router.add_post("/api/call", self.handle_make_call)
@@ -399,6 +400,20 @@ class LocalAPI:
             "total": len(results),
             "results": results,
         }, status=200 if success_count else 502)
+
+    async def handle_notification_targets(self, request: web.Request) -> web.Response:
+        """List verified Home Assistant notification entities/services."""
+        if not self.addon or not getattr(self.addon, "ha", None):
+            return web.json_response({"error": "Home Assistant bridge is not available"}, status=503)
+        settings = load_settings()
+        automation = settings.get("automation", {}) if isinstance(settings, dict) else {}
+        configured = [
+            item.strip()
+            for item in str(automation.get("notify_services", "") or "").split(",")
+            if item.strip()
+        ]
+        targets = await self.addon.ha.discover_notify_targets(force=True)
+        return web.json_response({"targets": targets, "configured": configured})
 
     async def handle_provision(self, request: web.Request) -> web.Response:
         """Provision account + node on VPS from the ingress panel."""

@@ -61,6 +61,14 @@ class CallNotificationLifecycleTests(unittest.IsolatedAsyncioTestCase):
         calls = self.addon.ha.send_notify_message.await_args_list
         self.assertEqual(len(calls), 3)
         self.assertIn("is calling", calls[0].args[1])
+        actions = calls[0].kwargs["data"]["actions"]
+        self.assertEqual([item["title"] for item in actions], [
+            "Answer and open call",
+            "Decline",
+            "Open call screen",
+        ])
+        self.assertTrue(actions[0]["action"].startswith("SIMSON_ANSWER::office::incoming-1"))
+        self.assertTrue(actions[1]["action"].startswith("SIMSON_DECLINE::office::incoming-1"))
         self.assertIn("is active", calls[1].args[1])
         self.assertEqual(calls[2].args[1], "clear_notification")
         self.assertEqual(calls[0].kwargs["data"]["tag"], calls[1].kwargs["data"]["tag"])

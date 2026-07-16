@@ -2,6 +2,7 @@
 
 import logging
 import os
+import time
 import aiohttp
 from config import Config
 
@@ -35,6 +36,8 @@ class HABridge:
         self._session: aiohttp.ClientSession | None = None
         self.last_call_event: dict = {}
         self.last_automation_event: dict = {}
+        self._notify_targets_cache: list[dict] = []
+        self._notify_targets_cached_at = 0.0
         self._headers = {
             "Authorization": f"Bearer {cfg.supervisor_token}",
             "Content-Type": "application/json",
@@ -139,6 +142,91 @@ class HABridge:
             logger.warning("HA service call error: %s", e)
             return False
 
+    async def discover_notify_targets(self, force: bool = False) -> list[dict]:
+        """Return notify entities and services currently exposed by Home Assistant."""
+        now = time.monotonic()
+        if not force and self._notify_targets_cache and now - self._notify_targets_cached_at < 60:
+            return [dict(item) for item in self._notify_targets_cache]
+
+        targets: dict[str, dict] = {}
+        session = await self._get_session()
+        try:
+            async with session.get(
+                f"{HA_API_BASE}/states", timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
+                if resp.status == 200:
+                    for state in await resp.json():
+                        entity_id = str(state.get("entity_id") or "")
+                        if not entity_id.startswith("notify."):
+                            continue
+                        attrs = state.get("attributes") if isinstance(state.get("attributes"), dict) else {}
+                        targets[entity_id] = {
+                            "ref": entity_id,
+                            "label": str(attrs.get("friendly_name") or entity_id),
+                            "kind": "entity",
+                            "rich_actions": False,
+                        }
+                else:
+                    logger.warning("HA notify entity discovery failed: %d %s", resp.status, await resp.text())
+        except Exception as exc:
+            logger.warning("HA notify entity discovery error: %s", exc)
+
+        try:
+            async with session.get(
+                f"{HA_API_BASE}/services", timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
+                if resp.status == 200:
+                    for domain in await resp.json():
+                        if domain.get("domain") != "notify":
+                            continue
+                        services = domain.get("services") if isinstance(domain.get("services"), dict) else {}
+                        for service, definition in services.items():
+                            if service == "send_message":
+                                continue
+                            ref = f"notify.{service}"
+                            fields = definition if isinstance(definition, dict) else {}
+                            targets[ref] = {
+                                "ref": ref,
+                                "label": str(fields.get("name") or fields.get("description") or ref),
+                                "kind": "service",
+                                "rich_actions": service.startswith("mobile_app_"),
+                            }
+                else:
+                    logger.warning("HA notify service discovery failed: %d %s", resp.status, await resp.text())
+        except Exception as exc:
+            logger.warning("HA notify service discovery error: %s", exc)
+
+        result = sorted(
+            targets.values(),
+            key=lambda item: (not item["rich_actions"], item["label"].lower(), item["ref"]),
+        )
+        self._notify_targets_cache = [dict(item) for item in result]
+        self._notify_targets_cached_at = now
+        return result
+
+    async def _mobile_notify_service_for(self, ref: str) -> str:
+        """Resolve a modern notify entity to its Companion mobile_app service."""
+        if ref.startswith("notify.mobile_app_"):
+            return ref
+        if not ref.startswith("notify."):
+            return ""
+        suffix = ref.split(".", 1)[1]
+        expected = f"notify.mobile_app_{suffix}"
+        targets = await self.discover_notify_targets()
+        services = {
+            str(item.get("ref") or "")
+            for item in targets
+            if item.get("kind") == "service"
+        }
+        if expected in services:
+            return expected
+        normalized = suffix.lower().replace("-", "_").replace(" ", "_")
+        matches = sorted(
+            service for service in services
+            if service.removeprefix("notify.mobile_app_").lower() == normalized
+        )
+        return matches[0] if len(matches) == 1 else ""
+
     async def send_notify_message(
         self,
         notify_ref: str,
@@ -176,21 +264,26 @@ class HABridge:
         async def call_notify_entity(body: dict) -> bool:
             return await self.call_service("notify", "send_message", {"entity_id": ref, **body})
 
-        # Preserve the exact delivery method configured by the user. Modern
-        # notify entities must go through notify.send_message; guessing a
-        # similarly named mobile_app service can target the wrong device or
-        # silently drop rich call fields.
         if ref.startswith("notify."):
             service = ref.split(".", 1)[1]
             if service.startswith("mobile_app_"):
                 if await call_notify_service(ref, payload):
+                    logger.info("Delivered rich notification through %s", ref)
                     return True
             else:
-                if await call_notify_entity(payload):
+                # Generic notify entities can accept a message while silently
+                # dropping Companion call actions. Prefer the discovered mobile
+                # service for action-bearing notifications.
+                mobile_service = await self._mobile_notify_service_for(ref) if (has_actions or data) else ""
+                if mobile_service and await call_notify_service(mobile_service, payload):
+                    logger.info("Delivered rich notification for %s through %s", ref, mobile_service)
                     return True
-                # Compatibility fallback for older Companion installs that
-                # expose only a legacy mobile_app service.
-                if await call_notify_service(f"notify.mobile_app_{service}", payload):
+                if await call_notify_entity(payload):
+                    logger.info("Delivered notification through entity %s", ref)
+                    return True
+                guessed = f"notify.mobile_app_{service}"
+                if guessed != mobile_service and await call_notify_service(guessed, payload):
+                    logger.info("Delivered notification for %s through compatibility service %s", ref, guessed)
                     return True
 
             if clearing_only:
@@ -201,6 +294,10 @@ class HABridge:
                 "send_message",
                 {"entity_id": ref, "message": message},
             ):
+                logger.warning(
+                    "Notification %s was delivered without rich call controls; configure its notify.mobile_app service",
+                    ref,
+                )
                 return True
             return False
 
