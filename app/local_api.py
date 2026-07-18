@@ -19,7 +19,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.8.8"
+ADDON_VERSION = "4.8.9"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -85,6 +85,30 @@ def _normalized_prompt_text(value) -> str:
     return " ".join(str(value or "").split())
 
 
+def _normalize_supervision(value) -> dict:
+    """Normalize the per-supervisor policy returned by current or legacy VPS builds."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value or "{}")
+        except (TypeError, ValueError):
+            value = {}
+    if not isinstance(value, dict):
+        value = {}
+    targets = value.get("targets", value.get("Targets", []))
+    if not isinstance(targets, list):
+        targets = []
+    return {
+        "enabled": bool(value.get("enabled", value.get("Enabled", False))),
+        "listen": bool(value.get("listen", value.get("Listen", False))),
+        "listen_key": str(value.get("listen_key", value.get("ListenKey", "*81")) or "*81").strip(),
+        "whisper": bool(value.get("whisper", value.get("Whisper", False))),
+        "whisper_key": str(value.get("whisper_key", value.get("WhisperKey", "*82")) or "*82").strip(),
+        "barge": bool(value.get("barge", value.get("Barge", False))),
+        "barge_key": str(value.get("barge_key", value.get("BargeKey", "*83")) or "*83").strip(),
+        "targets": sorted({str(item or "").strip() for item in targets if str(item or "").strip()}),
+    }
+
+
 def _verify_sip_call_behavior_response(endpoint: dict, requested: dict) -> str:
     """Reject successful responses from an older VPS that ignored new fields."""
     if not isinstance(endpoint, dict):
@@ -118,6 +142,17 @@ def _verify_sip_call_behavior_response(endpoint: dict, requested: dict) -> str:
         expected_rules = _normalize_call_duration_rules(requested.get("call_duration_rules", {}))
         if actual_rules != expected_rules:
             return "VPS did not persist the route-specific connected call limits; no settings were reported as saved"
+
+    if "supervision" in requested:
+        if "supervision" not in endpoint and "Supervision" not in endpoint:
+            return (
+                "The VPS SIP API is outdated and ignored supervisor permissions. "
+                f"Deploy the VPS server that matches addon version {ADDON_VERSION}, then save again."
+            )
+        actual_supervision = _normalize_supervision(endpoint.get("supervision", endpoint.get("Supervision", {})))
+        expected_supervision = _normalize_supervision(requested.get("supervision", {}))
+        if actual_supervision != expected_supervision:
+            return "VPS did not persist the supervisor permissions; no settings were reported as saved"
 
     return ""
 
@@ -1323,6 +1358,14 @@ class LocalAPI:
                     status=400,
                 )
             payload["call_duration_rules"] = raw_rules
+        if "supervision" in body:
+            raw_supervision = body.get("supervision")
+            if not isinstance(raw_supervision, dict):
+                return web.json_response(
+                    {"error": "supervision must be an object"},
+                    status=400,
+                )
+            payload["supervision"] = _normalize_supervision(raw_supervision)
         if "enabled" in body:
             payload["enabled"] = bool(body.get("enabled"))
 
@@ -3264,6 +3307,9 @@ class LocalAPI:
                 "pre_ring_announcement_text": item.get("pre_ring_announcement_text", item.get("PreRingAnnouncementText", "")),
                 "call_duration_rules": _normalize_call_duration_rules(
                     item.get("call_duration_rules", item.get("CallDurationRules", {}))
+                ),
+                "supervision": _normalize_supervision(
+                    item.get("supervision", item.get("Supervision", item.get("SupervisionConfig", {})))
                 ),
                 "enabled": bool(item.get("enabled", item.get("Enabled", True))),
                 "registered": bool(item.get("registered", item.get("Registered", False))),

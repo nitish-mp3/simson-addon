@@ -26,6 +26,18 @@ Standard SIP cannot send arbitrary audio to a receiving handset before that hand
 
 Under a SIP phone, **Route-specific connected call limits** can end only a selected source-to-target route after a configured number of connected seconds. For example, a rule `1027 -> 1028 = 15 seconds` affects only calls from 1027 to 1028. Ringing and the before-ring announcement do not consume this time, and all routes without a rule remain unlimited. Sources must be enabled SIP phones in the same site.
 
+### Authorized call supervision
+
+The **SIP Phones** page has a collapsed **Supervisor access** section on every non-gateway phone. Enable it only on manager/reception phones, select the permitted same-site target phones, and independently allow:
+
+- **Silent monitor**: the supervisor hears the selected active phone without being heard.
+- **Whisper**: the supervisor can coach the selected phone without the remote party hearing the supervisor.
+- **Full barge**: all parties can hear one another.
+
+The default feature prefixes are `*81`, `*82`, and `*83`. Append the exact permitted target extension, for example `*811028`, `*821028`, or `*831028`. Prefixes can be changed per supervisor, but must start with `*` and cannot overlap on that phone. Simson authorizes the authenticated SIP endpoint rather than trusting caller ID, and it rejects cross-site, self-target, disabled, or unselected endpoints.
+
+Supervision is disabled by default and does not replace normal extension dialing. Do not create a broad advanced route for the supervisor extension; that would intentionally route ordinary calls and is separate from this feature.
+
 ## Installation
 
 1. Add this repository to Home Assistant: **Settings -> Add-ons -> Add-on Store -> ... -> Repositories -> Paste URL**.

@@ -379,6 +379,25 @@ function normalizeCallDurationRules(value) {
   return result;
 }
 
+function normalizeSupervision(value) {
+  if (typeof value === "string") {
+    try { value = JSON.parse(value || "{}"); } catch (_) { value = {}; }
+  }
+  const config = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return {
+    enabled: Boolean(config.enabled ?? config.Enabled ?? false),
+    listen: Boolean(config.listen ?? config.Listen ?? false),
+    listen_key: String(config.listen_key ?? config.ListenKey ?? "*81").trim() || "*81",
+    whisper: Boolean(config.whisper ?? config.Whisper ?? false),
+    whisper_key: String(config.whisper_key ?? config.WhisperKey ?? "*82").trim() || "*82",
+    barge: Boolean(config.barge ?? config.Barge ?? false),
+    barge_key: String(config.barge_key ?? config.BargeKey ?? "*83").trim() || "*83",
+    targets: Array.isArray(config.targets ?? config.Targets)
+      ? (config.targets ?? config.Targets).map((item) => String(item || "").trim()).filter(Boolean)
+      : [],
+  };
+}
+
 function normalizeSipEndpoint(ep) {
   if (!ep || typeof ep !== "object") return null;
   return {
@@ -407,6 +426,7 @@ function normalizeSipEndpoint(ep) {
     pre_ring_announcement: ep.pre_ring_announcement ?? ep.PreRingAnnouncement ?? "",
     pre_ring_announcement_text: ep.pre_ring_announcement_text ?? ep.PreRingAnnouncementText ?? "",
     call_duration_rules: normalizeCallDurationRules(ep.call_duration_rules ?? ep.CallDurationRules ?? {}),
+    supervision: normalizeSupervision(ep.supervision ?? ep.Supervision ?? ep.supervision_config ?? ep.SupervisionConfig ?? {}),
     enabled: ep.enabled ?? ep.Enabled ?? true,
     registered: Boolean(ep.registered ?? ep.Registered ?? false),
     contact_status: ep.contact_status ?? ep.ContactStatus ?? "",
@@ -1218,6 +1238,12 @@ function sipRow(raw) {
     ? `caller waiting announcement "${ep.pre_ring_announcement_text}"`
     : "no caller waiting announcement";
   const durationRuleCount = Object.keys(ep.call_duration_rules || {}).length;
+  const supervision = normalizeSupervision(ep.supervision);
+  const supervisionModes = [
+    supervision.listen ? "monitor" : "",
+    supervision.whisper ? "whisper" : "",
+    supervision.barge ? "barge" : "",
+  ].filter(Boolean);
   return `
     <div class="sip-manage-row ${isGateway ? "protected" : ""}">
       <div class="sip-main">
@@ -1225,6 +1251,7 @@ function sipRow(raw) {
           <div class="row-title">${esc(ep.extension || "-")} ${ep.description ? `<span>${esc(ep.description)}</span>` : ""}</div>
           <div class="row-sub">User ${esc(ep.username || "-")} · ${esc(ep.route_to || "any available node")} · ${ep.video_enabled ? "Audio + H.264" : "Audio only"} · ${esc(autoAnswerText)} · ${esc(speakerText)} · ${esc(callbackText)} · ${esc(preRingPromptText)} · ${esc(answerPromptText)} · ${durationRuleCount ? `${durationRuleCount} timed route${durationRuleCount === 1 ? "" : "s"}` : "no call time limit"}</div>
           <div class="row-sub">Live contact: ${esc(contactText)}</div>
+          ${!isGateway && supervision.enabled ? `<div class="row-sub supervision-summary">Supervisor access: ${esc(supervisionModes.join(", ") || "not configured")} · ${supervision.targets.length} permitted target${supervision.targets.length === 1 ? "" : "s"}</div>` : ""}
         </div>
         <div class="row-actions">
           <span class="pill ${enabled ? "ok" : "bad"}">${enabled ? "enabled" : "disabled"}</span>
@@ -1337,6 +1364,7 @@ function sipRow(raw) {
           <label><input data-sip-id="${esc(endpointId)}" data-sip-key="callback_caller_auto_answer" type="checkbox" ${ep.callback_caller_auto_answer ? "checked" : ""}> Caller callback auto-answer</label>
           <label><input data-sip-id="${esc(endpointId)}" data-sip-key="callback_caller_auto_speaker" type="checkbox" ${ep.callback_caller_auto_speaker ? "checked" : ""}> Caller callback speaker/intercom</label>
         </div>
+        ${!isGateway ? supervisionEditor(endpointId, ep.extension, supervision) : ""}
       </div>
       <div class="sip-actions">
         <button class="btn small secondary" data-action="save-sip" data-id="${esc(endpointId)}">Save Device</button>
@@ -1346,6 +1374,57 @@ function sipRow(raw) {
       </div>
     </div>
   `;
+}
+
+function supervisionTargetOptions(endpointId, sourceExtension, selectedTargets) {
+  const selected = new Set((selectedTargets || []).map(String));
+  const endpoints = state.sip
+    .map(normalizeSipEndpoint)
+    .filter((item) => item && item.enabled !== false && !isGatewaySip(item) && item.extension && item.extension !== sourceExtension);
+  if (!endpoints.length) return `<div class="empty compact">No other enabled SIP phones are available on this site.</div>`;
+  return endpoints.map((item) => {
+    const itemId = item.id || item.extension || item.username;
+    return `
+      <label class="supervision-target">
+        <input type="checkbox" data-supervision-owner="${esc(endpointId)}" data-supervision-target="${esc(item.extension)}" ${selected.has(String(item.extension)) ? "checked" : ""}>
+        <span><b>${esc(item.extension)}</b>${item.description ? `<small>${esc(item.description)}</small>` : ""}</span>
+        <i class="${item.registered ? "online" : "offline"}">${item.registered ? "online" : "offline"}</i>
+      </label>`;
+  }).join("");
+}
+
+function supervisionEditor(endpointId, sourceExtension, supervision) {
+  const open = supervision.enabled ? "open" : "";
+  return `
+    <details class="field full supervision-panel" ${open}>
+      <summary>
+        <span><b>Supervisor access</b><small>Secure monitor, whisper, and barge permissions for ${esc(sourceExtension || "this extension")}</small></span>
+        <span class="pill ${supervision.enabled ? "ok" : ""}">${supervision.enabled ? "enabled" : "off"}</span>
+      </summary>
+      <div class="supervision-body">
+        <label class="supervision-enable"><input data-sip-id="${esc(endpointId)}" data-sip-key="supervision_enabled" type="checkbox" ${supervision.enabled ? "checked" : ""}> Allow this authenticated SIP phone to supervise selected calls</label>
+        <div class="supervision-security">Authorization uses the registered SIP endpoint, not caller ID. The phone can supervise only the target extensions selected below.</div>
+        <div class="supervision-modes">
+          <div class="supervision-mode">
+            <label><input data-sip-id="${esc(endpointId)}" data-sip-key="supervision_listen" type="checkbox" ${supervision.listen ? "checked" : ""}> Silent monitor</label>
+            <input data-sip-id="${esc(endpointId)}" data-sip-key="supervision_listen_key" value="${esc(supervision.listen_key)}" maxlength="7" aria-label="Silent monitor key">
+            <small>Dial ${esc(supervision.listen_key)} + target. Neither party hears the supervisor.</small>
+          </div>
+          <div class="supervision-mode">
+            <label><input data-sip-id="${esc(endpointId)}" data-sip-key="supervision_whisper" type="checkbox" ${supervision.whisper ? "checked" : ""}> Whisper</label>
+            <input data-sip-id="${esc(endpointId)}" data-sip-key="supervision_whisper_key" value="${esc(supervision.whisper_key)}" maxlength="7" aria-label="Whisper key">
+            <small>Dial ${esc(supervision.whisper_key)} + target. Supervisor coaches the target privately.</small>
+          </div>
+          <div class="supervision-mode">
+            <label><input data-sip-id="${esc(endpointId)}" data-sip-key="supervision_barge" type="checkbox" ${supervision.barge ? "checked" : ""}> Full barge</label>
+            <input data-sip-id="${esc(endpointId)}" data-sip-key="supervision_barge_key" value="${esc(supervision.barge_key)}" maxlength="7" aria-label="Full barge key">
+            <small>Dial ${esc(supervision.barge_key)} + target. Everyone can hear the supervisor.</small>
+          </div>
+        </div>
+        <div class="supervision-targets-head"><b>Permitted target phones</b><span>Select one or more active SIP extensions</span></div>
+        <div class="supervision-targets">${supervisionTargetOptions(endpointId, sourceExtension, supervision.targets)}</div>
+      </div>
+    </details>`;
 }
 
 function isGatewaySip(ep) {
@@ -2387,6 +2466,12 @@ function collectDurationRules(endpointId, targetExtension) {
   return rules;
 }
 
+function collectSupervisionTargets(endpointId) {
+  return Array.from(document.querySelectorAll(`[data-supervision-owner="${CSS.escape(endpointId)}"][data-supervision-target]:checked`))
+    .map((item) => String(item.dataset.supervisionTarget || "").trim())
+    .filter(Boolean);
+}
+
 function renderedSipEndpointIds() {
   return Array.from(document.querySelectorAll("[data-sip-id][data-sip-key]"))
     .map((el) => el.dataset.sipId)
@@ -2416,6 +2501,16 @@ function sipUpdatePayload(endpointId) {
     pre_ring_announcement_text: sipFieldValue(endpointId, "pre_ring_announcement_text"),
     answer_announcement_text: sipFieldValue(endpointId, "answer_announcement_text"),
     call_duration_rules: collectDurationRules(endpointId, endpoint?.extension || ""),
+    supervision: {
+      enabled: Boolean(sipFieldValue(endpointId, "supervision_enabled")),
+      listen: Boolean(sipFieldValue(endpointId, "supervision_listen")),
+      listen_key: sipFieldValue(endpointId, "supervision_listen_key") || "*81",
+      whisper: Boolean(sipFieldValue(endpointId, "supervision_whisper")),
+      whisper_key: sipFieldValue(endpointId, "supervision_whisper_key") || "*82",
+      barge: Boolean(sipFieldValue(endpointId, "supervision_barge")),
+      barge_key: sipFieldValue(endpointId, "supervision_barge_key") || "*83",
+      targets: collectSupervisionTargets(endpointId),
+    },
     enabled: Boolean(sipFieldValue(endpointId, "enabled")),
   };
   const password = sipFieldValue(endpointId, "password");
