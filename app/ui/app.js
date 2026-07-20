@@ -1395,6 +1395,13 @@ function supervisionTargetOptions(endpointId, sourceExtension, selectedTargets) 
 
 function supervisionEditor(endpointId, sourceExtension, supervision) {
   const open = supervision.enabled ? "open" : "";
+  const dialHelp = (key, target = "target") => {
+    const configured = String(key || "");
+    const fallback = configured.startsWith("*") ? configured.slice(1) : configured;
+    return fallback && fallback !== configured
+      ? `Dial ${configured} + ${target}. If the handset reserves *, dial ${fallback} + ${target}.`
+      : `Dial ${configured} + ${target}.`;
+  };
   return `
     <details class="field full supervision-panel" ${open}>
       <summary>
@@ -1408,17 +1415,17 @@ function supervisionEditor(endpointId, sourceExtension, supervision) {
           <div class="supervision-mode">
             <label><input data-sip-id="${esc(endpointId)}" data-sip-key="supervision_listen" type="checkbox" ${supervision.listen ? "checked" : ""}> Silent monitor</label>
             <input data-sip-id="${esc(endpointId)}" data-sip-key="supervision_listen_key" value="${esc(supervision.listen_key)}" maxlength="7" aria-label="Silent monitor key">
-            <small>Dial ${esc(supervision.listen_key)} + target. Neither party hears the supervisor.</small>
+            <small>${esc(dialHelp(supervision.listen_key))} Neither party hears the supervisor.</small>
           </div>
           <div class="supervision-mode">
             <label><input data-sip-id="${esc(endpointId)}" data-sip-key="supervision_whisper" type="checkbox" ${supervision.whisper ? "checked" : ""}> Whisper</label>
             <input data-sip-id="${esc(endpointId)}" data-sip-key="supervision_whisper_key" value="${esc(supervision.whisper_key)}" maxlength="7" aria-label="Whisper key">
-            <small>Dial ${esc(supervision.whisper_key)} + target. Supervisor coaches the target privately.</small>
+            <small>${esc(dialHelp(supervision.whisper_key))} Supervisor coaches the target privately.</small>
           </div>
           <div class="supervision-mode">
             <label><input data-sip-id="${esc(endpointId)}" data-sip-key="supervision_barge" type="checkbox" ${supervision.barge ? "checked" : ""}> Full barge</label>
             <input data-sip-id="${esc(endpointId)}" data-sip-key="supervision_barge_key" value="${esc(supervision.barge_key)}" maxlength="7" aria-label="Full barge key">
-            <small>Dial ${esc(supervision.barge_key)} + target. Everyone can hear the supervisor.</small>
+            <small>${esc(dialHelp(supervision.barge_key))} Everyone can hear the supervisor.</small>
           </div>
         </div>
         <div class="supervision-targets-head"><b>Permitted target phones</b><span>Select one or more active SIP extensions</span></div>
