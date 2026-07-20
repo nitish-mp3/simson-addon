@@ -14,6 +14,12 @@ const state = {
   routing: null,
   advancedRoutes: [],
   advancedRoutesError: "",
+  callFeatures: {
+    transfer_code: "*84",
+    conference_code: "*85",
+    enabled: true,
+  },
+  callFeaturesError: "",
   notificationTargets: [],
   notificationTargetsError: "",
   notificationPickerOpen: false,
@@ -713,13 +719,17 @@ function renderAdvancedRoutes() {
   const draft = state.advancedDraft;
   return `
     <section class="advanced-routing" aria-labelledby="advanced-routing-title">
+      ${renderCallFeaturePolicy()}
       <div class="advanced-heading">
         <div>
           <div class="kicker">Per-line orchestration</div>
           <h2 id="advanced-routing-title">Multi-level call routes</h2>
           <p>Match one gateway or SIP source, ring targets in parallel, then move to the next stage only when nobody answers.</p>
         </div>
-        <button class="btn" data-action="advanced-new">+ New plan</button>
+        <div class="advanced-heading-actions">
+          <button class="btn secondary" data-action="advanced-direct-forward">+ Direct outside forward</button>
+          <button class="btn" data-action="advanced-new">+ New plan</button>
+        </div>
       </div>
       <div class="route-plan-list">
         ${state.advancedRoutesError ? `<div class="inline-notice error"><div><b>Advanced routing could not be loaded</b><span>${esc(state.advancedRoutesError)}</span></div><button class="btn small secondary" data-action="refresh">Retry</button></div>` : ""}
@@ -727,6 +737,32 @@ function renderAdvancedRoutes() {
       </div>
       ${draft ? advancedRouteEditor(draft) : ""}
     </section>`;
+}
+
+function renderCallFeaturePolicy() {
+  const features = state.callFeatures || {};
+  return `<div class="site-feature-card">
+    <div class="site-feature-copy">
+      <div class="kicker">Account-wide phone controls</div>
+      <h3>Global transfer and conference codes</h3>
+      <p>One customizable code policy is inherited by eligible SIP phones in this site/account. Other customer sites remain isolated.</p>
+    </div>
+    <label class="toggle-line feature-enabled"><input type="checkbox" data-call-feature-key="enabled" ${features.enabled !== false ? "checked" : ""}> Enabled</label>
+    <div class="feature-code-grid">
+      <div class="field">
+        <label>Blind transfer prefix</label>
+        <input data-call-feature-key="transfer_code" value="${esc(features.transfer_code || "*84")}" inputmode="tel" placeholder="*84">
+        <small>During an active direct SIP call, press this code and enter a same-site destination when the phone prompts. New calls use the saved code immediately.</small>
+      </div>
+      <div class="field">
+        <label>Conference launch prefix</label>
+        <input data-call-feature-key="conference_code" value="${esc(features.conference_code || "*85")}" inputmode="tel" placeholder="*85">
+        <small>From an idle phone, dial this prefix plus a same-site SIP extension or outside number, for example <b>${esc(features.conference_code || "*85")}1028</b>. Outside numbers use this account's selected default outbound gateway.</small>
+      </div>
+      <button class="btn feature-save" data-action="call-features-save">Save phone codes</button>
+    </div>
+    ${state.callFeaturesError ? `<div class="inline-notice error compact-feature-error"><div><b>Phone controls unavailable</b><span>${esc(state.callFeaturesError)}</span></div></div>` : ""}
+  </div>`;
 }
 
 function advancedRouteSummary(route) {
@@ -1906,6 +1942,12 @@ function onInput(event) {
     return;
   }
 
+  if (el.matches("[data-call-feature-key]")) {
+    const key = el.dataset.callFeatureKey;
+    state.callFeatures[key] = el.type === "checkbox" ? el.checked : el.value;
+    return;
+  }
+
   if (el.matches("[data-advanced-stage-index][data-advanced-stage-key]")) {
     const stage = state.advancedDraft?.stages?.[Number(el.dataset.advancedStageIndex)];
     if (!stage) return;
@@ -2039,6 +2081,8 @@ async function onClick(event) {
     if (action === "add-route") addRoute();
     if (action === "delete-target") deleteTarget(btn.dataset.index);
     if (action === "target-mode") setTargetMode(btn.dataset.id, btn.dataset.mode);
+    if (action === "call-features-save") await saveCallFeatures();
+    if (action === "advanced-direct-forward") openDirectForwardRoute();
     if (action === "advanced-new") openNewAdvancedRoute();
     if (action === "advanced-edit") editAdvancedRoute(btn.dataset.id);
     if (action === "advanced-close") closeAdvancedRoute();
@@ -2089,6 +2133,51 @@ function openNewAdvancedRoute() {
   state.advancedDraft = newAdvancedRoute();
   renderRouting();
   requestAnimationFrame(() => $("advanced-route-form")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+}
+
+function openDirectForwardRoute() {
+  const gateways = gatewayEndpoints();
+  if (gateways.length < 2) {
+    throw new Error("Direct outside forwarding needs separate inbound and outbound gateways. Add or enable a second gateway first.");
+  }
+  state.advancedDraft = {
+    id: "",
+    name: "Direct outside forward",
+    ingress_kind: "gateway",
+    ingress_value: gateways[0].extension,
+    enabled: true,
+    stages: [{
+      id: `stage_${randomHex(4)}`,
+      name: "Forward immediately",
+      ring_seconds: 60,
+      max_call_seconds: 0,
+      answer_mode: "first_answer",
+      max_answered: 1,
+      targets: [{
+        id: `target_${randomHex(4)}`,
+        kind: "external",
+        value: "",
+        trunk: gateways[1].extension,
+        label: "Outside destination",
+        enabled: true,
+      }],
+    }],
+  };
+  renderRouting();
+  requestAnimationFrame(() => $("advanced-route-form")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+}
+
+async function saveCallFeatures() {
+  const payload = {
+    transfer_code: String(state.callFeatures?.transfer_code || "").trim(),
+    conference_code: String(state.callFeatures?.conference_code || "").trim(),
+    enabled: state.callFeatures?.enabled !== false,
+  };
+  const saved = await api("api/call-features", { method: "PUT", body: JSON.stringify(payload) });
+  state.callFeatures = saved;
+  state.callFeaturesError = "";
+  toast("Site phone codes saved and applied.");
+  renderRouting();
 }
 
 function editAdvancedRoute(id) {
@@ -2216,6 +2305,18 @@ function advancedRouteValidationError(route) {
     }
     if (stage?.answer_mode === "conference" && enabledTargets.some((target) => target.kind !== "sip")) {
       return `Stage ${stageIndex + 1} conference mode supports SIP phones only.`;
+    }
+    const externalTargets = enabledTargets.filter((target) => String(target?.kind || "").trim().toLowerCase() === "external");
+    if (externalTargets.length) {
+      if (enabledTargets.length !== 1) {
+        return `Stage ${stageIndex + 1} outside forwarding must be the only destination in its stage. This prevents an analog gateway from answering and cancelling parallel phones.`;
+      }
+      if (stage?.answer_mode !== "first_answer") {
+        return `Stage ${stageIndex + 1} outside forwarding must use First answer wins.`;
+      }
+      if (ingressKind === "gateway" && String(externalTargets[0]?.trunk || "").trim() === ingressValue) {
+        return `Stage ${stageIndex + 1} cannot send the call back out through incoming gateway ${ingressValue}. Choose a separate outbound gateway.`;
+      }
     }
     for (const target of enabledTargets) {
       if (target?.enabled === false) continue;
@@ -2751,7 +2852,7 @@ async function saveSettings() {
 
 async function refresh() {
   setSaveState("Refreshing…");
-  const [health, status, settings, nodes, sip, routing, advancedRouteResult, notificationTargetResult] = await Promise.all([
+  const [health, status, settings, nodes, sip, routing, advancedRouteResult, callFeatureResult, notificationTargetResult] = await Promise.all([
     api("api/health").catch(() => null),
     api("api/status").catch(() => null),
     api("api/settings").catch(() => null),
@@ -2761,6 +2862,9 @@ async function refresh() {
     api("api/advanced-routes")
       .then((data) => ({ data, error: "" }))
       .catch((error) => ({ data: [], error: error?.message || "Request failed" })),
+    api("api/call-features")
+      .then((data) => ({ data, error: "" }))
+      .catch((error) => ({ data: null, error: error?.message || "Phone controls could not be loaded" })),
     api("api/notification-targets")
       .then((data) => ({ data, error: "" }))
       .catch((error) => ({ data: { targets: [] }, error: error?.message || "Notification discovery failed" })),
@@ -2774,6 +2878,8 @@ async function refresh() {
   state.routing = routing;
   state.advancedRoutes = Array.isArray(advancedRouteResult.data) ? advancedRouteResult.data : [];
   state.advancedRoutesError = advancedRouteResult.error || "";
+  if (callFeatureResult.data) state.callFeatures = callFeatureResult.data;
+  state.callFeaturesError = callFeatureResult.error || "";
   state.notificationTargets = Array.isArray(notificationTargetResult.data?.targets) ? notificationTargetResult.data.targets : [];
   state.notificationTargetsError = notificationTargetResult.error || "";
   if (state.advancedDraft?.id) {

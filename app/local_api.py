@@ -19,7 +19,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.8.9"
+ADDON_VERSION = "4.9.1"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -301,6 +301,8 @@ class LocalAPI:
         self.app.router.add_post("/api/advanced-routes", self.handle_create_advanced_route)
         self.app.router.add_put("/api/advanced-routes/{id}", self.handle_update_advanced_route)
         self.app.router.add_delete("/api/advanced-routes/{id}", self.handle_delete_advanced_route)
+        self.app.router.add_get("/api/call-features", self.handle_get_call_features)
+        self.app.router.add_put("/api/call-features", self.handle_put_call_features)
 
     async def start(self):
         """Start the local API server, falling back to alternate ports if needed."""
@@ -1029,6 +1031,55 @@ class LocalAPI:
             "DELETE",
             route_id=request.match_info["id"],
         )
+
+    async def _proxy_call_features(
+        self, method: str, payload: dict | None = None
+    ) -> web.Response:
+        """Proxy the current site's PBX feature policy without exposing admin auth."""
+        if not self.cfg.account_id or not self.cfg.admin_token or not self.cfg.server_url:
+            return web.json_response(
+                {"error": "Not yet provisioned — no account created on VPS"}, status=400
+            )
+        url = (
+            f"{self._ws_to_http_url(self.cfg.server_url)}/admin/accounts/"
+            f"{self.cfg.account_id}/call-features"
+        )
+        headers = {"Authorization": f"Bearer {self.cfg.admin_token}"}
+        try:
+            import aiohttp
+
+            timeout = aiohttp.ClientTimeout(total=20)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.request(
+                    method,
+                    url,
+                    headers=headers,
+                    json=payload if method == "PUT" else None,
+                    ssl=False,
+                ) as resp:
+                    body = await resp.text()
+                    try:
+                        data = json.loads(body) if body else {"ok": True}
+                    except Exception:
+                        data = {"error": f"VPS returned HTTP {resp.status}"}
+                    if resp.status >= 400:
+                        logger.error("VPS call-feature %s failed: %s %s", method, resp.status, body[:300])
+                    return web.json_response(data, status=resp.status)
+        except Exception as exc:
+            logger.error("Call-feature proxy error: %s", exc)
+            return web.json_response(
+                {"error": "Could not reach the VPS call-feature service"}, status=502
+            )
+
+    async def handle_get_call_features(self, request: web.Request) -> web.Response:
+        return await self._proxy_call_features("GET")
+
+    async def handle_put_call_features(self, request: web.Request) -> web.Response:
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON"}, status=400)
+        return await self._proxy_call_features("PUT", payload)
 
     async def handle_list_nodes(self, request: web.Request) -> web.Response:
         """List VPS nodes in this site/account so settings can use real route targets."""

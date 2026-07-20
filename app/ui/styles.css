@@ -604,6 +604,58 @@ textarea {
   box-shadow: var(--shadow-md);
 }
 
+.site-feature-card {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.85fr) minmax(0, 1.7fr);
+  gap: 12px 20px;
+  margin-bottom: var(--space-5);
+  padding: 14px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.site-feature-copy h3 {
+  margin-top: 3px;
+  font-size: 16px;
+}
+
+.site-feature-copy p {
+  max-width: 440px;
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.feature-enabled {
+  justify-self: end;
+  align-self: start;
+}
+
+.feature-code-grid {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.feature-code-grid small {
+  display: block;
+  margin-top: 5px;
+  color: var(--text-tertiary);
+  line-height: 1.4;
+}
+
+.feature-save { white-space: nowrap; }
+.compact-feature-error { grid-column: 1 / -1; }
+
+.advanced-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .advanced-heading,
 .advanced-editor-head,
 .advanced-editor-actions {
@@ -1994,6 +2046,26 @@ textarea {
 }
 
 @media (max-width: 640px) {
+  .site-feature-card,
+  .feature-code-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .feature-enabled {
+    justify-self: start;
+  }
+
+  .advanced-heading,
+  .advanced-heading-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .advanced-heading-actions .btn,
+  .feature-save {
+    width: 100%;
+  }
+
   .shell {
     padding: var(--space-2);
   }
