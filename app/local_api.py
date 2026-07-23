@@ -297,6 +297,7 @@ class LocalAPI:
         self.app.router.add_post("/api/sip-endpoints", self.handle_create_sip_endpoint)
         self.app.router.add_put("/api/sip-endpoints/{id}", self.handle_update_sip_endpoint)
         self.app.router.add_delete("/api/sip-endpoints/{id}", self.handle_delete_sip_endpoint)
+        self.app.router.add_post("/api/sip-endpoints/{id}/clear-stuck", self.handle_clear_stuck_sip_endpoint)
         self.app.router.add_get("/api/advanced-routes", self.handle_list_advanced_routes)
         self.app.router.add_post("/api/advanced-routes", self.handle_create_advanced_route)
         self.app.router.add_put("/api/advanced-routes/{id}", self.handle_update_advanced_route)
@@ -1497,6 +1498,29 @@ class LocalAPI:
         except Exception as e:
             logger.error(f"SIP endpoint delete error: {e}")
             return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_clear_stuck_sip_endpoint(self, request: web.Request) -> web.Response:
+        """Release only the selected endpoint's orphaned PJSIP channels."""
+        if not self.cfg.account_id or not self.cfg.admin_token or not self.cfg.server_url:
+            return web.json_response({"error": "Not yet provisioned — no account created on VPS"}, status=400)
+        endpoint_id = request.match_info.get("id")
+        if not endpoint_id:
+            return web.json_response({"error": "endpoint id required"}, status=400)
+        url = f"{self._ws_to_http_url(self.cfg.server_url)}/admin/sip-endpoints/{endpoint_id}/clear-stuck"
+        headers = {"Authorization": f"Bearer {self.cfg.admin_token}"}
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+                async with session.post(url, headers=headers, ssl=False) as resp:
+                    text = await resp.text()
+                    try:
+                        payload = json.loads(text) if text else {}
+                    except Exception:
+                        payload = {"error": text or f"VPS returned {resp.status}"}
+                    return web.json_response(payload, status=resp.status)
+        except Exception as exc:
+            logger.error("SIP endpoint stuck-call cleanup failed: %s", exc)
+            return web.json_response({"error": str(exc)}, status=502)
 
     # --- SSE (Server-Sent Events) for real-time push to Lovelace card ---
 

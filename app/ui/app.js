@@ -724,7 +724,7 @@ function renderAdvancedRoutes() {
         <div>
           <div class="kicker">Per-line orchestration</div>
           <h2 id="advanced-routing-title">Multi-level call routes</h2>
-          <p>Match one gateway or SIP source, ring targets in parallel, then move to the next stage only when nobody answers.</p>
+      <p>Match a called gateway or SIP phone, ring targets in parallel, then move to the next stage only when nobody answers.</p>
         </div>
         <div class="advanced-heading-actions">
           <button class="btn secondary" data-action="advanced-direct-forward">+ Direct outside forward</button>
@@ -775,9 +775,9 @@ function advancedRouteSummary(route) {
   return `<article class="route-plan-summary ${route.enabled ? "" : "disabled"}">
     <div class="route-plan-main">
       <div class="route-plan-title"><span class="pill ${route.enabled ? "ok" : "warn"}">${route.enabled ? "live" : "draft"}</span>${esc(route.name)}</div>
-      <div class="route-plan-ingress"><span>${route.ingress_kind === "sip" ? "Calls placed by" : "Calls entering from"}</span><b>${esc(advancedIngressLabel(route))}</b></div>
+      <div class="route-plan-ingress"><span>${route.ingress_kind === "sip" ? "Calls landing on" : "Calls entering from"}</span><b>${esc(advancedIngressLabel(route))}</b></div>
       <div class="route-stage-path">${path || "No stages"}</div>
-      ${route.ingress_kind === "sip" ? `<div class="route-plan-trigger">Dial <b>100</b> from this phone to run the plan. Dial <b>*100</b> to ring the HAOS card instead.</div>` : ""}
+      ${route.ingress_kind === "sip" ? `<div class="route-plan-trigger">Calls to this SIP extension use this plan, whether they come from another SIP phone, a gateway, or a HAOS node. Normal extension-to-extension calls remain direct when no plan is enabled.</div>` : ""}
     </div>
     <div class="row-actions">
       ${!route.enabled && !stages.some((stage) => stage.answer_mode === "private_hub")
@@ -822,15 +822,15 @@ function advancedRouteEditor(route) {
     </div>
     <div class="advanced-route-basics">
       <div class="field wide"><label>Plan name</label><input data-advanced-route-key="name" value="${esc(route.name)}" placeholder="Main line escalation"></div>
-      <div class="field"><label>Incoming source type</label><select data-advanced-route-key="ingress_kind">
+      <div class="field"><label>Match incoming call by</label><select data-advanced-route-key="ingress_kind">
         ${option("gateway", "Gateway / FXO / GSM", route.ingress_kind)}
         ${option("sip", "SIP phone", route.ingress_kind)}
       </select></div>
-      <div class="field"><label>Incoming source</label>${advancedIngressField(route)}</div>
-      <label class="toggle-line"><input type="checkbox" data-advanced-route-key="enabled" ${route.enabled ? "checked" : ""}> Enable this exact source route</label>
+      <div class="field"><label>${route.ingress_kind === "sip" ? "Called SIP phone" : "Incoming gateway"}</label>${advancedIngressField(route)}</div>
+      <label class="toggle-line"><input type="checkbox" data-advanced-route-key="enabled" ${route.enabled ? "checked" : ""}> Enable this exact landing route</label>
     </div>
     <div class="advanced-route-note">${route.ingress_kind === "sip"
-      ? `This plan starts when SIP phone <b>${esc(route.ingress_value || "not selected")}</b> dials <b>100</b>. Dial <b>*100</b> from that phone to bypass this plan and ring the HAOS card. Normal direct extension calls remain point-to-point.`
+      ? `Calls landing on SIP phone <b>${esc(route.ingress_value || "not selected")}</b> use this plan. The caller can be another SIP phone, a gateway, or a HAOS node; no special <b>100</b> dial is required.`
       : `Only calls arriving through gateway <b>${esc(route.ingress_value || "not selected")}</b> use this plan. Other calls keep their current routing.`}</div>
     ${validationError ? `<div class="inline-notice error"><div><b>Fix this route before saving</b><span>${esc(validationError)}</span></div></div>` : ""}
     <div class="stage-stack">
@@ -1404,6 +1404,9 @@ function sipRow(raw) {
       </div>
       <div class="sip-actions">
         <button class="btn small secondary" data-action="save-sip" data-id="${esc(endpointId)}">Save Device</button>
+        ${isGateway
+          ? `<button class="btn small secondary ghost" data-action="clear-stuck-sip" data-id="${esc(endpointId)}" data-ext="${esc(ep.extension || endpointId)}" title="Release orphaned calls on this gateway">Clear stuck call</button>`
+          : ""}
         ${isGateway
           ? `<button class="btn small red ghost" data-action="delete-sip" data-id="${esc(endpointId)}" data-ext="${esc(ep.extension || endpointId)}" title="Gateway trunks require typed confirmation">Delete Gateway</button>`
           : `<button class="btn small red" data-action="delete-sip" data-id="${esc(endpointId)}" data-ext="${esc(ep.extension || endpointId)}">Delete</button>`}
@@ -2096,6 +2099,7 @@ async function onClick(event) {
     if (action === "discover-phone") await discoverPhone();
     if (action === "create-sip") await createSip();
     if (action === "save-sip") await saveSip(btn.dataset.id);
+    if (action === "clear-stuck-sip") await clearStuckSip(btn.dataset.id, btn.dataset.ext);
     if (action === "delete-sip") await deleteSip(btn.dataset.id, btn.dataset.ext);
     if (action === "add-duration-rule") addDurationRule(btn.dataset.id, btn.dataset.targetExt);
     if (action === "remove-duration-rule") removeDurationRule(btn);
@@ -2678,6 +2682,15 @@ async function deleteSip(endpointId, extension) {
   }
   await api(`api/sip-endpoints/${encodeURIComponent(endpointId)}`, { method: "DELETE" });
   toast(`SIP device ${label} deleted.`);
+  await refresh();
+}
+
+async function clearStuckSip(endpointId, extension) {
+  if (!endpointId) return;
+  const label = extension || endpointId;
+  if (!confirm(`Clear live channels for ${label}? This only releases calls currently using this endpoint.`)) return;
+  const result = await api(`api/sip-endpoints/${encodeURIComponent(endpointId)}/clear-stuck`, { method: "POST" });
+  toast(result.cleared ? `Released ${result.cleared} channel${result.cleared === 1 ? "" : "s"} on ${label}.` : `${label} has no live stuck channel.`);
   await refresh();
 }
 
