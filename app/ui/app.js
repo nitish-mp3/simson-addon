@@ -4,6 +4,10 @@
    ========================================================= */
 
 const boot = window.__SIMSON__ || {};
+const LIVE_STATUS_POLL_MS = 2000;
+
+let liveStatusPollBusy = false;
+let liveStatusSignature = "";
 
 const state = {
   page: "overview",
@@ -17,9 +21,17 @@ const state = {
   callFeatures: {
     transfer_code: "*84",
     conference_code: "*85",
+    invite_listen_code: "*86",
+    invite_whisper_code: "*87",
+    invite_barge_code: "*88",
     enabled: true,
   },
   callFeaturesError: "",
+  activeInvite: {
+    source_extension: "",
+    target: "",
+    mode: "barge",
+  },
   notificationTargets: [],
   notificationTargetsError: "",
   notificationPickerOpen: false,
@@ -230,6 +242,39 @@ function targetListText(ids) {
   const list = Array.isArray(ids) ? ids.filter(Boolean) : [];
   if (!list.length) return "No destinations selected";
   return list.map(targetDisplayName).join(" + ");
+}
+
+function activeCallDisplay(active) {
+  if (!active) return "Call";
+  const extension = String(
+    active.direction === "incoming"
+      ? (active.source_extension || active.caller_number || active.caller_id || "")
+      : (active.target_extension || active.callee_number || active.remote_number || ""),
+  ).trim();
+  const endpoint = state.sip
+    .map(normalizeSipEndpoint)
+    .find((item) => item && String(item.extension) === extension);
+  return active.display_name
+    || active.remote_name
+    || active.caller_name
+    || active.callee_name
+    || endpoint?.description
+    || extension
+    || active.remote_label
+    || active.remote_node_id
+    || "Active call";
+}
+
+function activeCallSubtitle(active) {
+  const direction = active?.direction === "incoming" ? "Incoming" : "Outgoing";
+  const route = active?.routing?.target_label
+    || active?.routing?.target_id
+    || active?.target_label
+    || active?.target_type
+    || active?.call_type
+    || "voice";
+  const elapsed = Number(active?.active_for || active?.duration_seconds || 0);
+  return `${direction} · ${route}${elapsed > 0 ? ` · ${Math.floor(elapsed)}s` : ""}`;
 }
 
 async function api(path, options = {}) {
@@ -538,8 +583,8 @@ function renderOverview() {
         </div>
         ${active ? `
           <div class="row" style="background:transparent;border:0;padding:8px 0;">
-            <div class="row-title">${esc(active.caller_name || active.caller_id || active.call_id)}</div>
-            <div class="row-sub">${esc(active.direction || "call")} · ${esc(active.call_type || "")}</div>
+            <div class="row-title">${esc(activeCallDisplay(active))}</div>
+            <div class="row-sub">${esc(activeCallSubtitle(active))}</div>
           </div>
         ` : `<div class="empty">No active call on this addon.</div>`}
       </div>
@@ -741,25 +786,63 @@ function renderAdvancedRoutes() {
 
 function renderCallFeaturePolicy() {
   const features = state.callFeatures || {};
+  const phones = state.sip.map(normalizeSipEndpoint).filter((ep) => ep && ep.enabled !== false && !isGatewaySip(ep));
+  const gateways = state.sip.map(normalizeSipEndpoint).filter((ep) => ep && ep.enabled !== false && isGatewaySip(ep));
+  const source = state.activeInvite.source_extension || phones[0]?.extension || "";
+  const phoneOptions = phones.map((ep) => `<option value="${esc(ep.extension)}">${esc(ep.extension)} · ${esc(ep.description || ep.username || "SIP phone")}</option>`).join("");
+  const targetOptions = phones.map((ep) => `<option value="${esc(ep.extension)}">${esc(ep.description || ep.username || ep.extension)}</option>`).join("");
+  const gatewayHelp = gateways.length ? `Outside format: *${esc(gateways[0].extension)}*number` : "Add an enabled gateway before inviting an outside number.";
   return `<div class="site-feature-card">
     <div class="site-feature-copy">
       <div class="kicker">Account-wide phone controls</div>
-      <h3>Global transfer and conference codes</h3>
-      <p>One customizable code policy is inherited by eligible SIP phones in this site/account. Other customer sites remain isolated.</p>
+      <h3>Transfer, conference and active-call invitations</h3>
+      <p>These codes apply only to SIP phones in this site/account. A person already on a call can invite another phone as a private listener, coach, or full participant.</p>
     </div>
     <label class="toggle-line feature-enabled"><input type="checkbox" data-call-feature-key="enabled" ${features.enabled !== false ? "checked" : ""}> Enabled</label>
     <div class="feature-code-grid">
       <div class="field">
         <label>Blind transfer prefix</label>
         <input data-call-feature-key="transfer_code" value="${esc(features.transfer_code || "*84")}" inputmode="tel" placeholder="*84">
-        <small>During an active direct SIP call, press this code and enter a same-site destination when the phone prompts. New calls use the saved code immediately.</small>
+        <small>While connected, send <b>${esc(features.transfer_code || "*84")}1028#</b>. For an outside transfer through a chosen gateway, send <b>${esc(features.transfer_code || "*84")}*7014*9123208334#</b>.</small>
       </div>
       <div class="field">
         <label>Conference launch prefix</label>
         <input data-call-feature-key="conference_code" value="${esc(features.conference_code || "*85")}" inputmode="tel" placeholder="*85">
-        <small>From an idle phone, dial this prefix plus a same-site SIP extension or outside number, for example <b>${esc(features.conference_code || "*85")}1028</b>. Outside numbers use this account's selected default outbound gateway.</small>
+        <small>While connected, send <b>${esc(features.conference_code || "*85")}1028#</b> to invite SIP 1028. Send <b>${esc(features.conference_code || "*85")}*7014*9123208334#</b> to invite an outside number through gateway 7014.</small>
       </div>
+      <div class="field">
+        <label>Invite as listener</label>
+        <input data-call-feature-key="invite_listen_code" value="${esc(features.invite_listen_code || "*86")}" inputmode="tel" placeholder="*86">
+        <small>The current participant sends <b>${esc(features.invite_listen_code || "*86")}1026#</b>. SIP 1026 hears the active call but cannot speak into it.</small>
+      </div>
+      <div class="field">
+        <label>Invite as private coach</label>
+        <input data-call-feature-key="invite_whisper_code" value="${esc(features.invite_whisper_code || "*87")}" inputmode="tel" placeholder="*87">
+        <small>The current participant sends this prefix plus an extension and <b>#</b>. The invited phone can privately coach that participant.</small>
+      </div>
+      <div class="field">
+        <label>Invite with full barge</label>
+        <input data-call-feature-key="invite_barge_code" value="${esc(features.invite_barge_code || "*88")}" inputmode="tel" placeholder="*88">
+        <small>The current participant sends this prefix plus a destination and <b>#</b>. Everyone can hear and speak after the invited destination answers.</small>
+      </div>
+      <div class="feature-code-help"><b>Handset codes:</b> enter them during an established call and finish with <b>#</b>. The phone must send DTMF as RFC2833/RFC4733 RTP events. SIP INFO or in-band tones may never reach Simson.</div>
       <button class="btn feature-save" data-action="call-features-save">Save phone codes</button>
+    </div>
+    <div class="active-invite-panel">
+      <div class="active-invite-heading">
+        <div><span class="kicker">Reliable active-call control</span><h4>Invite someone into a live SIP call</h4></div>
+        <small>Use this when a handset does not transmit feature-code DTMF. The selected source must already be answered and active.</small>
+      </div>
+      <div class="active-invite-grid">
+        <label><span>Active participant</span><select data-active-invite-key="source_extension">${phoneOptions.replace(`value="${esc(source)}"`, `value="${esc(source)}" selected`)}</select></label>
+        <label><span>Invite as</span><select data-active-invite-key="mode">
+          <option value="listen" ${state.activeInvite.mode === "listen" ? "selected" : ""}>Listener · cannot speak</option>
+          <option value="whisper" ${state.activeInvite.mode === "whisper" ? "selected" : ""}>Private coach · source hears them</option>
+          <option value="barge" ${state.activeInvite.mode === "barge" ? "selected" : ""}>Full participant · everyone hears</option>
+        </select></label>
+        <label><span>SIP extension or outside route</span><input data-active-invite-key="target" list="active-invite-targets" value="${esc(state.activeInvite.target)}" placeholder="1026 or *7014*9123208334"><datalist id="active-invite-targets">${targetOptions}</datalist><small>${gatewayHelp}</small></label>
+        <button class="btn active-invite-button" data-action="active-call-invite" ${phones.length < 2 ? "disabled" : ""}>Invite now</button>
+      </div>
     </div>
     ${state.callFeaturesError ? `<div class="inline-notice error compact-feature-error"><div><b>Phone controls unavailable</b><span>${esc(state.callFeaturesError)}</span></div></div>` : ""}
   </div>`;
@@ -830,7 +913,7 @@ function advancedRouteEditor(route) {
       <label class="toggle-line"><input type="checkbox" data-advanced-route-key="enabled" ${route.enabled ? "checked" : ""}> Enable this exact landing route</label>
     </div>
     <div class="advanced-route-note">${route.ingress_kind === "sip"
-      ? `Calls landing on SIP phone <b>${esc(route.ingress_value || "not selected")}</b> use this plan. The caller can be another SIP phone, a gateway, or a HAOS node; no special <b>100</b> dial is required.`
+      ? `Calls landing on SIP phone <b>${esc(route.ingress_value || "not selected")}</b> use this plan. To ring that phone before fallback, select it in <b>Stage 1</b>, set its ring time, then put 1027 or another destination in <b>Stage 2</b>. No special <b>100</b> dial is required.`
       : `Only calls arriving through gateway <b>${esc(route.ingress_value || "not selected")}</b> use this plan. Other calls keep their current routing.`}</div>
     ${validationError ? `<div class="inline-notice error"><div><b>Fix this route before saving</b><span>${esc(validationError)}</span></div></div>` : ""}
     <div class="stage-stack">
@@ -1951,6 +2034,11 @@ function onInput(event) {
     return;
   }
 
+  if (el.matches("[data-active-invite-key]")) {
+    state.activeInvite[el.dataset.activeInviteKey] = el.value;
+    return;
+  }
+
   if (el.matches("[data-advanced-stage-index][data-advanced-stage-key]")) {
     const stage = state.advancedDraft?.stages?.[Number(el.dataset.advancedStageIndex)];
     if (!stage) return;
@@ -2085,6 +2173,7 @@ async function onClick(event) {
     if (action === "delete-target") deleteTarget(btn.dataset.index);
     if (action === "target-mode") setTargetMode(btn.dataset.id, btn.dataset.mode);
     if (action === "call-features-save") await saveCallFeatures();
+    if (action === "active-call-invite") await inviteActiveCall();
     if (action === "advanced-direct-forward") openDirectForwardRoute();
     if (action === "advanced-new") openNewAdvancedRoute();
     if (action === "advanced-edit") editAdvancedRoute(btn.dataset.id);
@@ -2175,6 +2264,9 @@ async function saveCallFeatures() {
   const payload = {
     transfer_code: String(state.callFeatures?.transfer_code || "").trim(),
     conference_code: String(state.callFeatures?.conference_code || "").trim(),
+    invite_listen_code: String(state.callFeatures?.invite_listen_code || "*86").trim(),
+    invite_whisper_code: String(state.callFeatures?.invite_whisper_code || "*87").trim(),
+    invite_barge_code: String(state.callFeatures?.invite_barge_code || "*88").trim(),
     enabled: state.callFeatures?.enabled !== false,
   };
   const saved = await api("api/call-features", { method: "PUT", body: JSON.stringify(payload) });
@@ -2182,6 +2274,23 @@ async function saveCallFeatures() {
   state.callFeaturesError = "";
   toast("Site phone codes saved and applied.");
   renderRouting();
+}
+
+async function inviteActiveCall() {
+  const source = String(state.activeInvite.source_extension || "").trim();
+  const target = String(state.activeInvite.target || "").trim();
+  if (!source || !target) throw new Error("Choose the active participant and enter who should be invited.");
+  const result = await api("api/active-call-invite", {
+    method: "POST",
+    body: JSON.stringify({
+      source_extension: source,
+      target,
+      mode: state.activeInvite.mode || "barge",
+      timeout_sec: 30,
+    }),
+  });
+  toast(`${state.activeInvite.mode === "barge" ? "Participant" : state.activeInvite.mode === "whisper" ? "Coach" : "Listener"} invitation sent to ${target}.`);
+  return result;
 }
 
 function editAdvancedRoute(id) {
@@ -2690,7 +2799,13 @@ async function clearStuckSip(endpointId, extension) {
   const label = extension || endpointId;
   if (!confirm(`Clear live channels for ${label}? This only releases calls currently using this endpoint.`)) return;
   const result = await api(`api/sip-endpoints/${encodeURIComponent(endpointId)}/clear-stuck`, { method: "POST" });
-  toast(result.cleared ? `Released ${result.cleared} channel${result.cleared === 1 ? "" : "s"} on ${label}.` : `${label} has no live stuck channel.`);
+  if (result.cleared) {
+    toast(`Released ${result.cleared} linked Asterisk channel${result.cleared === 1 ? "" : "s"} on ${label}.`);
+  } else if (result.hardware_action_required) {
+    toast(`Asterisk is clear, but gateway ${label} still owns the analog line. Enable CPC/busy-tone/polarity disconnect on that gateway or release its FXO port.`);
+  } else {
+    toast(`Asterisk has no live channel for ${label}.`);
+  }
   await refresh();
 }
 
@@ -2884,6 +2999,7 @@ async function refresh() {
   ]);
   state.health = health;
   state.status = status;
+  liveStatusSignature = statusSignature(status);
   state.settings = settings ? deepMerge(defaults, settings) : getSettings();
   state.nodes = Array.isArray(nodes?.nodes) ? nodes.nodes : [];
   const sipItems = Array.isArray(sip) ? sip : Array.isArray(sip?.endpoints) ? sip.endpoints : [];
@@ -2902,6 +3018,46 @@ async function refresh() {
   state.loaded = true;
   if (!state.dirty) setSaveState("Everything saved", "ok");
   render();
+}
+
+function statusSignature(status) {
+  const active = status?.active_call || null;
+  return JSON.stringify({
+    connected: Boolean(status?.vps_connected),
+    asterisk: Boolean(status?.asterisk_connected),
+    active: active ? {
+      call_id: active.call_id || "",
+      state: active.state || "",
+      direction: active.direction || "",
+      caller: active.caller || active.from || active.source || "",
+      callee: active.callee || active.to || active.target || "",
+      started_at: active.started_at || active.created_at || "",
+      active_for: Number(active.active_for || active.duration_seconds || 0),
+    } : null,
+  });
+}
+
+async function refreshLiveStatus() {
+  if (!state.loaded || liveStatusPollBusy || document.hidden) return;
+  liveStatusPollBusy = true;
+  try {
+    const status = await api("api/status");
+    const signature = statusSignature(status);
+    if (signature === liveStatusSignature) return;
+    state.status = status;
+    liveStatusSignature = signature;
+    if (state.page === "overview") renderOverview();
+    const connection = $("side-conn");
+    if (connection) {
+      connection.innerHTML = status?.vps_connected
+        ? '<span style="color:var(--success)">Online</span>'
+        : '<span style="color:var(--danger)">Offline</span>';
+    }
+  } catch (_) {
+    // The regular refresh path reports persistent failures; a transient poll must not disrupt editing.
+  } finally {
+    liveStatusPollBusy = false;
+  }
 }
 
 function splitList(value) {
@@ -2926,4 +3082,8 @@ shell();
 refresh().catch((err) => {
   setSaveState(err.message || "Could not load dashboard", "bad");
   render();
+});
+setInterval(refreshLiveStatus, LIVE_STATUS_POLL_MS);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshLiveStatus();
 });

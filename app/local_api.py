@@ -19,7 +19,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.9.1"
+ADDON_VERSION = "4.9.5"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -304,6 +304,7 @@ class LocalAPI:
         self.app.router.add_delete("/api/advanced-routes/{id}", self.handle_delete_advanced_route)
         self.app.router.add_get("/api/call-features", self.handle_get_call_features)
         self.app.router.add_put("/api/call-features", self.handle_put_call_features)
+        self.app.router.add_post("/api/active-call-invite", self.handle_active_call_invite)
 
     async def start(self):
         """Start the local API server, falling back to alternate ports if needed."""
@@ -1082,6 +1083,33 @@ class LocalAPI:
             return web.json_response({"error": "invalid JSON"}, status=400)
         return await self._proxy_call_features("PUT", payload)
 
+    async def handle_active_call_invite(self, request: web.Request) -> web.Response:
+        """Invite a SIP or explicit outside destination into one active SIP call."""
+        if not self.cfg.account_id or not self.cfg.admin_token or not self.cfg.server_url:
+            return web.json_response({"error": "Not yet provisioned — no account created on VPS"}, status=400)
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON"}, status=400)
+        url = (
+            f"{self._ws_to_http_url(self.cfg.server_url)}/admin/accounts/"
+            f"{self.cfg.account_id}/active-call-invite"
+        )
+        headers = {"Authorization": f"Bearer {self.cfg.admin_token}"}
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as session:
+                async with session.post(url, headers=headers, json=payload, ssl=False) as resp:
+                    text = await resp.text()
+                    try:
+                        data = json.loads(text) if text else {}
+                    except Exception:
+                        data = {"error": text or f"VPS returned HTTP {resp.status}"}
+                    return web.json_response(data, status=resp.status)
+        except Exception as exc:
+            logger.error("Active-call invite proxy error: %s", exc)
+            return web.json_response({"error": "Could not reach the VPS active-call service"}, status=502)
+
     async def handle_list_nodes(self, request: web.Request) -> web.Response:
         """List VPS nodes in this site/account so settings can use real route targets."""
         if not self.cfg.account_id or not self.cfg.admin_token or not self.cfg.server_url:
@@ -1506,7 +1534,10 @@ class LocalAPI:
         endpoint_id = request.match_info.get("id")
         if not endpoint_id:
             return web.json_response({"error": "endpoint id required"}, status=400)
-        url = f"{self._ws_to_http_url(self.cfg.server_url)}/admin/sip-endpoints/{endpoint_id}/clear-stuck"
+        url = (
+            f"{self._ws_to_http_url(self.cfg.server_url)}/admin/accounts/"
+            f"{self.cfg.account_id}/sip-endpoints/{endpoint_id}/clear-stuck"
+        )
         headers = {"Authorization": f"Bearer {self.cfg.admin_token}"}
         try:
             import aiohttp

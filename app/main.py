@@ -1035,6 +1035,10 @@ class SimsonAddon:
         reason = payload.get("reason", "")
         answered_by_user_id = payload.get("answered_by_user_id", "")
         sip_bridge_id = payload.get("sip_bridge_id", "")
+        from_node_id = str(payload.get("from_node_id", "") or "").strip()
+        to_node_id = str(payload.get("to_node_id", "") or "").strip()
+        caller_id = str(payload.get("caller_id", "") or "").strip()
+        call_type = str(payload.get("call_type", "") or "sip").strip()
 
         # We have a definitive status from VPS for this call request.
         self.clear_outgoing_request_for_call(call_id)
@@ -1050,16 +1054,23 @@ class SimsonAddon:
             )
             return
 
-        if not existing_call and sip_bridge_id and status in ("ringing", "active"):
+        if not existing_call and status in ("ringing", "active") and (
+            sip_bridge_id or from_node_id.startswith("sip:") or to_node_id.startswith("sip:")
+        ):
+            source = caller_id or from_node_id.removeprefix("sip:") or "SIP call"
+            target = to_node_id.removeprefix("sip:")
+            label = f"{source} -> {target}" if target else source
             existing_call = await self.call_mgr.incoming_invite(
                 call_id,
-                "sip",
-                "Observed SIP call",
-                "sip",
+                from_node_id or "sip",
+                label,
+                call_type,
                 metadata={
                     "sip_bridge_id": sip_bridge_id,
                     "target_type": "sip",
                     "observed_only": True,
+                    "source_extension": from_node_id.removeprefix("sip:"),
+                    "target_extension": target,
                 },
             )
 
