@@ -852,14 +852,18 @@ function advancedRouteSummary(route) {
   const stages = Array.isArray(route.stages) ? route.stages : [];
   const path = stages.map((stage, index) => {
     const targets = (stage.targets || []).filter((target) => target.enabled !== false);
-    const destinations = targets.map(advancedTargetLabel).join(" + ") || "no destination";
-    return `<span class="route-stage-pill"><b>${index + 1}</b><span>${esc(stage.name || `Stage ${index + 1}`)}<small>${esc(destinations)} · ${esc(stage.ring_seconds || 0)}s</small></span></span>`;
+    const destinations = targets.map(advancedTargetLabel);
+    if (index === 0 && route.ingress_kind === "sip") {
+      destinations.unshift(`${advancedIngressLabel(route)} (primary)`);
+    }
+    const destinationSummary = destinations.join(" + ") || "no destination";
+    return `<span class="route-stage-pill"><b>${index + 1}</b><span>${esc(stage.name || `Stage ${index + 1}`)}<small>${esc(destinationSummary)} · ${esc(stage.ring_seconds || 0)}s</small></span></span>`;
   }).join(`<span class="route-arrow">→</span>`);
   return `<article class="route-plan-summary ${route.enabled ? "" : "disabled"}">
     <div class="route-plan-main">
       <div class="route-plan-title"><span class="pill ${route.enabled ? "ok" : "warn"}">${route.enabled ? "live" : "draft"}</span>${esc(route.name)}</div>
       <div class="route-plan-ingress"><span>${route.ingress_kind === "sip" ? "Calls landing on" : "Calls entering from"}</span><b>${esc(advancedIngressLabel(route))}</b></div>
-      <div class="route-stage-path">${path || "No stages"}</div>
+      <div class="route-stage-path">${path || "No escalation stages"}</div>
       ${route.ingress_kind === "sip" ? `<div class="route-plan-trigger">Calls to this SIP extension use this plan, whether they come from another SIP phone, a gateway, or a HAOS node. Normal extension-to-extension calls remain direct when no plan is enabled.</div>` : ""}
     </div>
     <div class="row-actions">
@@ -913,7 +917,7 @@ function advancedRouteEditor(route) {
       <label class="toggle-line"><input type="checkbox" data-advanced-route-key="enabled" ${route.enabled ? "checked" : ""}> Enable this exact landing route</label>
     </div>
     <div class="advanced-route-note">${route.ingress_kind === "sip"
-      ? `Calls landing on SIP phone <b>${esc(route.ingress_value || "not selected")}</b> use this plan. To ring that phone before fallback, select it in <b>Stage 1</b>, set its ring time, then put 1027 or another destination in <b>Stage 2</b>. No special <b>100</b> dial is required.`
+      ? `Calls landing on SIP phone <b>${esc(route.ingress_value || "not selected")}</b> automatically ring that phone in <b>Stage 1</b>. Any other Stage 1 destinations ring in parallel; later stages are fallbacks. The caller hears waiting audio instead of silence. No special <b>100</b> dial is required.`
       : `Only calls arriving through gateway <b>${esc(route.ingress_value || "not selected")}</b> use this plan. Other calls keep their current routing.`}</div>
     ${validationError ? `<div class="inline-notice error"><div><b>Fix this route before saving</b><span>${esc(validationError)}</span></div></div>` : ""}
     <div class="stage-stack">
@@ -958,6 +962,7 @@ function advancedStageEditor(stage, stageIndex) {
         <button type="button" class="icon-btn danger" data-action="advanced-remove-stage" data-stage="${stageIndex}" aria-label="Remove stage">×</button>
       </div>
       <div class="stage-policy">${advancedModeHelp(stage)}</div>
+      ${stageIndex === 0 && state.advancedDraft?.ingress_kind === "sip" ? `<div class="landing-target-lock"><span class="landing-target-icon">IN</span><span><b>${esc(state.advancedDraft.ingress_value || "Choose a landing SIP phone")}</b><small>Primary landing phone · added automatically to this stage</small></span><span class="pill ok">always rings</span></div>` : ""}
       <div class="advanced-targets">
         ${targets.map((target, targetIndex) => advancedTargetEditor(target, stageIndex, targetIndex, stage.answer_mode)).join("") || `<div class="empty compact-empty">Add one or more destinations for this stage.</div>`}
       </div>
@@ -2409,9 +2414,14 @@ function advancedRouteValidationError(route) {
   const ingressValue = String(route?.ingress_value || "").trim();
   for (const [stageIndex, stage] of (route?.stages || []).entries()) {
     const enabledTargets = (stage?.targets || []).filter((target) => target?.enabled !== false);
+    const hasImplicitLanding = ingressKind === "sip" && stageIndex === 0;
+    const effectiveTargetCount = enabledTargets.length + (hasImplicitLanding && !enabledTargets.some((target) =>
+      String(target?.kind || "").trim().toLowerCase() === "sip"
+      && String(target?.value || "").trim() === ingressValue
+    ) ? 1 : 0);
     const ringSeconds = Number(stage?.ring_seconds);
     const maxCallSeconds = Number(stage?.max_call_seconds || 0);
-    if (!enabledTargets.length) return `Stage ${stageIndex + 1} needs at least one active destination.`;
+    if (!effectiveTargetCount) return `Stage ${stageIndex + 1} needs at least one active destination.`;
     if (!Number.isFinite(ringSeconds) || ringSeconds < 3 || ringSeconds > 300) return `Stage ${stageIndex + 1} ring time must be between 3 and 300 seconds.`;
     if (!Number.isFinite(maxCallSeconds) || maxCallSeconds < 0 || maxCallSeconds > 86400 || (maxCallSeconds > 0 && maxCallSeconds < 10)) {
       return `Stage ${stageIndex + 1} connected-call limit must be 0 (unlimited) or between 10 and 86400 seconds.`;
@@ -2421,7 +2431,7 @@ function advancedRouteValidationError(route) {
     }
     const externalTargets = enabledTargets.filter((target) => String(target?.kind || "").trim().toLowerCase() === "external");
     if (externalTargets.length) {
-      if (enabledTargets.length !== 1) {
+      if (effectiveTargetCount !== 1) {
         return `Stage ${stageIndex + 1} outside forwarding must be the only destination in its stage. This prevents an analog gateway from answering and cancelling parallel phones.`;
       }
       if (stage?.answer_mode !== "first_answer") {
@@ -2438,7 +2448,8 @@ function advancedRouteValidationError(route) {
       const trunk = String(target?.trunk || "").trim();
       if (!value) return `Stage ${stageIndex + 1} has a destination with no value selected.`;
       if (kind === "external" && !trunk) return `Stage ${stageIndex + 1} outside number ${value} needs an outbound gateway.`;
-      if (ingressKind !== "manual" && (kind === "sip" || kind === "gateway") && value === ingressValue) {
+      const landingSIPTarget = ingressKind === "sip" && kind === "sip" && value === ingressValue && stageIndex === 0;
+      if (ingressKind !== "manual" && (kind === "sip" || kind === "gateway") && value === ingressValue && !landingSIPTarget) {
         return `Stage ${stageIndex + 1} routes ${value} back to its own incoming source.`;
       }
       const key = (kind === "sip" || kind === "gateway")
