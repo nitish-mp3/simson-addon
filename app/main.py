@@ -1586,6 +1586,10 @@ class SimsonAddon:
                 if (now - ts) > 120:
                     self._pending_call_requests.pop(req_id, None)
 
+    async def reconcile_call_state(self):
+        """Synchronously clear expired local gateway-call state before a new action."""
+        await self._expire_stale_nonterminal_calls()
+
     async def _expire_stale_nonterminal_calls(self):
         """Clear calls that missed their terminal VPS status.
 
@@ -1595,15 +1599,34 @@ class SimsonAddon:
         """
         now = time.time()
         for call in list(self.call_mgr.all_calls):
-            if call.state not in (CallState.INCOMING, CallState.RINGING, CallState.REQUESTING):
+            is_gateway_outbound = bool(
+                call.direction == "outgoing"
+                and call.call_type == "sip"
+                and call.routing
+                and call.routing.trunk
+            )
+            if call.state not in (CallState.INCOMING, CallState.RINGING, CallState.REQUESTING, CallState.ACTIVE):
                 continue
 
-            max_age = self._incoming_invite_timeout_sec + 30 if call.direction == "incoming" else 180
+            if call.state == CallState.ACTIVE:
+                if not is_gateway_outbound:
+                    continue
+                try:
+                    connected_limit = int(call.metadata.get("max_duration_sec", 300) or 300)
+                except (TypeError, ValueError):
+                    connected_limit = 300
+                max_age = max(15, min(connected_limit, 3600)) + 30
+            else:
+                max_age = self._incoming_invite_timeout_sec + 30 if call.direction == "incoming" else 180
             if not call.started_at or (now - call.started_at) <= max_age:
                 continue
 
-            status = "missed" if call.direction == "incoming" else "timeout"
-            reason = "stale_incoming" if call.direction == "incoming" else "stale_outgoing"
+            if call.state == CallState.ACTIVE:
+                status = "ended"
+                reason = "stale_gateway_outbound"
+            else:
+                status = "missed" if call.direction == "incoming" else "timeout"
+                reason = "stale_incoming" if call.direction == "incoming" else "stale_outgoing"
             logging.getLogger("simson.cleanup").warning(
                 "Expiring stale %s call %s after %.0fs",
                 call.direction,
@@ -1611,12 +1634,12 @@ class SimsonAddon:
                 now - call.started_at,
             )
 
-            if call.direction == "incoming":
+            if call.direction == "incoming" or is_gateway_outbound:
                 try:
                     await self.wss.send(make_call_end(call.call_id, self.cfg.node_id, reason))
                 except Exception as e:
                     logging.getLogger("simson.cleanup").debug(
-                        "Failed to send stale incoming call.end: %s", e
+                        "Failed to send stale call.end: %s", e
                     )
 
             await self._handle_call_status({

@@ -19,7 +19,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "4.9.6"
+ADDON_VERSION = "4.9.8"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -1857,12 +1857,17 @@ class LocalAPI:
         target_user_id = body.get("target_user_id", "")
         target_user_name = body.get("target_user_name", "")
         caller_user_id = body.get("caller_user_id", "")
+        max_duration_sec = 0
 
         routing = None
 
         # Direct PSTN/GSM dial: the card can pass a one-off number and trunk
         # instead of requiring a saved target for every outside phone number.
         if phone_number:
+            # HA outside-number actions have no local handset to release the
+            # bridge. Bound them so an FXO/GSM gateway that misses a remote
+            # hangup cannot remain seized and block every later automation.
+            max_duration_sec = _safe_int(body.get("max_duration_sec", 120), 120, 15, 3600)
             digits = "".join(ch for ch in str(phone_number) if ch.isdigit())
             preferred_trunk = (self.cfg.routing_policy or {}).get("default_gateway_trunk", "")
             trunk = "".join(ch for ch in str(trunk or preferred_trunk or DEFAULT_PSTN_TRUNK).strip()
@@ -1953,6 +1958,12 @@ class LocalAPI:
         elif not to_node:
             return web.json_response({"error": "target_node_id or target_id required"}, status=400)
 
+        # Reconcile expired gateway calls before enforcing the busy guard. Older
+        # addon versions only expired ringing calls, so a missed FXO/GSM hangup
+        # could leave an "active" local call that blocked every gateway.
+        if self.addon and hasattr(self.addon, "reconcile_call_state"):
+            await self.addon.reconcile_call_state()
+
         # Check no active call for this user (allows multiple users on same node to call concurrently).
         if self.call_mgr.active_call_for_user(caller_user_id):
             return web.json_response({"error": "already in a call"}, status=409)
@@ -1990,6 +2001,9 @@ class LocalAPI:
                     "timeout": routing.timeout,
                 }
 
+        if max_duration_sec:
+            metadata["max_duration_sec"] = max_duration_sec
+
         # Per-user targeting: include target_user_id so only that user's card rings.
         if target_user_id:
             metadata["target_user_id"] = target_user_id
@@ -2011,6 +2025,8 @@ class LocalAPI:
         call = await self.call_mgr.outgoing_request(call_id, to_node, call_type, routing=routing,
                                                     caller_user_id=caller_user_id,
                                                     remote_label=remote_label or target_id or to_node)
+        if max_duration_sec:
+            call.metadata["max_duration_sec"] = max_duration_sec
         if self.addon and hasattr(self.addon, "_emit_call_event"):
             await self.addon._emit_call_event(call, "outgoing")
 

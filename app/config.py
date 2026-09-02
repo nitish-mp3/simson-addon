@@ -178,7 +178,6 @@ class Config:
             "triggers": automation.get("triggers", []) or [],
         }
 
-        # Call targets — normalised list stored in settings.json
         self.call_targets: list[dict] = []
         for t in s.get("call_targets", []):
             self.call_targets.append({
