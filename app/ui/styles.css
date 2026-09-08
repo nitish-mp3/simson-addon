@@ -178,6 +178,10 @@ body {
   margin-top: 2px;
 }
 
+.mobile-nav-toggle {
+  display: none;
+}
+
 /* Navigation */
 .nav {
   display: flex;
@@ -319,6 +323,7 @@ body {
 /* Content */
 .content {
   flex: 1;
+  min-width: 0;
   padding: var(--space-4) var(--space-5) 100px;
   overflow-y: auto;
 }
@@ -759,6 +764,27 @@ textarea {
   margin-right: 5px;
   color: var(--text-tertiary);
   text-transform: none;
+}
+
+.route-plan-assignment {
+  display: grid;
+  gap: 2px;
+  margin-top: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.route-plan-assignment b { color: var(--text-primary); }
+.route-plan-assignment.ok {
+  border-color: rgba(36, 196, 173, 0.32);
+  background: rgba(36, 196, 173, 0.06);
+}
+.route-plan-assignment.warn {
+  border-color: rgba(245, 181, 61, 0.36);
+  background: rgba(245, 181, 61, 0.06);
 }
 
 .route-plan-trigger {
@@ -2104,12 +2130,35 @@ textarea {
   }
 
   .sidebar {
-    flex-direction: column;
-    align-items: stretch;
+    gap: var(--space-3);
+    padding: var(--space-3);
   }
 
-  .nav {
+  .mobile-nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 42px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 750;
+    cursor: pointer;
+  }
+
+  .sidebar:not(.nav-open) .nav,
+  .sidebar:not(.nav-open) .sidebar-footer {
+    display: none;
+  }
+
+  .nav,
+  .sidebar-footer {
     flex-direction: column;
+    flex-basis: 100%;
     min-width: 0;
   }
 
@@ -2130,8 +2179,17 @@ textarea {
 
   .top-actions {
     width: 100%;
-    justify-content: flex-start;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
   }
+
+  .top-actions .btn { width: 100%; min-height: 42px; }
+
+  .content { padding: var(--space-3) var(--space-3) 112px; }
+
+  input, select, textarea, .btn { min-height: 42px; }
+
+  textarea { min-height: 96px; }
 
   .data-head {
     display: none;
@@ -2178,6 +2236,15 @@ textarea {
   .row-actions {
     width: 100%;
     justify-content: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }
 .active-invite-panel {

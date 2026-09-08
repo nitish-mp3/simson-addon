@@ -37,6 +37,7 @@ const state = {
   notificationPickerOpen: false,
   health: null,
   advancedDraft: null,
+  navOpen: false,
   dirty: false,
   loaded: false,
   selectedDoorTriggerId: "",
@@ -319,7 +320,7 @@ function shell() {
   document.body.innerHTML = `
     <div class="shell">
       <div class="app-frame">
-        <aside class="sidebar">
+        <aside class="sidebar" id="sidebar">
           <div class="brand">
             <div class="brand-mark">☎</div>
             <div>
@@ -327,6 +328,9 @@ function shell() {
               <div class="brand-sub">Site call control · v${esc(boot.version)}</div>
             </div>
           </div>
+          <button class="mobile-nav-toggle" id="mobile-nav-toggle" data-action="toggle-nav" type="button" aria-controls="nav" aria-expanded="false">
+            <span aria-hidden="true">☰</span><span>Navigation</span>
+          </button>
           <nav class="nav" id="nav"></nav>
           <div class="sidebar-footer">
             <div class="mini-card">
@@ -369,11 +373,14 @@ function shell() {
 
 function renderNav() {
   $("nav").innerHTML = pages.map(([id, title, sub]) => `
-    <button class="${state.page === id ? "active" : ""}" data-page="${id}">
+    <button class="${state.page === id ? "active" : ""}" data-page="${id}" aria-current="${state.page === id ? "page" : "false"}">
       <span>${icon(id)}</span>
       <span><b>${title}</b><br><small>${sub}</small></span>
     </button>
   `).join("");
+  $("sidebar")?.classList.toggle("nav-open", state.navOpen);
+  const toggle = $("mobile-nav-toggle");
+  if (toggle) toggle.setAttribute("aria-expanded", String(state.navOpen));
 }
 
 function icon(id) {
@@ -512,6 +519,32 @@ function targetSelectOptions(selected = "", includeBlank = true) {
   state.sip.map(normalizeSipEndpoint).filter(Boolean).forEach((ep) => add(ep.extension, `${ep.extension} · ${ep.description || ep.username || "SIP"}`));
   state.nodes.forEach((node) => add(node.id, `${node.label || node.id} · HAOS node`));
   return values.map((item) => option(item.value, item.label, selected)).join("");
+}
+
+function gatewayInboundTargetOptions(selected = "") {
+  const values = [];
+  const add = (value, label) => {
+    const text = String(value || "").trim();
+    if (!text || values.some((item) => item.value === text)) return;
+    values.push({ value: text, label: label || text });
+  };
+  values.push({ value: "", label: "None (use HAOS fallback policy)" });
+  (state.advancedRoutes || []).forEach((route) => {
+    if (route?.enabled !== false) add(route.id, `Route plan · ${route.name || route.id}`);
+  });
+  getSettings().call_targets.forEach((target) => add(target.id, `${target.label || target.id} (${target.type || "target"})`));
+  state.sip.map(normalizeSipEndpoint).filter(Boolean).forEach((ep) => add(ep.extension, `${ep.extension} · ${ep.description || ep.username || "SIP"}`));
+  state.nodes.forEach((node) => add(node.id, `${node.label || node.id} · HAOS node`));
+  const current = String(selected || "").trim();
+  if (current && !values.some((item) => item.value === current)) {
+    values.push({ value: current, label: `${current} · unavailable (choose a valid target)` });
+  }
+  return values.map((item) => option(item.value, item.label, current)).join("");
+}
+
+function gatewayRoutePlan(target) {
+  const id = String(target || "").trim();
+  return (state.advancedRoutes || []).find((route) => String(route?.id || "") === id) || null;
 }
 
 function gatewaySelectOptions(selected = "") {
@@ -850,6 +883,10 @@ function renderCallFeaturePolicy() {
 
 function advancedRouteSummary(route) {
   const stages = Array.isArray(route.stages) ? route.stages : [];
+  const assignedGateways = gatewayEndpoints().filter((gateway) =>
+    String(gateway.gateway_inbound_mode || "") === "direct_target"
+    && String(gateway.gateway_direct_target || "") === String(route.id || "")
+  );
   const path = stages.map((stage, index) => {
     const targets = (stage.targets || []).filter((target) => target.enabled !== false);
     const destinations = targets.map(advancedTargetLabel);
@@ -863,6 +900,7 @@ function advancedRouteSummary(route) {
     <div class="route-plan-main">
       <div class="route-plan-title"><span class="pill ${route.enabled ? "ok" : "warn"}">${route.enabled ? "live" : "draft"}</span>${esc(route.name)}</div>
       <div class="route-plan-ingress"><span>${route.ingress_kind === "sip" ? "Calls landing on" : "Calls entering from"}</span><b>${esc(advancedIngressLabel(route))}</b></div>
+      ${route.ingress_kind === "gateway" ? `<div class="route-plan-assignment ${assignedGateways.length ? "ok" : "warn"}"><b>${assignedGateways.length ? `Assigned gateway${assignedGateways.length === 1 ? "" : "s"}: ${assignedGateways.map((gateway) => gateway.extension).join(", ")}` : "Not assigned to a gateway"}</b><span>${assignedGateways.length ? "Calls use this full staged plan as soon as they arrive." : "If the physical gateway sends calls to a different extension, open that gateway below and select this route plan."}</span></div>` : ""}
       <div class="route-stage-path">${path || "No escalation stages"}</div>
       ${route.ingress_kind === "sip" ? `<div class="route-plan-trigger">Calls to this SIP extension use this plan, whether they come from another SIP phone, a gateway, or a HAOS node. Normal extension-to-extension calls remain direct when no plan is enabled.</div>` : ""}
     </div>
@@ -1426,9 +1464,9 @@ function sipRow(raw) {
             <div class="field">
               <label>Gateway target / fallback</label>
               <select data-sip-id="${esc(endpointId)}" data-sip-key="gateway_direct_target">
-                ${targetSelectOptions(gatewayTarget, true)}
+                ${gatewayInboundTargetOptions(gatewayTarget)}
               </select>
-              <div class="hint">For direct mode this target rings immediately. For card mode this is tried after the HAOS ring delay.</div>
+              <div class="hint">For direct mode this starts immediately. Select a <b>Route plan</b> to run its full multi-stage escalation. For card mode this is tried after the HAOS ring delay.</div>
             </div>
             <div class="field">
               <label><input data-sip-id="${esc(endpointId)}" data-sip-key="gateway_ivr_enabled" type="checkbox" ${ep.gateway_ivr_enabled ? "checked" : ""}> Play IVR before routing</label>
@@ -2156,6 +2194,7 @@ async function onClick(event) {
 
   if (btn.dataset.page) {
     state.page = btn.dataset.page;
+    state.navOpen = false;
     render();
     return;
   }
@@ -2163,6 +2202,12 @@ async function onClick(event) {
   const action = btn.dataset.action;
   if (!action) return;
   event.preventDefault();
+
+  if (action === "toggle-nav") {
+    state.navOpen = !state.navOpen;
+    renderNav();
+    return;
+  }
 
   // Prevent double-clicks
   if (btn.dataset.loading === "true") return;
@@ -2750,13 +2795,31 @@ function sipUpdatePayload(endpointId) {
   return payload;
 }
 
+function validateGatewayInboundPayload(payload) {
+  const mode = String(payload?.gateway_inbound_mode || "").trim();
+  const target = String(payload?.gateway_direct_target || "").trim();
+  if (mode === "direct_target" && !target) {
+    throw new Error("Choose an immediate gateway target, or use the HAOS fallback mode.");
+  }
+  if (!target.startsWith("route_")) return;
+  const plan = gatewayRoutePlan(target);
+  if (!plan || plan.enabled === false) {
+    throw new Error("The selected gateway route plan is unavailable. Choose an enabled plan before saving.");
+  }
+  if (mode !== "direct_target") {
+    throw new Error("A multi-stage route plan requires “Send directly to this target” for gateway inbound calls.");
+  }
+}
+
 async function saveRenderedSipEdits() {
   const ids = renderedSipEndpointIds();
   if (!ids.length) return 0;
   for (const endpointId of ids) {
+    const payload = sipUpdatePayload(endpointId);
+    validateGatewayInboundPayload(payload);
     await api(`api/sip-endpoints/${encodeURIComponent(endpointId)}`, {
       method: "PUT",
-      body: JSON.stringify(sipUpdatePayload(endpointId)),
+      body: JSON.stringify(payload),
     });
   }
   return ids.length;
@@ -2768,6 +2831,7 @@ async function saveSip(endpointId) {
     return;
   }
   const payload = sipUpdatePayload(endpointId);
+  validateGatewayInboundPayload(payload);
   const password = Boolean(payload.password);
   const saved = await api(`api/sip-endpoints/${encodeURIComponent(endpointId)}`, {
     method: "PUT",
