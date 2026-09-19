@@ -1,4 +1,4 @@
-import{b as d,d as o}from"./chunk-XSKVCSHS.js";import{c as x}from"./chunk-RP7N3B43.js";import{a as m,e,f as S,g as l,h as _}from"./chunk-6R6CGC23.js";import{a as r,b as w,c as k}from"./chunk-OPL7LVHU.js";var A={setup:()=>import("./setup-NIFYGTRF.js").then(a=>a.renderSetup),overview:()=>import("./overview-JDHCY4FO.js").then(a=>a.renderOverview),routing:()=>import("./routing-Q4LKMBT5.js").then(a=>a.renderRouting),sip:()=>import("./sip-ZL6EA2ZB.js").then(a=>a.renderSip),media:()=>import("./studio-SZM4VKS4.js").then(a=>a.renderMediaStudio),automation:()=>import("./automation-KGZRC2RA.js").then(a=>a.renderAutomation),advanced:()=>import("./advanced-XP5LMCJW.js").then(a=>a.renderAdvanced)},f=new Map,h=0;function N(){document.body.innerHTML=`
+import{b as d,d as o}from"./chunk-XSKVCSHS.js";import{c as x}from"./chunk-RP7N3B43.js";import{a as m,e,f as S,g as l,h as _}from"./chunk-6R6CGC23.js";import{a as r,b as w,c as k}from"./chunk-OPL7LVHU.js";var A={setup:()=>import("./setup-NIFYGTRF.js").then(a=>a.renderSetup),overview:()=>import("./overview-JDHCY4FO.js").then(a=>a.renderOverview),routing:()=>import("./routing-VFHGJCIQ.js").then(a=>a.renderRouting),sip:()=>import("./sip-F6FN5GPA.js").then(a=>a.renderSip),media:()=>import("./studio-SZM4VKS4.js").then(a=>a.renderMediaStudio),automation:()=>import("./automation-KGZRC2RA.js").then(a=>a.renderAutomation),advanced:()=>import("./advanced-XP5LMCJW.js").then(a=>a.renderAdvanced)},f=new Map,h=0;function N(){document.body.innerHTML=`
     <div class="shell">
       <div class="app-frame">
         <aside class="sidebar" id="sidebar">
@@ -39,13 +39,13 @@ import{b as d,d as o}from"./chunk-XSKVCSHS.js";import{c as x}from"./chunk-RP7N3B
         </main>
       </div>
       <div class="save-bar">
-        <div class="save-state" id="save-state">Loading settings\u2026</div>
+        <div class="save-state" id="save-state" role="status" aria-live="polite">Loading settings\u2026</div>
         <button class="btn secondary" data-action="refresh">Reload</button>
         <button class="btn" data-action="save">Save Settings</button>
       </div>
-      <div class="toast" id="toast"></div>
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
     </div>
-  `,L(),document.body.addEventListener("click",async t=>{let n=t.target.closest("[data-page]");if(n){if(e.page==="media"&&n.dataset.page!=="media"){let{stopMediaPreview:i}=await import("./studio-SZM4VKS4.js");i(!1)}e.page=n.dataset.page,e.navOpen=!1,p();return}if(t.target.closest("[data-action]"))try{let{onClick:i}=await import("./clicks-D5BVUMHW.js");await i(t)}catch(i){d(i.message,"bad")}});let a=async t=>{try{let{onInput:n}=await import("./inputs-7ATFGRMB.js");n(t)}catch(n){d(n.message,"bad")}};document.body.addEventListener("input",a),document.body.addEventListener("change",a)}function L(){r("nav").innerHTML=l.map(([t,n,i])=>`
+  `,L(),document.body.addEventListener("click",async t=>{let n=t.target.closest("[data-page]");if(n){if(e.page==="media"&&n.dataset.page!=="media"){let{stopMediaPreview:i}=await import("./studio-SZM4VKS4.js");i(!1)}e.page=n.dataset.page,e.navOpen=!1,p();return}if(t.target.closest("[data-action]"))try{let{onClick:i}=await import("./clicks-I7GH46ZX.js");await i(t)}catch(i){d(i.message,"bad")}});let a=async t=>{try{let{onInput:n}=await import("./inputs-B5M3CR5S.js");n(t)}catch(n){d(n.message,"bad")}};document.body.addEventListener("input",a),document.body.addEventListener("change",a)}function L(){r("nav").innerHTML=l.map(([t,n,i])=>`
     <button class="${e.page===t?"active":""}" data-page="${t}" aria-current="${e.page===t?"page":"false"}">
       <span>${$(t)}</span>
       <span><b>${n}</b><br><small>${i}</small></span>

@@ -2,6 +2,7 @@ import { $, esc, option } from '../shared/dom.js';
 import { state } from '../state/store.js';
 import { phoneProvisioningProfiles, phoneProvisioningResultHtml } from '../features/sip/provisioning.js';
 import { sipTable } from '../features/sip/endpoint-view.js';
+import { compactWorkspace } from '../shared/workspace.js';
 
 export function renderSip() {
   $("content").innerHTML = `
@@ -170,5 +171,5 @@ export function renderSip() {
       ${sipTable()}
     </div>
   `;
+  compactWorkspace('sip');
 }
-

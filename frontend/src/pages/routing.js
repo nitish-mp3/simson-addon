@@ -125,5 +125,6 @@ export function renderRouting() {
     </div>
     ${renderAdvancedRoutes()}
   `;
+  compactWorkspace('routing');
 }
-
+import { compactWorkspace } from '../shared/workspace.js';

@@ -56,11 +56,11 @@ export function shell() {
         </main>
       </div>
       <div class="save-bar">
-        <div class="save-state" id="save-state">Loading settings…</div>
+        <div class="save-state" id="save-state" role="status" aria-live="polite">Loading settings…</div>
         <button class="btn secondary" data-action="refresh">Reload</button>
         <button class="btn" data-action="save">Save Settings</button>
       </div>
-      <div class="toast" id="toast"></div>
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
     </div>
   `;
   renderNav();
