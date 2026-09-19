@@ -1,0 +1,175 @@
+.automation-grid {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.75fr) minmax(380px, 1.25fr);
+  gap: var(--space-3);
+  align-items: start;
+}
+.door-flow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: center;
+}
+.door-flow.multi {
+  grid-template-columns: minmax(180px, 0.8fr) 28px minmax(220px, 1.2fr);
+}
+.door-step {
+  border: 1px solid var(--border-default);
+  background: var(--bg-base);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3);
+  min-width: 0;
+}
+.door-step.destination {
+  border-color: rgba(245, 158, 11, 0.2);
+  background: rgba(245, 158, 11, 0.03);
+}
+.door-step label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+.door-arrow {
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  font-size: 16px;
+  font-weight: 800;
+}
+.check-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 200px;
+  overflow-y: auto;
+  padding-right: var(--space-1);
+}
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+.check-row:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+.check-row input[type=checkbox] {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.check-row strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.check-row small {
+  display: block;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  margin-top: 3px;
+  font-weight: 500;
+}
+.flow-preview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: rgba(0, 0, 0, 0.25);
+  font-size: 12px;
+  font-weight: 500;
+  overflow: hidden;
+  flex-wrap: wrap;
+}
+.flow-preview strong {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.flow-preview span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.flow-preview b {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.route-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+  margin-bottom: 4px;
+}
+.route-chip {
+  max-width: 100%;
+  padding: 5px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.route-chip.source {
+  border-color: rgba(99, 102, 241, 0.3);
+  background: var(--accent-dim);
+}
+.route-chip.destination {
+  border-color: rgba(245, 158, 11, 0.3);
+  background: var(--warning-dim);
+}
+.route-arrow {
+  color: var(--accent);
+  font-weight: 800;
+  font-size: 13px;
+}
+.door-trigger-row {
+  gap: var(--space-3);
+}
+.callback-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--bg-base);
+  border: 1px solid var(--border-default);
+}
+.callback-box label {
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+.callback-box .row-sub {
+  margin: 0;
+}

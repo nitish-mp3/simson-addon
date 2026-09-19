@@ -1,0 +1,20 @@
+.mono {
+  font-family:
+    "SFMono-Regular",
+    Consolas,
+    "Liberation Mono",
+    Menlo,
+    Courier,
+    monospace;
+  font-size: 12px;
+  letter-spacing: -0.01em;
+}
+.row input.mono,
+.callback-box input.mono {
+  margin-top: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hidden {
+  display: none !important;
+}

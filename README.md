@@ -2,6 +2,16 @@
 ..
 Connects Home Assistant to the Simson VPS for browser calls, SIP desk phones, ATA-backed landline phones, and routed call targets.
 
+## Browser Media Studio
+
+Open **Media Studio** in the addon panel to grant browser permission and preview your camera and microphone. This preview is separate from the card: choose actual call devices in the card's **Devices** tab. Preferences are stored in each browser context.
+
+The Lovelace card has call-device controls under **Devices**. Video is opt-in for node-to-node WebRTC calls; SIP phones, FXO/GSM gateways, and PSTN calls remain audio-only. Camera and microphone access requires HTTPS or localhost in supported browsers.
+
+Frontend development and build instructions: [frontend/README.md](frontend/README.md). Editable code lives in feature modules under `frontend/src/`; `app/ui/` contains generated release assets.
+
+Simson does not silently scan the private network from a browser. LAN cameras appear from the site's authenticated SIP endpoint inventory after they are provisioned and marked video-capable.
+
 ## Working Audio Baseline
 
 Browser to SIP phone audio and SIP phone back-calling are handled by the VPS Asterisk bridge. The addon fetches WebRTC/SIP credentials from the VPS automatically, so do not manually configure local AMI, TURN, or SIP-over-WebSocket credentials in the addon.

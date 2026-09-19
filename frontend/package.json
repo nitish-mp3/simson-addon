@@ -1,0 +1,7 @@
+{
+  "name": "simson-addon-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {"build": "node build.mjs", "test": "node --test tests/*.test.mjs"},
+  "devDependencies": {"esbuild": "0.25.12"}
+}
