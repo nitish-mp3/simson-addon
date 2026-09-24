@@ -19,7 +19,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "5.1.0"
+ADDON_VERSION = "5.1.3"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -1711,6 +1711,8 @@ class LocalAPI:
             return web.json_response({"error": "json body must be an object"}, status=400)
 
         body = self._normalize_make_call_body(body)
+        if body.get("source_extension") and body.get("phone_number"):
+            return await self._start_sip_gateway_callback(body)
         if (
             body.get("source_extension") or body.get("source")
         ) and (
@@ -1734,7 +1736,7 @@ class LocalAPI:
         if target_extension and not has_source and target_id.isdigit():
             normalized["source_extension"] = target_id
             normalized.pop("target_id", None)
-        elif source_extension and not target_extension and target_id.isdigit():
+        elif source_extension and not target_extension and not normalized.get("phone_number") and target_id.isdigit():
             normalized["target_extension"] = target_id
             normalized.pop("target_id", None)
         elif target_extension and not has_source:
@@ -1766,6 +1768,69 @@ class LocalAPI:
             return web.json_response({"error": "json body must be an object"}, status=400)
 
         return await self._start_sip_intercom(body)
+
+    async def _start_sip_gateway_callback(self, body: dict) -> web.Response:
+        """Call a registered SIP handset back, then bridge it to an outside number."""
+        source = str(body.get("source_extension") or body.get("source") or "").strip()
+        digits = "".join(ch for ch in str(body.get("phone_number") or "") if ch.isdigit())
+        trunk = str(body.get("trunk") or body.get("target_id") or "").strip()
+        if not source.isdigit():
+            return web.json_response({"error": "source_extension must be a numeric SIP handset extension"}, status=400)
+        if not 2 <= len(digits) <= 15:
+            return web.json_response({"error": "phone_number must contain 2-15 digits"}, status=400)
+        if not trunk:
+            trunk = str((self.cfg.routing_policy or {}).get("default_gateway_trunk", "") or DEFAULT_PSTN_TRUNK).strip()
+        trunk = "".join(ch for ch in trunk if ch.isalnum() or ch in ("-", "_"))
+        if not trunk:
+            return web.json_response({"error": "trunk is required; select a configured gateway extension"}, status=400)
+        if not self.cfg.account_id or not self.cfg.node_id or not self.cfg.install_token or not self.cfg.server_url:
+            return web.json_response({"error": "SIP gateway callback requires a provisioned addon node"}, status=400)
+
+        def clean_mode(value: str) -> str:
+            mode = str(value or "speaker").strip().lower()
+            aliases = {"intercom": "speaker", "speakerphone": "speaker", "none": "normal", "off": "normal", "disabled": "normal", "answer": "normal", "auto": "normal"}
+            mode = aliases.get(mode, mode)
+            return mode if mode in ("normal", "speaker") else "speaker"
+
+        timeout = _safe_int(body.get("timeout_sec", 30), 30, 5, 120)
+        payload = {
+            "source_extension": source,
+            "phone_number": digits,
+            "trunk": trunk,
+            "source_auto_mode": clean_mode(body.get("source_auto_mode", "speaker")),
+            "caller_id": str(body.get("caller_id", "") or "").strip(),
+            "timeout_sec": timeout,
+        }
+        base = self._ws_to_http_url(self.cfg.server_url)
+        headers = {
+            "X-Simson-Account-ID": self.cfg.account_id,
+            "X-Simson-Node-ID": self.cfg.node_id,
+            "X-Simson-Install-Token": self.cfg.install_token,
+            "Content-Type": "application/json",
+        }
+        try:
+            async with ClientSession(timeout=ClientTimeout(total=10)) as session:
+                async with session.post(f"{base}/node/sip-intercom", json=payload, headers=headers, ssl=False) as resp:
+                    try:
+                        data = await resp.json(content_type=None)
+                    except Exception:
+                        data = {"error": await resp.text()}
+                    if resp.status not in (200, 201, 202):
+                        logger.warning("VPS SIP gateway callback rejected: %s %s", resp.status, data)
+                        return web.json_response(data, status=resp.status)
+        except Exception as exc:
+            logger.error("SIP gateway callback request failed: %s", exc)
+            return web.json_response({"error": f"SIP gateway callback request failed: {exc}"}, status=502)
+
+        if self.addon and getattr(self.addon, "ha", None):
+            await self.addon.ha.publish_automation_event("simson_sip_gateway_callback", {
+                "status": data.get("status", "calling"),
+                "call_id": data.get("call_id", ""),
+                "source_extension": source,
+                "phone_number": digits,
+                "trunk": trunk,
+            })
+        return web.json_response(data, status=202)
 
     async def _start_sip_intercom(self, body: dict) -> web.Response:
         """Validated local wrapper for the VPS SIP intercom/callback endpoint."""

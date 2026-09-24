@@ -8,10 +8,24 @@ from pathlib import Path
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(APP_DIR))
 
-from local_api import _safe_upstream_error  # noqa: E402
+from local_api import LocalAPI, _safe_upstream_error  # noqa: E402
 
 
 class LocalAPIErrorTests(unittest.TestCase):
+    def test_gateway_callback_keeps_target_id_as_gateway_selection(self):
+        body = {
+            "call_type": "sip",
+            "source_extension": "1027",
+            "target_id": "7016",
+            "phone_number": "+919123208334",
+        }
+
+        normalized = LocalAPI._normalize_make_call_body(object(), body)
+
+        self.assertEqual(normalized["source_extension"], "1027")
+        self.assertEqual(normalized["target_id"], "7016")
+        self.assertNotIn("target_extension", normalized)
+
     def test_cloudflare_html_is_not_returned_to_the_dashboard(self):
         result = _safe_upstream_error(
             502,
