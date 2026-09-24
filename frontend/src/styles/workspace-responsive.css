@@ -33,6 +33,9 @@
   .top-save-state { flex: 1; align-self: center; margin: 0; }
   .top-actions .btn { min-height: 36px; padding: 7px 10px; font-size: 11px; }
   .content { padding: 17px 14px 125px; }
+  .workspace-automation .door-flow.multi { grid-template-columns: minmax(0, 1fr); }
+  .workspace-automation .door-flow.multi .door-arrow { transform: rotate(90deg); }
+  .workspace-automation .check-list { grid-template-columns: minmax(0, 1fr); max-height: 280px; }
   .grid.cols-2, .grid.cols-3, .form-grid, .sip-edit-grid, .active-invite-grid, .door-flow, .door-flow.multi { grid-template-columns: minmax(0, 1fr); }
   .page-intro { align-items: flex-start; margin-bottom: 17px; }
   .page-intro h2 { font-size: 21px; }

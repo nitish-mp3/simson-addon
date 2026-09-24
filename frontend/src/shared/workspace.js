@@ -2,6 +2,7 @@ const expanded = new Map();
 
 function sectionNavigation(page, sections) {
   const content = document.getElementById('content');
+  content.classList.add(`workspace-${page}`);
   const key = `${page}:section`;
   const nav = document.createElement('nav');
   nav.className = 'workspace-sections';
@@ -28,6 +29,7 @@ function sectionNavigation(page, sections) {
 
 export function compactWorkspace(page) {
   const content = document.getElementById('content');
+  content.classList.remove('workspace-routing', 'workspace-automation', 'workspace-advanced');
   content.classList.add('compact-workspace');
   if (page === 'routing') {
     const advanced = content.querySelector('.advanced-routing');

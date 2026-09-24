@@ -1,23 +1,23 @@
 {
-  "chunks/advanced-6CNHUIWX.js": {
+  "chunks/advanced-DA2NWYVR.js": {
     "bytes": 2682,
-    "gzip": 985
+    "gzip": 984
   },
-  "chunks/clicks-EZP6CJIB.js": {
+  "chunks/clicks-U4Z2YE2O.js": {
     "bytes": 400,
     "gzip": 211
   },
-  "chunks/inputs-FDDX3OVA.js": {
+  "chunks/inputs-YSQ6AWVO.js": {
     "bytes": 4178,
-    "gzip": 1503
+    "gzip": 1504
   },
-  "chunks/chunk-PGLOTEFX.js": {
+  "chunks/chunk-ONLL2GAW.js": {
     "bytes": 7175,
-    "gzip": 2882
+    "gzip": 2881
   },
   "app.js": {
     "bytes": 906,
-    "gzip": 482
+    "gzip": 481
   },
   "chunks/studio-SZM4VKS4.js": {
     "bytes": 469,
@@ -31,39 +31,39 @@
     "bytes": 1143,
     "gzip": 482
   },
-  "chunks/automation-RZ6YUKC4.js": {
+  "chunks/automation-E6OCNJ4U.js": {
     "bytes": 338,
-    "gzip": 232
+    "gzip": 230
   },
-  "chunks/overview-JKNDZTF5.js": {
+  "chunks/overview-JRKOHU2G.js": {
     "bytes": 4572,
     "gzip": 1720
   },
-  "chunks/routing-OVVKYMG2.js": {
+  "chunks/routing-3WASTW7P.js": {
     "bytes": 264,
-    "gzip": 157
+    "gzip": 158
   },
-  "chunks/chunk-JLMALBBK.js": {
+  "chunks/chunk-IVQ7RS7T.js": {
     "bytes": 33986,
-    "gzip": 9677
+    "gzip": 9676
   },
   "chunks/chunk-VUYAJJE6.js": {
     "bytes": 3338,
     "gzip": 1053
   },
-  "chunks/chunk-SKZ5RTBX.js": {
+  "chunks/chunk-U6KNJANJ.js": {
     "bytes": 18666,
     "gzip": 5487
   },
-  "chunks/sip-G2TLQ5FF.js": {
+  "chunks/sip-5RDCFGHH.js": {
     "bytes": 25345,
     "gzip": 6446
   },
-  "chunks/chunk-MKYFKYDB.js": {
+  "chunks/chunk-KEEXP4KU.js": {
     "bytes": 11435,
-    "gzip": 4117
+    "gzip": 4115
   },
-  "chunks/chunk-I2GJCFZ4.js": {
+  "chunks/chunk-DNMXSAZU.js": {
     "bytes": 7328,
     "gzip": 2674
   },
@@ -71,9 +71,9 @@
     "bytes": 1178,
     "gzip": 721
   },
-  "chunks/chunk-MH4MHY7U.js": {
-    "bytes": 5057,
-    "gzip": 2044
+  "chunks/chunk-HCD6FVME.js": {
+    "bytes": 5179,
+    "gzip": 2077
   },
   "chunks/chunk-RP7N3B43.js": {
     "bytes": 5093,
@@ -88,7 +88,7 @@
     "gzip": 468
   },
   "styles.css": {
-    "bytes": 58626,
-    "gzip": 12056
+    "bytes": 59342,
+    "gzip": 12142
   }
 }

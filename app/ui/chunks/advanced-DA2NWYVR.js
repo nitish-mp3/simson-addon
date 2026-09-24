@@ -1,4 +1,4 @@
-import{a as s}from"./chunk-MH4MHY7U.js";import{e as t,h as d}from"./chunk-6R6CGC23.js";import{a,b as e}from"./chunk-OPL7LVHU.js";function r(){let i=t.status||{};a("content").innerHTML=`
+import{a as s}from"./chunk-HCD6FVME.js";import{e as t,h as d}from"./chunk-6R6CGC23.js";import{a,b as e}from"./chunk-OPL7LVHU.js";function r(){let i=t.status||{};a("content").innerHTML=`
     <div class="grid cols-2">
       <div class="card">
         <div class="card-title">Site identity</div>

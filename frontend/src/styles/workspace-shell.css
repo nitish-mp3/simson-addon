@@ -56,6 +56,11 @@ body {
 .top-save-state.is-dirty { color: #f4c979; }
 .top-actions .btn { min-height: 39px; border-radius: 9px; }
 .content { padding: 26px 30px 120px; overflow-x: hidden; }
+.workspace-automation .automation-grid { grid-template-columns: minmax(0, 1fr); }
+.workspace-automation .automation-grid > .card,
+.workspace-automation > .card { grid-column: 1 / -1; width: 100%; }
+.workspace-automation .door-flow.multi { grid-template-columns: minmax(220px, .8fr) 36px minmax(0, 1.2fr); }
+.workspace-automation .check-list { grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); }
 
 .card { min-width: 0; padding: 20px; border-color: rgba(177, 205, 226, .095); border-radius: 13px; background: linear-gradient(160deg, rgba(27, 43, 58, .85), rgba(22, 35, 50, .9)); }
 .card.glow { border-color: rgba(114, 222, 193, .16); background: linear-gradient(145deg, rgba(114, 222, 193, .045), transparent 55%), #152332; }
