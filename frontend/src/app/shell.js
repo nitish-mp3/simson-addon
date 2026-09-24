@@ -48,8 +48,9 @@ export function shell() {
               <h1 class="page-title" id="page-title">Pulse</h1>
             </div>
             <div class="top-actions">
-              <button class="btn secondary" data-action="refresh">Refresh</button>
-              <button class="btn" data-action="save">Save Changes</button>
+              <span class="save-state top-save-state" id="top-save-state" role="status" aria-live="polite">Loading settings…</span>
+              <button class="btn secondary" data-action="refresh"><span aria-hidden="true">↻</span> Refresh</button>
+              <button class="btn" data-action="save"><span aria-hidden="true">✓</span> Save changes</button>
             </div>
           </header>
           <section class="content" id="content"></section>
@@ -123,6 +124,8 @@ export async function render() {
     : '<span style="color:var(--danger)">Offline</span>';
   document.querySelector('.save-bar').hidden = state.page === 'media';
   document.querySelector('.top-actions [data-action="save"]').hidden = state.page === 'media';
+  document.querySelector('.top-save-state').textContent = state.dirty ? 'You have unsaved changes' : state.status?.vps_connected ? 'All changes saved' : 'Node connection offline';
+  document.querySelector('.top-save-state').classList.toggle('is-dirty', Boolean(state.dirty));
 
   const name = !boot.provisioned ? 'setup' : state.page in loaders ? state.page : 'overview';
   try {

@@ -1,6 +1,7 @@
 import { state } from '../state/store.js';
 import { $, esc } from '../shared/dom.js';
 import { getSettings } from '../state/settings.js';
+import { compactWorkspace } from '../shared/workspace.js';
 
 export function renderAdvanced() {
   const s = state.status || {};
@@ -50,5 +51,5 @@ export function renderAdvanced() {
       <textarea rows="24" readonly style="margin-top:12px;">${esc(JSON.stringify(getSettings(), null, 2))}</textarea>
     </div>
   `;
+  compactWorkspace('advanced');
 }
-

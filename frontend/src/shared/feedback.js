@@ -8,9 +8,12 @@ export function setDirty(message = "Unsaved changes") {
 
 export function setSaveState(text, tone = "") {
   const el = $("save-state");
-  if (!el) return;
-  el.textContent = text || "Everything saved";
-  el.style.color = tone === "bad" ? "var(--danger)" : tone === "ok" ? "var(--success)" : "var(--text-secondary)";
+  const top = $("top-save-state");
+  for (const target of [el, top]) {
+    if (!target) continue;
+    target.textContent = text || "Everything saved";
+    target.dataset.tone = tone;
+  }
 }
 
 export function toast(text) {
@@ -21,4 +24,3 @@ export function toast(text) {
   clearTimeout(toast._t);
   toast._t = setTimeout(() => el.classList.remove("show"), 2800);
 }
-

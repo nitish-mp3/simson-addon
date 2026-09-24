@@ -9,37 +9,43 @@ export function renderOverview() {
   const s = state.status || {};
   const settings = getSettings();
   const active = s.active_call;
+  const online = Boolean(s.vps_connected);
+  const endpoints = state.sip.length;
+  const targets = settings.call_targets.length;
   $("content").innerHTML = `
-    <div class="grid cols-3">
-      ${stat("VPS", s.vps_connected ? "Online" : "Offline", s.server_url || "not configured", s.vps_connected ? "ok" : "bad")}
-      ${stat("Asterisk", s.asterisk_connected ? "Connected" : "Unknown", "AMI and SIP bridge state", s.asterisk_connected ? "ok" : "warn")}
-      ${stat("Automation guard", `${effectiveDoorCooldown(settings.automation.cooldown_seconds)}s`, settings.automation.block_while_call_active ? "Blocks repeats while calls are active" : "Cooldown only", "ok")}
-    </div>
-    <div class="grid cols-2" style="margin-top:16px">
-      <div class="card">
+    <section class="overview-hero ${online ? 'connected' : 'disconnected'}">
+      <div class="overview-orbit" aria-hidden="true"><span></span><i></i></div>
+      <div class="overview-copy"><span class="eyebrow">SITE CONTROL CENTER</span><h2>${esc(s.node_id || 'Your Simson node')}</h2><p>${online ? 'Your call services are connected and ready.' : 'The addon cannot reach the call service. Check the node and network connection.'}</p><div class="overview-health"><i></i>${online ? 'Node online' : 'Connection needs attention'} <span>·</span> ${s.asterisk_connected ? 'Asterisk connected' : 'Asterisk not confirmed'}</div></div>
+      <button class="btn secondary overview-refresh" data-action="refresh">Refresh status <span aria-hidden="true">↻</span></button>
+    </section>
+    <section class="overview-metrics" aria-label="System summary">
+      <article class="metric-card"><span class="metric-icon" aria-hidden="true">☎</span><div><small>SIP devices</small><b>${endpoints}</b><span>${state.sip.filter(endpoint => endpoint.registered).length} registered</span></div><button data-page="sip" aria-label="Manage SIP devices">↗</button></article>
+      <article class="metric-card"><span class="metric-icon" aria-hidden="true">⇄</span><div><small>Destinations</small><b>${targets}</b><span>${settings.automation.triggers.length} automations</span></div><button data-page="routing" aria-label="Manage routes">↗</button></article>
+      <article class="metric-card"><span class="metric-icon" aria-hidden="true">◷</span><div><small>Repeat call guard</small><b>${effectiveDoorCooldown(settings.automation.cooldown_seconds)}<small>s</small></b><span>${settings.automation.block_while_call_active ? 'Blocks while a call is active' : 'Cooldown enabled'}</span></div><button data-page="automation" aria-label="Manage automation">↗</button></article>
+    </section>
+    <div class="grid cols-2 overview-details">
+      <div class="card overview-call-card">
         <div class="card-head">
           <div>
-            <div class="card-title">Live Call</div>
-            <div class="card-sub">Current site call state</div>
+            <div class="card-title">${active ? 'Call in progress' : 'Call activity'}</div>
+            <div class="card-sub">${active ? 'A call is currently using this site.' : 'No active call. New calls will appear here.'}</div>
           </div>
-          <span class="pill ${active ? "warn" : "ok"}">${active ? active.state : "idle"}</span>
+          <span class="live-dot ${active ? 'busy' : ''}">${active ? 'LIVE' : 'READY'}</span>
         </div>
         ${active ? `
-          <div class="row" style="background:transparent;border:0;padding:8px 0;">
-            <div class="row-title">${esc(activeCallDisplay(active))}</div>
-            <div class="row-sub">${esc(activeCallSubtitle(active))}</div>
-          </div>
-        ` : `<div class="empty">No active call on this addon.</div>`}
+          <div class="overview-active-call"><span class="call-wave" aria-hidden="true">〰</span><div><b>${esc(activeCallDisplay(active))}</b><p>${esc(activeCallSubtitle(active))}</p></div></div>
+        ` : `<div class="overview-idle"><span aria-hidden="true">◌</span><div><b>All clear</b><p>There are no active calls on this addon.</p></div></div>`}
       </div>
-      <div class="card">
+      <div class="card overview-routes-card">
         <div class="card-head">
           <div>
-            <div class="card-title">Routes at a glance</div>
-            <div class="card-sub">${settings.call_targets.length} saved route targets · ${settings.automation.triggers.length} automation trigger(s)</div>
+            <div class="card-title">Your destinations</div>
+            <div class="card-sub">The places calls can reach from this site.</div>
           </div>
+          <button class="btn small secondary" data-page="routing">Manage</button>
         </div>
         <div class="list">
-          ${settings.call_targets.slice(0, 5).map(targetRowReadonly).join("") || `<div class="empty">No routes yet. Add routes from Routing.</div>`}
+          ${settings.call_targets.slice(0, 4).map(targetRowReadonly).join("") || `<div class="overview-empty"><span aria-hidden="true">＋</span><b>No destinations configured</b><p>Add a SIP phone, gateway, or Home Assistant node to get started.</p><button class="btn small" data-page="routing">Set up routing</button></div>`}
         </div>
       </div>
     </div>
@@ -55,4 +61,3 @@ export function stat(title, value, sub, tone) {
     </div>
   `;
 }
-

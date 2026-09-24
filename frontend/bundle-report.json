@@ -1,19 +1,19 @@
 {
-  "chunks/advanced-XP5LMCJW.js": {
-    "bytes": 2628,
-    "gzip": 961
+  "chunks/advanced-6CNHUIWX.js": {
+    "bytes": 2682,
+    "gzip": 985
   },
-  "chunks/clicks-I7GH46ZX.js": {
+  "chunks/clicks-EZP6CJIB.js": {
     "bytes": 400,
-    "gzip": 210
+    "gzip": 211
   },
-  "chunks/inputs-B5M3CR5S.js": {
+  "chunks/inputs-FDDX3OVA.js": {
     "bytes": 4178,
-    "gzip": 1507
+    "gzip": 1503
   },
-  "chunks/chunk-S2Q3OVSN.js": {
+  "chunks/chunk-PGLOTEFX.js": {
     "bytes": 7175,
-    "gzip": 2881
+    "gzip": 2882
   },
   "app.js": {
     "bytes": 906,
@@ -31,49 +31,49 @@
     "bytes": 1143,
     "gzip": 482
   },
-  "chunks/automation-KGZRC2RA.js": {
-    "bytes": 310,
-    "gzip": 222
+  "chunks/automation-RZ6YUKC4.js": {
+    "bytes": 338,
+    "gzip": 232
   },
-  "chunks/overview-JDHCY4FO.js": {
-    "bytes": 2772,
-    "gzip": 1156
+  "chunks/overview-JKNDZTF5.js": {
+    "bytes": 4572,
+    "gzip": 1720
   },
-  "chunks/routing-VFHGJCIQ.js": {
+  "chunks/routing-OVVKYMG2.js": {
     "bytes": 264,
-    "gzip": 158
+    "gzip": 157
   },
-  "chunks/chunk-DQEP3HEZ.js": {
+  "chunks/chunk-JLMALBBK.js": {
     "bytes": 33986,
-    "gzip": 9679
+    "gzip": 9677
   },
   "chunks/chunk-VUYAJJE6.js": {
     "bytes": 3338,
     "gzip": 1053
   },
-  "chunks/chunk-NYPYZHXP.js": {
-    "bytes": 18610,
-    "gzip": 5464
+  "chunks/chunk-SKZ5RTBX.js": {
+    "bytes": 18666,
+    "gzip": 5487
   },
-  "chunks/sip-F6FN5GPA.js": {
+  "chunks/sip-G2TLQ5FF.js": {
     "bytes": 25345,
-    "gzip": 6449
+    "gzip": 6446
   },
-  "chunks/chunk-QQ3R3DIZ.js": {
+  "chunks/chunk-MKYFKYDB.js": {
     "bytes": 11435,
     "gzip": 4117
   },
-  "chunks/chunk-KRDI2XUQ.js": {
-    "bytes": 6873,
-    "gzip": 2569
+  "chunks/chunk-I2GJCFZ4.js": {
+    "bytes": 7328,
+    "gzip": 2674
   },
-  "chunks/chunk-JLXVDRQC.js": {
-    "bytes": 3125,
-    "gzip": 1304
+  "chunks/chunk-XNCLTULO.js": {
+    "bytes": 1178,
+    "gzip": 721
   },
-  "chunks/chunk-XSKVCSHS.js": {
-    "bytes": 1211,
-    "gzip": 740
+  "chunks/chunk-MH4MHY7U.js": {
+    "bytes": 5057,
+    "gzip": 2044
   },
   "chunks/chunk-RP7N3B43.js": {
     "bytes": 5093,
@@ -88,7 +88,7 @@
     "gzip": 468
   },
   "styles.css": {
-    "bytes": 44056,
-    "gzip": 9238
+    "bytes": 58626,
+    "gzip": 12056
   }
 }

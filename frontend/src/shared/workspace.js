@@ -1,5 +1,31 @@
 const expanded = new Map();
 
+function sectionNavigation(page, sections) {
+  const content = document.getElementById('content');
+  const key = `${page}:section`;
+  const nav = document.createElement('nav');
+  nav.className = 'workspace-sections';
+  nav.setAttribute('aria-label', `${page} sections`);
+  for (const [label, panel] of sections) {
+    if (!panel) continue;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    const select = () => {
+      expanded.set(key, label);
+      for (const [otherLabel, otherPanel] of sections) {
+        if (otherPanel) otherPanel.hidden = otherLabel !== label;
+      }
+      for (const item of nav.children) item.setAttribute('aria-pressed', String(item === button));
+    };
+    button.addEventListener('click', select);
+    nav.append(button);
+    panel.hidden = label !== (expanded.get(key) || sections[0][0]);
+    button.setAttribute('aria-pressed', String(!panel.hidden));
+  }
+  content.prepend(nav);
+}
+
 export function compactWorkspace(page) {
   const content = document.getElementById('content');
   content.classList.add('compact-workspace');
@@ -8,25 +34,21 @@ export function compactWorkspace(page) {
     const targets = content.querySelector('#target-list')?.closest('.card');
     const policy = content.querySelector('.grid.cols-2');
     const groups = [['Policy & defaults', policy], ['Destinations', targets], ['Multi-level routes', advanced]].filter(([,element]) => element);
-    const nav = document.createElement('nav');
-    nav.className = 'workspace-sections';
-    nav.setAttribute('aria-label', 'Routing sections');
-    const key = 'routing:section';
-    for (const [label, element] of groups) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.textContent = label;
-      const select = () => {
-        expanded.set(key, label);
-        groups.forEach(([,panel]) => panel.hidden = panel !== element);
-        [...nav.children].forEach(item => item.setAttribute('aria-pressed', String(item === button)));
-      };
-      button.addEventListener('click', select);
-      nav.append(button);
-      element.hidden = label !== (expanded.get(key) || groups[0][0]);
-      button.setAttribute('aria-pressed', String(!element.hidden));
-    }
-    content.prepend(nav);
+    sectionNavigation('routing', groups);
+  }
+  if (page === 'automation') {
+    const workflow = content.querySelector('.automation-grid');
+    const workflowCards = [...(workflow?.children || [])].filter(element => element.matches('.card'));
+    const triggerCard = [...content.querySelectorAll(':scope > .card')].find(element => element.textContent.includes('Automation triggers'));
+    const sections = workflowCards.map(element => [element.querySelector('.card-title')?.textContent.trim() || 'Automation', element]);
+    if (triggerCard) sections.push(['Saved triggers', triggerCard]);
+    if (sections.length > 1) sectionNavigation('automation', sections);
+  }
+  if (page === 'advanced') {
+    const identity = content.querySelector(':scope > .grid');
+    const diagnostics = [...content.querySelectorAll(':scope > .card')].find(card => card.textContent.includes('Raw settings snapshot'));
+    const sections = [['Site identity', identity], ['Diagnostics', diagnostics]].filter(([,panel]) => panel);
+    if (sections.length > 1) sectionNavigation('advanced', sections);
   }
   const rows = [...content.querySelectorAll('.sip-manage-row, #target-list > .row')];
   for (const [index, row] of rows.entries()) {
@@ -88,12 +110,17 @@ export function compactWorkspace(page) {
     filter();
   }
   if (page === 'sip') {
+    const notice = content.querySelector('.inline-notice');
+    notice?.remove();
+    const reminder = [...content.querySelectorAll('.card')].find(card => card.textContent.includes('Phone setup reminder'));
+    reminder?.remove();
     const create = content.querySelector('.card.glow');
     if (create) {
+      create.closest('.grid')?.classList.add('sip-create-layout');
       const details = document.createElement('details');
       details.className = 'create-device';
       const summary = document.createElement('summary');
-      summary.textContent = 'Add a SIP phone or gateway';
+      summary.innerHTML = '<span class="create-device-icon" aria-hidden="true">＋</span><span><b>Add a SIP phone or gateway</b><small>Create an extension and set up a handset or trunk.</small></span><span class="create-device-action">Add device <span aria-hidden="true">↗</span></span>';
       create.before(details);
       details.append(summary, create);
       const form = create.querySelector('.form-grid');
@@ -108,8 +135,16 @@ export function compactWorkspace(page) {
         options.append(label, fields);
         form.after(options);
       }
-      const inventory = content.querySelector('.data-table')?.closest('.card');
+      const guide = document.createElement('details');
+      guide.className = 'connection-guide';
+      guide.innerHTML = '<summary>Set up a handset manually</summary><div><p>Use these settings on a SIP phone:</p><dl><dt>Server</dt><dd>simson-vps.vipsy.in</dd><dt>Port</dt><dd>5060 · UDP or TCP</dd><dt>Audio</dt><dd>PCMU (G.711u) and PCMA (G.711a)</dd><dt>Video</dt><dd>Enable H.264 when supported</dd></dl></div>';
+      create.closest('.grid')?.after(guide);
+      const inventory = [...content.querySelectorAll('.card')].find(card => card.textContent.includes('Registered SIP devices'));
       if (inventory) content.prepend(inventory);
     }
+    const hero = document.createElement('div');
+    hero.className = 'page-intro sip-intro';
+    hero.innerHTML = '<div><span class="eyebrow">EXTENSIONS & DEVICES</span><h2>Your phone system</h2><p>Manage handsets, gateways, and their availability at this site.</p></div><div class="intro-summary"><span class="intro-count">'+rows.length+'</span><span>configured<br>devices</span></div>';
+    content.prepend(hero);
   }
 }

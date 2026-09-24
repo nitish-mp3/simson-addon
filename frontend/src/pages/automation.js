@@ -3,6 +3,7 @@ import { effectiveDoorCooldown, sourceSipLabel, targetListText, stableDoorCallba
 import { state, boot } from '../state/store.js';
 import { normalizeSipEndpoint, targetSelectOptions } from '../shared/endpoints.js';
 import { splitList, $, esc, option } from '../shared/dom.js';
+import { compactWorkspace } from '../shared/workspace.js';
 
 export function renderAutomation() {
   const settings = getSettings();
@@ -235,6 +236,7 @@ export function renderAutomation() {
       </div>
     </div>
   `;
+  compactWorkspace('automation');
 }
 
 export function vpsHttpBase() {
@@ -359,4 +361,3 @@ export function triggerRow(t) {
     </div>
   `;
 }
-

@@ -1,4 +1,4 @@
-import{e as t,h as d}from"./chunk-6R6CGC23.js";import{a,b as e}from"./chunk-OPL7LVHU.js";function o(){let i=t.status||{};a("content").innerHTML=`
+import{a as s}from"./chunk-MH4MHY7U.js";import{e as t,h as d}from"./chunk-6R6CGC23.js";import{a,b as e}from"./chunk-OPL7LVHU.js";function r(){let i=t.status||{};a("content").innerHTML=`
     <div class="grid cols-2">
       <div class="card">
         <div class="card-title">Site identity</div>
@@ -43,4 +43,4 @@ import{e as t,h as d}from"./chunk-6R6CGC23.js";import{a,b as e}from"./chunk-OPL7
       <div class="card-sub">For support/debugging. Editing here is intentionally disabled so accidental raw JSON changes do not break live routing.</div>
       <textarea rows="24" readonly style="margin-top:12px;">${e(JSON.stringify(d(),null,2))}</textarea>
     </div>
-  `}export{o as renderAdvanced};
+  `,s("advanced")}export{r as renderAdvanced};

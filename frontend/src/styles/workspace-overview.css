@@ -1,0 +1,40 @@
+.overview-hero { position: relative; isolation: isolate; display: flex; align-items: center; justify-content: space-between; gap: 25px; min-height: 208px; margin-bottom: 15px; padding: 30px 34px; overflow: hidden; border: 1px solid rgba(133, 192, 209, .14); border-radius: 16px; background: linear-gradient(110deg, #192e3b, #172838 51%, #172430); }
+.overview-hero.connected { border-color: rgba(114, 222, 193, .2); }
+.overview-copy { position: relative; z-index: 1; }
+.overview-copy h2 { margin: 8px 0 5px; font-size: 30px; line-height: 1.1; letter-spacing: -.05em; }
+.overview-copy > p { margin: 0; color: #b4c4cf; font-size: 13px; }
+.overview-health { display: flex; align-items: center; gap: 8px; margin-top: 20px; color: #c8d7dd; font-size: 11px; }
+.overview-health i, .live-dot::before { width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 4px rgba(34, 197, 94, .1); }
+.overview-hero.disconnected .overview-health i { background: var(--warning); box-shadow: 0 0 0 4px rgba(245, 158, 11, .12); }
+.overview-orbit { position: absolute; z-index: -1; top: -42px; right: 15%; width: 260px; height: 260px; border: 1px solid rgba(114, 222, 193, .1); border-radius: 50%; }
+.overview-orbit::before, .overview-orbit::after { position: absolute; inset: 24px; border: 1px solid rgba(114, 222, 193, .09); border-radius: 50%; content: ""; }
+.overview-orbit::after { inset: 49px; }
+.overview-orbit span { position: absolute; inset: 75px; border-radius: 50%; background: radial-gradient(circle, rgba(114, 222, 193, .15), transparent 72%); }
+.overview-orbit i { position: absolute; top: 46px; right: 50px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 20px var(--accent); }
+.overview-refresh { position: relative; z-index: 1; }
+.overview-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 15px; }
+.metric-card { display: flex; align-items: center; gap: 13px; min-width: 0; padding: 16px; border: 1px solid var(--border-default); border-radius: 12px; background: linear-gradient(145deg, #172636, #14212e); }
+.metric-icon { display: grid; place-items: center; width: 39px; height: 39px; flex: none; border: 1px solid rgba(114, 222, 193, .13); border-radius: 11px; background: rgba(114, 222, 193, .065); color: var(--accent); font-size: 17px; }
+.metric-card > div { display: grid; min-width: 0; line-height: 1.35; }
+.metric-card > div > small:first-child { color: var(--text-secondary); font-size: 10px; }
+.metric-card > div > b { font-size: 19px; letter-spacing: -.035em; }
+.metric-card > div > b small { color: var(--text-secondary); font-size: 11px; }
+.metric-card > div > span { overflow: hidden; color: var(--text-tertiary); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.metric-card > button { width: 29px; height: 29px; flex: none; margin-left: auto; border: 1px solid var(--border-default); border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; }
+.metric-card > button:hover { background: var(--bg-hover); color: var(--accent); }
+.overview-details { align-items: start; }
+.overview-call-card, .overview-routes-card { min-height: 240px; }
+.live-dot { display: inline-flex; align-items: center; gap: 7px; padding: 5px 8px; border: 1px solid var(--border-default); border-radius: 20px; color: var(--text-secondary); font-size: 9px; font-weight: 750; letter-spacing: .08em; }
+.live-dot::before { width: 6px; height: 6px; box-shadow: none; content: ""; }
+.live-dot.busy { border-color: rgba(245, 199, 120, .22); color: #f5c778; }
+.live-dot.busy::before { background: #f5c778; box-shadow: 0 0 0 3px rgba(245, 199, 120, .1); }
+.overview-idle, .overview-active-call { display: flex; align-items: center; gap: 13px; margin-top: 30px; padding: 16px; border: 1px solid var(--border-default); border-radius: 11px; background: rgba(8, 15, 22, .18); }
+.overview-idle > span, .call-wave { display: grid; place-items: center; width: 38px; height: 38px; flex: none; border-radius: 11px; background: rgba(114, 222, 193, .08); color: var(--accent); font-size: 23px; }
+.overview-idle b, .overview-active-call b { font-size: 12px; }
+.overview-idle p, .overview-active-call p { margin: 2px 0 0; color: var(--text-secondary); font-size: 11px; }
+.overview-empty { display: grid; justify-items: start; gap: 5px; padding: 14px 0; color: var(--text-secondary); }
+.overview-empty > span { color: var(--accent); font-size: 19px; }
+.overview-empty b { color: var(--text-primary); font-size: 12px; }
+.overview-empty p { margin: 0 0 8px; font-size: 11px; }
+.overview-routes-card .list { gap: 7px; }
+.overview-routes-card .row { padding: 11px; border-radius: 10px; }
