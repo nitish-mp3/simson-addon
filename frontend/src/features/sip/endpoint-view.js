@@ -18,6 +18,11 @@ export function sipRow(raw) {
   const endpointId = ep.id || ep.extension || ep.username;
   const isGateway = isGatewaySip(ep);
   const registered = Boolean(ep.registered);
+  const contactHealth = ep.contact_status === "Unavail"
+    ? `<span class="pill warn">SIP qualify failed</span>`
+    : ep.contact_status === "Unknown"
+      ? `<span class="pill warn">reachability unknown</span>`
+      : "";
   const contactText = ep.contact_address
     ? `${ep.contact_address}${ep.contact_latency_ms ? ` · ${ep.contact_latency_ms}ms` : ""}`
     : (ep.contact_status || "no live contact");
@@ -60,6 +65,7 @@ export function sipRow(raw) {
         <div class="row-actions">
           <span class="pill ${enabled ? "ok" : "bad"}">${enabled ? "enabled" : "disabled"}</span>
           <span class="pill ${registered ? "ok" : "warn"}">${registered ? "registered" : "offline"}</span>
+          ${registered ? contactHealth : ""}
           ${ep.default_outbound ? `<span class="pill ok">default outside gateway</span>` : ""}
           ${isGateway ? `<span class="pill warn">gateway protected</span>` : ""}
           ${isGateway ? `<span class="pill">${esc(gatewayMode === "direct_target" ? "direct inbound" : gatewayMode === "haos_then_fallback" ? "card then fallback" : "inherits inbound")}</span>` : ""}
@@ -240,4 +246,3 @@ export function supervisionEditor(endpointId, sourceExtension, supervision) {
       </div>
     </details>`;
 }
-

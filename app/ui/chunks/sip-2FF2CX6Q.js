@@ -1,19 +1,20 @@
-import{a as f,c as w,g as _}from"./chunk-KEEXP4KU.js";import"./chunk-DNMXSAZU.js";import"./chunk-XNCLTULO.js";import{a as $}from"./chunk-HCD6FVME.js";import{b as k,c as h,g as y,j as m}from"./chunk-RP7N3B43.js";import{e as d}from"./chunk-6R6CGC23.js";import{a as g,b as e,d as u}from"./chunk-OPL7LVHU.js";function x(){return d.sip.length?`
+import{a as f,c as w,g as _}from"./chunk-ZJ3XMRNW.js";import"./chunk-R6PPMG22.js";import"./chunk-XNCLTULO.js";import{a as $}from"./chunk-HCD6FVME.js";import{b as k,c as h,g as y,j as m}from"./chunk-RP7N3B43.js";import{e as d}from"./chunk-6R6CGC23.js";import{a as g,b as e,d as u}from"./chunk-OPL7LVHU.js";function x(){return d.sip.length?`
     <div class="data-table">
-      ${d.sip.map(C).join("")}
+      ${d.sip.map(O).join("")}
     </div>
-  `:'<div class="empty">No SIP endpoints returned yet.</div>'}function C(t){let a=h(t)||{},s=a.enabled!==!1,i=a.id||a.extension||a.username,n=m(a),l=!!a.registered,c=a.contact_address?`${a.contact_address}${a.contact_latency_ms?` \xB7 ${a.contact_latency_ms}ms`:""}`:a.contact_status||"no live contact",o=a.auto_answer?a.auto_answer_callers?`auto-answer from ${a.auto_answer_callers}`:"auto-answer from anyone":"manual answer",v=a.auto_speaker?a.auto_speaker_callers?`speaker from ${a.auto_speaker_callers}`:"speaker follows auto-answer":"speaker off",S=a.callback_bridge?`caller callback from ${a.callback_bridge_callers||"no allowlist"}${a.callback_caller_auto_speaker?" with caller speaker":a.callback_caller_auto_answer?" with caller auto-answer":""}`:"caller callback off",p=a.gateway_inbound_mode||"inherit",P=a.gateway_direct_target||"",T=a.gateway_ivr_enabled?`IVR ${a.gateway_ivr_sound||"built-in wait prompt"}`:"IVR off",I=a.answer_announcement_text?`private prompt "${a.answer_announcement_text}"`:"no private answer prompt",A=a.pre_ring_announcement_text?`caller waiting announcement "${a.pre_ring_announcement_text}"`:"no caller waiting announcement",b=Object.keys(a.call_duration_rules||{}).length,r=k(a.supervision),R=[r.listen?"monitor":"",r.whisper?"whisper":"",r.barge?"barge":""].filter(Boolean);return`
+  `:'<div class="empty">No SIP endpoints returned yet.</div>'}function O(t){let a=h(t)||{},s=a.enabled!==!1,i=a.id||a.extension||a.username,n=m(a),l=!!a.registered,c=a.contact_status==="Unavail"?'<span class="pill warn">SIP qualify failed</span>':a.contact_status==="Unknown"?'<span class="pill warn">reachability unknown</span>':"",o=a.contact_address?`${a.contact_address}${a.contact_latency_ms?` \xB7 ${a.contact_latency_ms}ms`:""}`:a.contact_status||"no live contact",v=a.auto_answer?a.auto_answer_callers?`auto-answer from ${a.auto_answer_callers}`:"auto-answer from anyone":"manual answer",S=a.auto_speaker?a.auto_speaker_callers?`speaker from ${a.auto_speaker_callers}`:"speaker follows auto-answer":"speaker off",P=a.callback_bridge?`caller callback from ${a.callback_bridge_callers||"no allowlist"}${a.callback_caller_auto_speaker?" with caller speaker":a.callback_caller_auto_answer?" with caller auto-answer":""}`:"caller callback off",p=a.gateway_inbound_mode||"inherit",T=a.gateway_direct_target||"",I=a.gateway_ivr_enabled?`IVR ${a.gateway_ivr_sound||"built-in wait prompt"}`:"IVR off",A=a.answer_announcement_text?`private prompt "${a.answer_announcement_text}"`:"no private answer prompt",R=a.pre_ring_announcement_text?`caller waiting announcement "${a.pre_ring_announcement_text}"`:"no caller waiting announcement",b=Object.keys(a.call_duration_rules||{}).length,r=k(a.supervision),C=[r.listen?"monitor":"",r.whisper?"whisper":"",r.barge?"barge":""].filter(Boolean);return`
     <div class="sip-manage-row ${n?"protected":""}">
       <div class="sip-main">
         <div style="min-width:0;">
           <div class="row-title">${e(a.extension||"-")} ${a.description?`<span>${e(a.description)}</span>`:""}</div>
-          <div class="row-sub">User ${e(a.username||"-")} \xB7 ${e(a.route_to||"any available node")} \xB7 ${a.video_enabled?"Audio + H.264":"Audio only"} \xB7 ${e(o)} \xB7 ${e(v)} \xB7 ${e(S)} \xB7 ${e(A)} \xB7 ${e(I)} \xB7 ${b?`${b} timed route${b===1?"":"s"}`:"no call time limit"}</div>
-          <div class="row-sub">Live contact: ${e(c)}</div>
-          ${!n&&r.enabled?`<div class="row-sub supervision-summary">Supervisor access: ${e(R.join(", ")||"not configured")} \xB7 ${r.targets.length} permitted target${r.targets.length===1?"":"s"}</div>`:""}
+          <div class="row-sub">User ${e(a.username||"-")} \xB7 ${e(a.route_to||"any available node")} \xB7 ${a.video_enabled?"Audio + H.264":"Audio only"} \xB7 ${e(v)} \xB7 ${e(S)} \xB7 ${e(P)} \xB7 ${e(R)} \xB7 ${e(A)} \xB7 ${b?`${b} timed route${b===1?"":"s"}`:"no call time limit"}</div>
+          <div class="row-sub">Live contact: ${e(o)}</div>
+          ${!n&&r.enabled?`<div class="row-sub supervision-summary">Supervisor access: ${e(C.join(", ")||"not configured")} \xB7 ${r.targets.length} permitted target${r.targets.length===1?"":"s"}</div>`:""}
         </div>
         <div class="row-actions">
           <span class="pill ${s?"ok":"bad"}">${s?"enabled":"disabled"}</span>
           <span class="pill ${l?"ok":"warn"}">${l?"registered":"offline"}</span>
+          ${l?c:""}
           ${a.default_outbound?'<span class="pill ok">default outside gateway</span>':""}
           ${n?'<span class="pill warn">gateway protected</span>':""}
           ${n?`<span class="pill">${e(p==="direct_target"?"direct inbound":p==="haos_then_fallback"?"card then fallback":"inherits inbound")}</span>`:""}
@@ -46,7 +47,7 @@ import{a as f,c as w,g as _}from"./chunk-KEEXP4KU.js";import"./chunk-DNMXSAZU.js
               <label>Inbound behavior for gateway ${e(a.extension)}</label>
               <div class="hint">This applies only to calls arriving through this gateway. It will not affect other gateways.</div>
             </div>
-            <span class="pill">${e(T)}</span>
+            <span class="pill">${e(I)}</span>
           </div>
           <div class="form-grid compact">
             <div class="field">
@@ -60,7 +61,7 @@ import{a as f,c as w,g as _}from"./chunk-KEEXP4KU.js";import"./chunk-DNMXSAZU.js
             <div class="field">
               <label>Gateway target / fallback</label>
               <select data-sip-id="${e(i)}" data-sip-key="gateway_direct_target">
-                ${y(P)}
+                ${y(T)}
               </select>
               <div class="hint">For direct mode this starts immediately. Select a <b>Route plan</b> to run its full multi-stage escalation. For card mode this is tried after the HAOS ring delay.</div>
             </div>
@@ -122,7 +123,7 @@ import{a as f,c as w,g as _}from"./chunk-KEEXP4KU.js";import"./chunk-DNMXSAZU.js
           <label><input data-sip-id="${e(i)}" data-sip-key="callback_caller_auto_answer" type="checkbox" ${a.callback_caller_auto_answer?"checked":""}> Caller callback auto-answer</label>
           <label><input data-sip-id="${e(i)}" data-sip-key="callback_caller_auto_speaker" type="checkbox" ${a.callback_caller_auto_speaker?"checked":""}> Caller callback speaker/intercom</label>
         </div>
-        ${n?"":H(i,a.extension,r)}
+        ${n?"":L(i,a.extension,r)}
       </div>
       <div class="sip-actions">
         <button class="btn small secondary" data-action="save-sip" data-id="${e(i)}">Save Device</button>
@@ -130,12 +131,12 @@ import{a as f,c as w,g as _}from"./chunk-KEEXP4KU.js";import"./chunk-DNMXSAZU.js
         ${n?`<button class="btn small red ghost" data-action="delete-sip" data-id="${e(i)}" data-ext="${e(a.extension||i)}" title="Gateway trunks require typed confirmation">Delete Gateway</button>`:`<button class="btn small red" data-action="delete-sip" data-id="${e(i)}" data-ext="${e(a.extension||i)}">Delete</button>`}
       </div>
     </div>
-  `}function O(t,a,s){let i=new Set((s||[]).map(String)),n=d.sip.map(h).filter(l=>l&&l.enabled!==!1&&!m(l)&&l.extension&&l.extension!==a);return n.length?n.map(l=>{let c=l.id||l.extension||l.username;return`
+  `}function H(t,a,s){let i=new Set((s||[]).map(String)),n=d.sip.map(h).filter(l=>l&&l.enabled!==!1&&!m(l)&&l.extension&&l.extension!==a);return n.length?n.map(l=>{let c=l.id||l.extension||l.username;return`
       <label class="supervision-target">
         <input type="checkbox" data-supervision-owner="${e(t)}" data-supervision-target="${e(l.extension)}" ${i.has(String(l.extension))?"checked":""}>
         <span><b>${e(l.extension)}</b>${l.description?`<small>${e(l.description)}</small>`:""}</span>
         <i class="${l.registered?"online":"offline"}">${l.registered?"online":"offline"}</i>
-      </label>`}).join(""):'<div class="empty compact">No other enabled SIP phones are available on this site.</div>'}function H(t,a,s){let i=s.enabled?"open":"",n=(l,c="target")=>{let o=String(l||""),v=o.startsWith("*")?o.slice(1):o;return v&&v!==o?`Dial ${o} + ${c}. If the handset reserves *, dial ${v} + ${c}.`:`Dial ${o} + ${c}.`};return`
+      </label>`}).join(""):'<div class="empty compact">No other enabled SIP phones are available on this site.</div>'}function L(t,a,s){let i=s.enabled?"open":"",n=(l,c="target")=>{let o=String(l||""),v=o.startsWith("*")?o.slice(1):o;return v&&v!==o?`Dial ${o} + ${c}. If the handset reserves *, dial ${v} + ${c}.`:`Dial ${o} + ${c}.`};return`
     <details class="field full supervision-panel" ${i}>
       <summary>
         <span><b>Supervisor access</b><small>Secure monitor, whisper, and barge permissions for ${e(a||"this extension")}</small></span>
@@ -162,9 +163,9 @@ import{a as f,c as w,g as _}from"./chunk-KEEXP4KU.js";import"./chunk-DNMXSAZU.js
           </div>
         </div>
         <div class="supervision-targets-head"><b>Permitted target phones</b><span>Select one or more active SIP extensions</span></div>
-        <div class="supervision-targets">${O(t,a,s.targets)}</div>
+        <div class="supervision-targets">${H(t,a,s.targets)}</div>
       </div>
-    </details>`}function B(){g("content").innerHTML=`
+    </details>`}function E(){g("content").innerHTML=`
     <div class="inline-notice info" style="margin-bottom:16px">
       <div><b>Need multi-level or parallel ringing?</b><span>Advanced plans are configured under Routing. Choose a gateway or SIP phone as the exact incoming source, then add ordered stages and parallel SIP/HAOS destinations.</span></div>
       <button class="btn small secondary" data-page="routing">Open Routing</button>
@@ -325,4 +326,4 @@ import{a as f,c as w,g as _}from"./chunk-KEEXP4KU.js";import"./chunk-DNMXSAZU.js
       </div>
       ${x()}
     </div>
-  `,$("sip")}export{B as renderSip};
+  `,$("sip")}export{E as renderSip};
