@@ -19,7 +19,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "5.1.3"
+ADDON_VERSION = "5.1.5"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -1947,7 +1947,9 @@ class LocalAPI:
             routing = RoutingIntent(
                 target_type="asterisk",
                 target_id=f"pstn_{trunk}_{dial_digits}",
-                target_label=body.get("target_label", "") or f"+{digits}",
+                target_label=body.get("target_label", "") or (
+                    f"+{digits}" if str(phone_number).strip().startswith("+") else digits
+                ),
                 extension=dial_digits,
                 context=self.cfg.asterisk_context,
                 trunk=trunk,

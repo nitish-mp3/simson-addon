@@ -8,10 +8,13 @@ from pathlib import Path
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(APP_DIR))
 
-from local_api import LocalAPI, _safe_upstream_error  # noqa: E402
+from local_api import LocalAPI, _normalize_pstn_digits, _safe_upstream_error  # noqa: E402
 
 
 class LocalAPIErrorTests(unittest.TestCase):
+    def test_mauritius_gateway_preserves_local_number(self):
+        self.assertEqual(_normalize_pstn_digits("52563000", "6202"), "52563000")
+
     def test_gateway_callback_keeps_target_id_as_gateway_selection(self):
         body = {
             "call_type": "sip",
