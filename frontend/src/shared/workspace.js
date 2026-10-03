@@ -41,10 +41,26 @@ export function compactWorkspace(page) {
   if (page === 'automation') {
     const workflow = content.querySelector('.automation-grid');
     const workflowCards = [...(workflow?.children || [])].filter(element => element.matches('.card'));
+    if (workflow) {
+      const panels = document.createElement('div');
+      panels.className = 'automation-panels';
+      workflow.before(panels);
+      panels.append(...workflowCards);
+      workflow.remove();
+    }
     const triggerCard = [...content.querySelectorAll(':scope > .card')].find(element => element.textContent.includes('Automation triggers'));
     const sections = workflowCards.map(element => [element.querySelector('.card-title')?.textContent.trim() || 'Automation', element]);
     if (triggerCard) sections.push(['Saved triggers', triggerCard]);
     if (sections.length > 1) sectionNavigation('automation', sections);
+    const urlBuilder = [...content.querySelectorAll(':scope > .card')].find(card=>card.querySelector('.card-title')?.textContent.includes('HTTP intercom URL builder'));
+    if (urlBuilder) {
+      const advanced = document.createElement('details');
+      advanced.className = 'endpoint-details';
+      const summary = document.createElement('summary');
+      summary.textContent = 'Advanced: handset buttons & automation URLs';
+      urlBuilder.before(advanced);
+      advanced.append(summary,urlBuilder);
+    }
   }
   if (page === 'advanced') {
     const identity = content.querySelector(':scope > .grid');

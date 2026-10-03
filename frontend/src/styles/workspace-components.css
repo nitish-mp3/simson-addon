@@ -52,3 +52,15 @@
 .connection-guide dl { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 6px 12px; }
 .connection-guide dt { color: var(--text-tertiary); }
 .connection-guide dd { color: var(--text-primary); overflow-wrap: anywhere; }
+.automation-panels { width: 100%; min-width: 0; }
+.automation-panels > .card { width: 100%; box-sizing: border-box; }
+.automation-panels .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.automation-panels .door-flow { display: grid; grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1.4fr); align-items: stretch; }
+.automation-panels .door-step { min-width: 0; }
+.automation-panels .door-arrow { align-self: center; text-align: center; }
+.automation-panels .door-destination-list { max-height: 360px; }
+.automation-panels .card-head .pill { flex: none; white-space: nowrap; overflow-wrap: normal; }
+@media (max-width: 720px) {
+  .automation-panels .form-grid, .automation-panels .door-flow { grid-template-columns: minmax(0, 1fr); }
+  .automation-panels .door-arrow { transform: rotate(90deg); }
+}

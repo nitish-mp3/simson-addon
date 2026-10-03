@@ -19,7 +19,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "5.1.5"
+ADDON_VERSION = "5.1.7"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -2077,6 +2077,10 @@ class LocalAPI:
             metadata["target_user_name"] = target_user_name
         if caller_user_id:
             metadata["caller_user_id"] = caller_user_id
+        if to_node == self.cfg.node_id and target_user_id and caller_user_id:
+            if target_user_id == caller_user_id:
+                return web.json_response({"error": "Choose another user to call"}, status=400)
+            metadata["local_user_call"] = True
         if source != "api":
             metadata["automation_source"] = source
 
@@ -2092,6 +2096,7 @@ class LocalAPI:
         call = await self.call_mgr.outgoing_request(call_id, to_node, call_type, routing=routing,
                                                     caller_user_id=caller_user_id,
                                                     remote_label=remote_label or target_id or to_node)
+        call.metadata.update(metadata)
         if max_duration_sec:
             call.metadata["max_duration_sec"] = max_duration_sec
         if self.addon and hasattr(self.addon, "_emit_call_event"):
@@ -3587,6 +3592,7 @@ def _call_to_dict(call) -> dict:
         "remote_label": call.remote_label,
         "call_type": call.call_type,
         "direction": call.direction,
+        "local_user_call": bool(call.metadata.get("local_user_call")),
         "state": call.state.value,
         "started_at": call.started_at,
         "answered_at": call.answered_at,

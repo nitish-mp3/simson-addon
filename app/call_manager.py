@@ -94,7 +94,9 @@ class CallManager:
             c for c in self._calls.values()
             if c.state in (CallState.REQUESTING, CallState.RINGING,
                            CallState.INCOMING, CallState.ACTIVE)
-            and (not c.caller_user_id or c.caller_user_id == user_id)
+            and (c.caller_user_id == user_id or
+                 c.metadata.get("target_user_id") == user_id or
+                 c.metadata.get("answered_by_user_id") == user_id)
         ]
         return max(active, key=lambda c: c.started_at or 0, default=None)
 
@@ -139,6 +141,7 @@ class CallManager:
             state=CallState.INCOMING,
             started_at=time.time(),
             metadata=metadata or {},
+            caller_user_id=(metadata or {}).get("caller_user_id", ""),
         )
         self._calls[call_id] = call
         await self._notify(call)

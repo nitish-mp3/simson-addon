@@ -16,7 +16,7 @@ from protocol import (
     TYPE_CALL_INVITE, TYPE_CALL_STATUS, TYPE_ERROR, TYPE_WEBRTC_SIGNAL,
     TYPE_USERS_LIST,
     ERR_SIP_UNAVAILABLE,
-    make_call_request, make_call_end, make_call_transfer, make_users_update,
+    make_call_request, make_call_end, make_call_transfer, make_users_update, make_call_reject,
 )
 from wss_client import WSSClient
 from call_manager import CallManager, CallInfo, CallState
@@ -704,20 +704,30 @@ class SimsonAddon:
             metadata = {}
         target_user_id = metadata.get("target_user_id", "")
         target_user_name = metadata.get("target_user_name", "")
+        if target_user_id:
+            busy = any(call.call_id != call_id and call.state in
+                (CallState.REQUESTING, CallState.INCOMING, CallState.RINGING, CallState.ACTIVE)
+                and target_user_id in (call.caller_user_id, call.metadata.get("target_user_id"),
+                    call.metadata.get("answered_by_user_id")) for call in self.call_mgr.all_calls)
+            if busy:
+                await self.wss.send(make_call_reject(call_id, self.cfg.node_id, "busy"))
+                return
 
         existing = self.call_mgr.get(call_id)
         if existing and existing.metadata.get("forwarded_to_sip"):
             logger.warning("Ignoring duplicate invite for already forwarded SIP call %s", call_id)
             return
-        if existing and existing.state in (CallState.INCOMING, CallState.RINGING, CallState.ACTIVE):
+        local_handoff = bool(existing and existing.direction == "outgoing" and
+            from_node == self.cfg.node_id and metadata.get("local_user_call"))
+        if existing and existing.state in (CallState.INCOMING, CallState.RINGING, CallState.ACTIVE) and not local_handoff:
             logger.info("Ignoring duplicate invite for existing call %s", call_id)
             return
 
         now = time.time()
-        source_key = f"{from_node}|{metadata.get('sip_extension', '')}|{call_type}"
+        source_key = f"{from_node}|{metadata.get('sip_extension', '')}|{call_type}|{target_user_id}"
         if (now - self._recent_invite_sources.get(source_key, 0)) < 3:
             active = self.call_mgr.active_call
-            if active and active.direction == "incoming" and active.remote_node_id == from_node:
+            if active and active.direction == "incoming" and active.call_id == call_id:
                 logger.warning("Suppressing rapid duplicate incoming invite from %s", from_node)
                 return
         self._recent_invite_sources[source_key] = now
@@ -734,6 +744,7 @@ class SimsonAddon:
 
         # Fire HA event for automations / UI.
         await self.ha.fire_event("simson_incoming_call", {
+            "node_id": self.cfg.node_id,
             "call_id": call_id,
             "from_node_id": from_node,
             "from_label": from_label,
@@ -747,11 +758,12 @@ class SimsonAddon:
         # Create a persistent notification so the user sees the call even
         # when the Lovelace card is not visible.
         target_suffix = f" for {target_user_name}" if target_user_name else ""
-        await self.ha.create_notification(
-            notification_id=f"simson_call_{call_id[:12]}",
-            title="Incoming Call",
-            message=f"📞 {from_label or from_node} is calling{target_suffix} ({call_type})",
-        )
+        if not target_user_id:
+            await self.ha.create_notification(
+                notification_id=f"simson_call_{call_id[:12]}",
+                title="Incoming Call",
+                message=f"📞 {from_label or from_node} is calling{target_suffix} ({call_type})",
+            )
 
         # Push to SSE so the Lovelace card shows incoming call immediately.
         self.api.push_sse_event({
@@ -1092,6 +1104,7 @@ class SimsonAddon:
         await self.ha.fire_event("simson_call_status", {
             "call_id": call_id,
             "status": status,
+            "node_id": self.cfg.node_id,
             "reason": reason,
             "direction": call.direction,
             "remote_node_id": call.remote_node_id,
@@ -1100,6 +1113,7 @@ class SimsonAddon:
             "target_user_id": call.metadata.get("target_user_id", ""),
             "caller_user_id": call.caller_user_id,
             "answered_by_user_id": answered_by_user_id,
+            "local_user_call": bool(call.metadata.get("local_user_call")),
         })
         await self._emit_call_event(
             call,
