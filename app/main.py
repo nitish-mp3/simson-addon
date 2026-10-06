@@ -1066,6 +1066,10 @@ class SimsonAddon:
             )
             return
 
+        if not existing_call and status in ("ringing", "active") and payload.get("control_node_id") == self.cfg.node_id:
+            existing_call = await self.call_mgr.outgoing_request(call_id, to_node_id,
+                call_type=call_type, remote_label=f"{payload.get('source_extension') or from_node_id.removeprefix('sip:')} -> {to_node_id.removeprefix('sip:')}")
+
         if not existing_call and status in ("ringing", "active") and (
             sip_bridge_id or from_node_id.startswith("sip:") or to_node_id.startswith("sip:")
         ):
@@ -1085,6 +1089,12 @@ class SimsonAddon:
                     "target_extension": target,
                 },
             )
+
+        if existing_call and payload.get("control_node_id") == self.cfg.node_id:
+            existing_call.direction = "outgoing"
+            existing_call.metadata.update({"observed_only": True, "controller_callback": True,
+                "source_extension": payload.get("source_extension") or from_node_id.removeprefix("sip:"),
+                "trunk": payload.get("trunk", ""), "control_node_id": self.cfg.node_id})
 
         call = await self.call_mgr.update_status(call_id, status, reason)
         if not call:
