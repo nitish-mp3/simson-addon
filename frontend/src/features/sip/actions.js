@@ -291,7 +291,7 @@ export async function clearStuckSip(endpointId, extension) {
   } else if (result.hardware_action_required) {
     toast(`Asterisk is clear, but gateway ${label} still owns the analog line. Enable CPC/busy-tone/polarity disconnect on that gateway or release its FXO port.`);
   } else {
-    toast(`Asterisk has no live channel for ${label}.`);
+    toast(result.message || `No server SIP channels on ${label}. Physical gateway line status has not been checked or reset.`);
   }
   await refresh();
 }

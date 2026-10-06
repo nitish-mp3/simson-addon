@@ -3,21 +3,21 @@
     "bytes": 2682,
     "gzip": 985
   },
-  "chunks/clicks-LSJOUWDZ.js": {
+  "chunks/clicks-QWIWFCIS.js": {
     "bytes": 400,
-    "gzip": 209
+    "gzip": 210
   },
-  "chunks/inputs-KSCEP7ZY.js": {
+  "chunks/inputs-USPQQ443.js": {
     "bytes": 4178,
-    "gzip": 1505
+    "gzip": 1504
   },
-  "chunks/chunk-NW7ACCWD.js": {
+  "chunks/chunk-JUJCHYX3.js": {
     "bytes": 7175,
-    "gzip": 2883
+    "gzip": 2882
   },
   "app.js": {
     "bytes": 906,
-    "gzip": 481
+    "gzip": 480
   },
   "chunks/studio-SZM4VKS4.js": {
     "bytes": 469,
@@ -55,15 +55,15 @@
     "bytes": 18666,
     "gzip": 5489
   },
-  "chunks/sip-U7CH6NA6.js": {
+  "chunks/sip-LTHNV6EA.js": {
     "bytes": 25534,
-    "gzip": 6507
+    "gzip": 6505
   },
-  "chunks/chunk-XKL3SJ6V.js": {
-    "bytes": 11435,
-    "gzip": 4117
+  "chunks/chunk-7EMDFAHX.js": {
+    "bytes": 11499,
+    "gzip": 4153
   },
-  "chunks/chunk-7J57LKCN.js": {
+  "chunks/chunk-R4SPH6C6.js": {
     "bytes": 7328,
     "gzip": 2675
   },

@@ -19,7 +19,7 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 
-ADDON_VERSION = "5.1.8"
+ADDON_VERSION = "5.1.9"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -2077,6 +2077,8 @@ class LocalAPI:
             metadata["target_user_name"] = target_user_name
         if caller_user_id:
             metadata["caller_user_id"] = caller_user_id
+            if body.get("caller_user_name"):
+                metadata["caller_user_name"] = str(body["caller_user_name"]).strip()[:128]
         if to_node == self.cfg.node_id and target_user_id and caller_user_id:
             if target_user_id == caller_user_id:
                 return web.json_response({"error": "Choose another user to call"}, status=400)

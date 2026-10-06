@@ -704,6 +704,8 @@ class SimsonAddon:
             metadata = {}
         target_user_id = metadata.get("target_user_id", "")
         target_user_name = metadata.get("target_user_name", "")
+        if metadata.get("caller_user_id") and metadata.get("caller_user_name"):
+            from_label = str(metadata["caller_user_name"]).strip()
         if target_user_id:
             busy = any(call.call_id != call_id and call.state in
                 (CallState.REQUESTING, CallState.INCOMING, CallState.RINGING, CallState.ACTIVE)
@@ -1161,7 +1163,9 @@ class SimsonAddon:
         if status == "failed" and call.direction == "outgoing":
             reason_msg = {
                 "phone_unavailable": "SIP phone is not registered. Check the phone's SIP account settings.",
-                "gateway_unavailable": "Gateway call failed. Check the Synway route, SIM/port state, and enabled SIP codecs.",
+                "gateway_unavailable": "The gateway could not complete the call. Check its call log, route and line status.",
+                "gateway_busy": "The gateway reported busy. Its physical line or the destination may be occupied; clearing server channels does not reset an FXO line.",
+                "gateway_rejected": "The gateway rejected the call. Check its route, permissions and line status.",
                 "originate_failed":  "Could not reach the SIP server. Check your Asterisk/AMI configuration.",
                 "busy":              "The phone is busy.",
                 "no_answer":         "No answer.",
