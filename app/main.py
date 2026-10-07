@@ -178,6 +178,8 @@ class SimsonAddon:
     async def _emit_call_event(self, call: CallInfo, event: str, reason: str = "", **extra):
         """Fire a single normalized HA event for automations and dashboards."""
         payload = self._call_event_payload(call, event, reason, **extra)
+        if getattr(self, "api", None):
+            self.api.push_sse_event({"type": "call_event", **payload})
         await self.ha.publish_call_event(payload)
         await self._notify_call_event(payload)
         return payload
@@ -770,11 +772,14 @@ class SimsonAddon:
         # Push to SSE so the Lovelace card shows incoming call immediately.
         self.api.push_sse_event({
             "type": "incoming_call",
+            "node_id": self.cfg.node_id,
             "call_id": call_id,
             "from_node_id": from_node,
             "from_label": from_label,
             "call_type": call_type,
             "metadata": metadata,
+            "target_user_id": target_user_id,
+            "target_user_name": target_user_name,
         })
 
         self._start_ring_timer(call)

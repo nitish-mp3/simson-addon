@@ -20,7 +20,7 @@ from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 from ice_config import merge_ice_servers
 
-ADDON_VERSION = "5.1.10"
+ADDON_VERSION = "5.1.11"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -1585,7 +1585,11 @@ class LocalAPI:
             await resp.write(f"data: {json.dumps(init_event)}\n\n".encode())
 
             while True:
-                event = await queue.get()
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15)
+                except TimeoutError:
+                    await resp.write(b": keepalive\n\n")
+                    continue
                 await resp.write(f"data: {json.dumps(event)}\n\n".encode())
         except (asyncio.CancelledError, ConnectionResetError, ConnectionError):
             pass
