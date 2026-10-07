@@ -18,8 +18,9 @@ from phone_provisioning import PhoneProvisioningService, ProvisioningError
 from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
+from ice_config import merge_ice_servers
 
-ADDON_VERSION = "5.1.9"
+ADDON_VERSION = "5.1.10"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -3359,7 +3360,7 @@ class LocalAPI:
         if remote_cfg:
             remote_ice = remote_cfg.get("ice_servers")
             if isinstance(remote_ice, list) and remote_ice:
-                ice_servers = remote_ice
+                ice_servers = merge_ice_servers(ice_servers, remote_ice)
 
             remote_sip = remote_cfg.get("sip") or {}
             if isinstance(remote_sip, dict):
