@@ -20,7 +20,7 @@ from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 from ice_config import merge_ice_servers
 
-ADDON_VERSION = "5.1.11"
+ADDON_VERSION = "5.1.12"
 DEFAULT_PSTN_TRUNK = "7009"
 
 

@@ -8,7 +8,8 @@ import logging
 import signal
 import sys
 import time
-from urllib.parse import quote
+from urllib.parse import quote, urlencode, urlsplit, urlunsplit, parse_qsl, unquote
+from posixpath import normpath
 
 from config import Config
 from provisioner import auto_provision, load_saved_credentials
@@ -232,9 +233,17 @@ class SimsonAddon:
             or "Unknown caller"
         )
         call_type = str(payload.get("call_type") or "call").strip()
-        dashboard_path = str(automation.get("dashboard_path", "/lovelace/default_view") or "/lovelace/default_view").strip()
+        dashboard_path = str(automation.get("dashboard_path", "/simson-call") or "/simson-call").strip()
         if not dashboard_path.startswith("/"):
             dashboard_path = "/" + dashboard_path
+        if dashboard_path.startswith("//"):
+            dashboard_path = "/simson-call"
+        decoded_path = unquote(urlsplit(dashboard_path).path)
+        normalized_path = normpath(decoded_path)
+        if (dashboard_path.startswith("//") or decoded_path.startswith("//") or normalized_path == "/api" or normalized_path.startswith("/api/")
+                or normalized_path == "/lovelace/default_view" or "\\" in unquote(dashboard_path)
+                or any(ord(char) < 32 for char in unquote(dashboard_path))):
+            dashboard_path = "/simson-call"
         if event in ("missed", "timeout") or (
             event in ("ended", "failed") and not tracked.get("answered")
         ):
@@ -285,13 +294,11 @@ class SimsonAddon:
             return value
 
         def call_action_uri(action: str) -> str:
-            """Use HA's authenticated view to control the call and foreground the app."""
-            return (
-                f"/api/simson/call-action/{quote(action, safe='')}/"
-                f"{quote(call_id, safe='')}"
-                f"?node_id={quote(self.cfg.node_id, safe='')}"
-                f"&redirect={quote(dashboard_path, safe='')}"
-            )
+            location = urlsplit(dashboard_path)
+            path = location.path if location.path.startswith("/") and not location.path.startswith(("//", "/api/")) and "\\" not in location.path else "/simson-call"
+            query = dict(parse_qsl(location.query))
+            query.update(simson_action=action, simson_call=call_id, simson_node=self.cfg.node_id)
+            return urlunsplit(("", "", path, urlencode(query), location.fragment))
 
         terminal = event in ("ended", "declined", "failed", "forwarded")
         clear_terminal = terminal and event != "missed"
