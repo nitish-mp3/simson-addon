@@ -19,8 +19,9 @@ from settings import load_settings, save_settings, validate_settings
 from settings_ui import INGRESS_UI_HTML
 from target_directory import TargetDirectory
 from ice_config import merge_ice_servers
+from room_calls import forward_room_call
 
-ADDON_VERSION = "5.1.12"
+ADDON_VERSION = "5.1.13"
 DEFAULT_PSTN_TRUNK = "7009"
 
 
@@ -254,6 +255,8 @@ class LocalAPI:
         self.app.router.add_get("/api/calls", self.handle_list_calls)
         self.app.router.add_post("/api/calls", self.handle_make_call)
         self.app.router.add_post("/api/call", self.handle_make_call)
+        self.app.router.add_post("/api/room-calls", self.handle_room_call)
+        self.app.router.add_get("/api/room-calls/capabilities", self.handle_room_call)
         self.app.router.add_post("/api/make-call", self.handle_make_call)
         self.app.router.add_post("/api/sip-intercom", self.handle_sip_intercom)
         self.app.router.add_get("/api/routing", self.handle_routing)
@@ -1705,6 +1708,16 @@ class LocalAPI:
         save_settings(settings)
         self.cfg.route_overrides = overrides
         return web.json_response({"target_id": target_id, "availability": overrides[target_id]})
+
+    async def handle_room_call(self, request: web.Request) -> web.Response:
+        try:
+            body=await request.json() if request.method=='POST' else None
+        except (ValueError,TypeError):
+            return web.json_response({'error':'Invalid JSON room request'},status=400)
+        if request.method=='POST' and not isinstance(body,dict):
+            return web.json_response({'error':'A room request object is required'},status=400)
+        data,status=await forward_room_call(self.cfg,request.method,body)
+        return web.json_response(data,status=status)
 
     async def handle_make_call(self, request: web.Request) -> web.Response:
         """Initiate a call to another node or configured target."""
@@ -3644,4 +3657,8 @@ def _call_to_dict(call) -> dict:
             "timeout": call.routing.timeout,
             "fallback_targets": call.routing.fallback_targets,
         }
+    if metadata.get("media_mode") == "sip_room":
+        d["metadata"] = {key: metadata[key][:128] for key in (
+            "room_id", "room_session_id", "room_request_id", "source_extension", "media_mode", "room_audio_mode")
+            if isinstance(metadata.get(key), str)}
     return d

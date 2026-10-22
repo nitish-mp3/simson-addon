@@ -790,6 +790,8 @@ class SimsonAddon:
         })
 
         self._start_ring_timer(call)
+        if metadata.get("media_mode") == "sip_room":
+            return
         self._schedule_incoming_sip_route(call)
 
         # If Asterisk is enabled and call type is voice/sip, trigger it.
@@ -810,6 +812,8 @@ class SimsonAddon:
         creating a separate outbound call.
         """
         logger = logging.getLogger("simson.routing")
+        if call.metadata.get("media_mode") == "sip_room":
+            return
         current = self.call_mgr.get(call.call_id)
         if not current or current.state not in (CallState.INCOMING, CallState.RINGING, CallState.REQUESTING):
             logger.info("Skipping SIP route for call %s because it is no longer ringing", call.call_id)
@@ -1010,6 +1014,8 @@ class SimsonAddon:
 
     def _schedule_incoming_sip_route(self, call: CallInfo):
         """Schedule configured SIP fallback only after the site ring delay."""
+        if call.metadata.get("media_mode") == "sip_room":
+            return
         if call.call_type != "sip" or not call.metadata.get("sip_bridge_id"):
             return
         if str(call.metadata.get("sip_haos_ring_code", "")).lower() == "true":

@@ -1,0 +1,5 @@
+simulation: native-room-sip
+routing: path
+mocks:
+  - routeKey: node
+    path: ../mocks/room-sip.js
